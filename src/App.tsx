@@ -1,18 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Activity,
-  ArrowDownRight,
-  ArrowUpRight,
-  Beef,
-  CalendarDays,
+  Clock3,
   Database,
   Dumbbell,
+  ExternalLink,
   Flame,
-  Gauge,
+  Footprints,
+  HeartPulse,
   LogOut,
   Moon,
   RefreshCw,
+  Route,
   ShieldCheck,
   Utensils,
 } from 'lucide-react'
@@ -32,8 +32,15 @@ type SessionState = {
   user: SessionUser | null
 }
 
+type GoalRange = {
+  minimum: NullableNumber
+  target: NullableNumber
+  maximum: NullableNumber
+}
+
 type Summary = {
   date: string
+  partialDay: boolean
   caloriesConsumed: NullableNumber
   restingEnergy: NullableNumber
   activeEnergy: NullableNumber
@@ -42,22 +49,37 @@ type Summary = {
   protein: NullableNumber
   carbs: NullableNumber
   fat: NullableNumber
+  fiber: NullableNumber
   fuelScore: NullableNumber
   sleepHours: NullableNumber
+  sleepQuality: NullableNumber
   recoveryScore: NullableNumber
   restingHeartRate: NullableNumber
   hrv: NullableNumber
+  respiratoryRate: NullableNumber
+  sleepCoreHours: NullableNumber
+  sleepDeepHours: NullableNumber
+  sleepRemHours: NullableNumber
+  sleepAwakeHours: NullableNumber
+  stepCount: NullableNumber
+  distanceMiles: NullableNumber
+  exerciseMinutes: NullableNumber
+  vo2Max: NullableNumber
 }
 
 type FoodEntry = {
   time: string
   meal: string
   food: string
+  portion: string
   calories: NullableNumber
   protein: NullableNumber
   carbs: NullableNumber
   fat: NullableNumber
+  fiber: NullableNumber
+  confidence: string
   notes: string
+  source: string
 }
 
 type WorkoutEntry = {
@@ -65,20 +87,59 @@ type WorkoutEntry = {
   activity: string
   durationMinutes: NullableNumber
   activeCalories: NullableNumber
-  trainingLoad: NullableNumber
-  intensity: string
+  totalCalories: NullableNumber
+  distanceMiles: NullableNumber
+  averagePace: string
+  averageHeartRate: NullableNumber
+  averageCadence: NullableNumber
+  effort: string
+  location: string
+  swimmingDistanceYards: NullableNumber
+  stepCount: NullableNumber
+  strokeCount: NullableNumber
+  dataQuality: string
+  notes: string
+  source: string
+}
+
+type SupplementEntry = {
+  time: string
+  name: string
+  dose: string
+  calories: NullableNumber
   notes: string
 }
 
 type TrendPoint = {
   date: string
+  partialDay: boolean
   caloriesConsumed: NullableNumber
+  restingEnergy: NullableNumber
+  activeEnergy: NullableNumber
   totalExpenditure: NullableNumber
   energyBalance: NullableNumber
   protein: NullableNumber
+  carbs: NullableNumber
+  fat: NullableNumber
   sleepHours: NullableNumber
-  trainingLoad: NullableNumber
+  restingHeartRate: NullableNumber
+  hrv: NullableNumber
+  stepCount: NullableNumber
+  distanceMiles: NullableNumber
+  exerciseMinutes: NullableNumber
+  vo2Max: NullableNumber
+  workoutCount: number
   fuelScore: NullableNumber
+}
+
+type Coverage = {
+  startDate: string | null
+  endDate: string | null
+  days: number
+  healthDays: number
+  foodEntries: number
+  workouts: number
+  recoveryDays: number
 }
 
 type DashboardData = {
@@ -93,9 +154,11 @@ type DashboardData = {
     summary: Summary
     foodEntries: FoodEntry[]
     workouts: WorkoutEntry[]
+    supplements: SupplementEntry[]
   }
-  goals: Partial<Record<'protein' | 'calories' | 'carbs' | 'fat' | 'sleepHours' | 'fuelScore', number>>
+  goals: Partial<Record<'protein' | 'calorieDeficit' | 'fat' | 'sleepHours' | 'fuelScore' | 'strengthSessions', GoalRange>>
   trends: TrendPoint[]
+  coverage: Coverage
   sheetStatus: Array<{
     title: string
     rows: number
@@ -117,16 +180,11 @@ function App() {
   const [busyAuthAction, setBusyAuthAction] = useState(false)
 
   const loadDashboard = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoadingDashboard(true)
-    }
-
+    if (!silent) setLoadingDashboard(true)
     setError('')
 
     try {
-      const response = await fetch('/api/mlog', {
-        headers: { Accept: 'application/json' },
-      })
+      const response = await fetch('/api/mlog', { headers: { Accept: 'application/json' } })
 
       if (response.status === 401) {
         setSession({ loading: false, authenticated: false, user: null })
@@ -135,7 +193,6 @@ function App() {
       }
 
       const payload = (await response.json()) as DashboardData | { error?: string }
-
       if (!response.ok) {
         throw new Error('error' in payload && payload.error ? payload.error : 'Unable to load MLog')
       }
@@ -154,13 +211,8 @@ function App() {
 
     async function loadSession() {
       try {
-        const response = await fetch('/api/auth/session', {
-          headers: { Accept: 'application/json' },
-        })
-        const payload = (await response.json()) as {
-          authenticated: boolean
-          user?: SessionUser | null
-        }
+        const response = await fetch('/api/auth/session', { headers: { Accept: 'application/json' } })
+        const payload = (await response.json()) as { authenticated: boolean; user?: SessionUser | null }
 
         if (!cancelled) {
           setSession({
@@ -170,34 +222,22 @@ function App() {
           })
         }
       } catch {
-        if (!cancelled) {
-          setSession({ loading: false, authenticated: false, user: null })
-        }
+        if (!cancelled) setSession({ loading: false, authenticated: false, user: null })
       }
     }
 
     void loadSession()
-
     return () => {
       cancelled = true
     }
   }, [])
 
   useEffect(() => {
-    if (!session.authenticated) {
-      return undefined
-    }
+    if (!session.authenticated) return undefined
 
     void loadDashboard()
-
-    const interval = window.setInterval(() => {
-      void loadDashboard(true)
-    }, 60_000)
-
-    function handleFocus() {
-      void loadDashboard(true)
-    }
-
+    const interval = window.setInterval(() => void loadDashboard(true), 60_000)
+    const handleFocus = () => void loadDashboard(true)
     window.addEventListener('focus', handleFocus)
 
     return () => {
@@ -208,7 +248,6 @@ function App() {
 
   async function signOut(disconnect = false) {
     setBusyAuthAction(true)
-
     try {
       await fetch(disconnect ? '/api/auth/disconnect' : '/api/auth/logout', { method: 'POST' })
     } finally {
@@ -219,40 +258,51 @@ function App() {
     }
   }
 
-  if (session.loading) {
-    return <LoadingScreen />
-  }
-
-  if (!session.authenticated) {
-    return <SignInScreen error={readAuthError()} />
-  }
+  if (session.loading) return <LoadingScreen />
+  if (!session.authenticated) return <SignInScreen error={readAuthError()} />
 
   const summary = dashboard?.today.summary
+  const goals = dashboard?.goals
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-block">
-          <span className="brand-mark">Fuel</span>
+          <div className="brand-mark">F</div>
           <div>
-            <h1>Athlete dashboard</h1>
-            <p>{formatLongDate(new Date())}</p>
+            <h1>Fuel</h1>
+            <p>{formatLongDate(summary?.date || formatDateKey(new Date()))}</p>
           </div>
         </div>
 
         <div className="topbar-actions">
-          {session.user?.picture ? (
-            <img src={session.user.picture} alt="" className="avatar" referrerPolicy="no-referrer" />
-          ) : null}
           <div className="identity">
-            <strong>{session.user?.name || 'Signed in'}</strong>
-            <span>{session.user?.email || 'Google Drive connected'}</span>
+            {session.user?.picture ? (
+              <img src={session.user.picture} alt="" className="avatar" referrerPolicy="no-referrer" />
+            ) : null}
+            <div>
+              <strong>{session.user?.name || 'Signed in'}</strong>
+              <span>{session.user?.email || 'Google Drive connected'}</span>
+            </div>
           </div>
-          <button className="icon-action" type="button" onClick={() => void loadDashboard()} disabled={loadingDashboard}>
-            <RefreshCw size={17} className={loadingDashboard ? 'spin' : ''} />
-            <span>Refresh</span>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => void loadDashboard()}
+            disabled={loadingDashboard}
+            aria-label="Refresh dashboard"
+            title="Refresh dashboard"
+          >
+            <RefreshCw size={18} className={loadingDashboard ? 'spin' : ''} />
           </button>
-          <button className="icon-only" type="button" onClick={() => void signOut(false)} disabled={busyAuthAction} aria-label="Sign out">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => void signOut(false)}
+            disabled={busyAuthAction}
+            aria-label="Sign out"
+            title="Sign out"
+          >
             <LogOut size={18} />
           </button>
         </div>
@@ -260,199 +310,436 @@ function App() {
 
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <section className="dashboard-grid" aria-label="Fuel dashboard">
-        <section className="panel hero-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Training Fuel Score</h2>
-              <p>Live from MLog</p>
-            </div>
-            <Gauge size={22} />
-          </div>
-          <div className="fuel-score">
-            <strong>{formatNumber(summary?.fuelScore, { decimals: 0 })}</strong>
-            <span>{summary?.fuelScore === null || summary?.fuelScore === undefined ? notLogged : 'readiness and fueling'}</span>
-          </div>
-          <ProgressRow
-            label="Fuel score goal"
-            value={summary?.fuelScore ?? null}
-            target={dashboard?.goals.fuelScore ?? 100}
-            unit=""
-          />
-          <div className="connection-card">
-            <ShieldCheck size={18} />
-            <div>
-              <strong>Secure Drive session</strong>
-              <span>Tokens stay encrypted in HTTP-only session storage.</span>
-            </div>
-          </div>
-          <button className="link-danger" type="button" onClick={() => void signOut(true)} disabled={busyAuthAction}>
-            Disconnect Google Drive
-          </button>
-        </section>
+      <div className="status-line">
+        <span className={summary?.partialDay ? 'status-badge live' : 'status-badge'}>
+          <span className="status-dot" />
+          {summary?.partialDay ? 'Day in progress' : 'Day complete'}
+        </span>
+        <span>{lastRefresh ? `Updated ${formatTime(lastRefresh)}` : 'Loading MLog'}</span>
+        {dashboard?.spreadsheet.webViewLink ? (
+          <a href={dashboard.spreadsheet.webViewLink} target="_blank" rel="noreferrer">
+            Open MLog <ExternalLink size={13} />
+          </a>
+        ) : null}
+      </div>
 
-        <section className="panel metrics-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Today</h2>
-              <p>{summary?.date || formatDateKey(new Date())}</p>
-            </div>
-            <CalendarDays size={22} />
-          </div>
-          <div className="metric-grid">
-            <MetricCard icon={<Utensils size={18} />} label="Calories consumed" value={summary?.caloriesConsumed ?? null} unit="cal" />
-            <MetricCard icon={<Flame size={18} />} label="Resting energy" value={summary?.restingEnergy ?? null} unit="cal" />
-            <MetricCard icon={<Activity size={18} />} label="Active energy" value={summary?.activeEnergy ?? null} unit="cal" />
-            <MetricCard icon={<Gauge size={18} />} label="Total expenditure" value={summary?.totalExpenditure ?? null} unit="cal" />
-            <MetricCard
-              icon={balanceIcon(summary?.energyBalance)}
-              label={balanceLabel(summary?.energyBalance)}
-              value={summary?.energyBalance ?? null}
-              unit="cal"
-              tone={balanceTone(summary?.energyBalance)}
-              signed
+      <section className="overview-grid" aria-label="Today overview">
+        <OverviewPanel title="Energy" icon={<Flame size={19} />}>
+          <div className="primary-pair">
+            <BigMetric label="Consumed" value={summary?.caloriesConsumed} unit="kcal" />
+            <BigMetric
+              label={summary?.partialDay ? 'Burned so far' : 'Expenditure'}
+              value={summary?.totalExpenditure}
+              unit="kcal"
             />
-            <MetricCard icon={<Beef size={18} />} label="Protein" value={summary?.protein ?? null} unit="g" />
           </div>
-        </section>
+          <div className="panel-rule" />
+          <div className="inline-stats">
+            <InlineStat label="Resting" value={summary?.restingEnergy} unit="kcal" />
+            <InlineStat label="Active" value={summary?.activeEnergy} unit="kcal" />
+            <InlineStat
+              label="Balance"
+              value={summary?.partialDay ? null : summary?.energyBalance}
+              unit={summary?.partialDay ? '' : 'kcal'}
+              signed={!summary?.partialDay}
+              fallback={summary?.partialDay ? 'In progress' : undefined}
+            />
+          </div>
+        </OverviewPanel>
 
-        <section className="panel nutrition-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Macros</h2>
-              <p>Daily progress</p>
-            </div>
-            <Beef size={22} />
-          </div>
-          <div className="progress-stack">
-            <ProgressRow label="Protein" value={summary?.protein ?? null} target={dashboard?.goals.protein ?? null} unit="g" />
-            <ProgressRow label="Carbs" value={summary?.carbs ?? null} target={dashboard?.goals.carbs ?? null} unit="g" />
-            <ProgressRow label="Fat" value={summary?.fat ?? null} target={dashboard?.goals.fat ?? null} unit="g" />
-            <ProgressRow label="Sleep" value={summary?.sleepHours ?? null} target={dashboard?.goals.sleepHours ?? null} unit="h" />
-          </div>
-        </section>
-
-        <section className="panel chart-panel wide-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Energy balance</h2>
-              <p>Consumed vs expenditure</p>
-            </div>
-            <Flame size={22} />
-          </div>
-          <DualBarChart data={dashboard?.trends || []} />
-        </section>
-
-        <section className="panel chart-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Protein</h2>
-              <p>Last 21 days</p>
-            </div>
-            <Beef size={22} />
-          </div>
-          <LineChart data={dashboard?.trends || []} metric="protein" unit="g" />
-        </section>
-
-        <section className="panel chart-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Sleep</h2>
-              <p>Recovery trend</p>
-            </div>
-            <Moon size={22} />
-          </div>
-          <LineChart data={dashboard?.trends || []} metric="sleepHours" unit="h" />
-        </section>
-
-        <section className="panel chart-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Training load</h2>
-              <p>Workout activity</p>
-            </div>
-            <Dumbbell size={22} />
-          </div>
-          <LineChart data={dashboard?.trends || []} metric="trainingLoad" unit="" />
-        </section>
-
-        <section className="panel chart-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Fuel Score</h2>
-              <p>Readiness history</p>
-            </div>
-            <Gauge size={22} />
-          </div>
-          <LineChart data={dashboard?.trends || []} metric="fuelScore" unit="" />
-        </section>
-
-        <section className="panel list-panel wide-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Food log</h2>
-              <p>{dashboard?.today.foodEntries.length || 0} entries today</p>
-            </div>
-            <Utensils size={22} />
-          </div>
-          <EntryList
-            empty="No food logged today."
-            items={dashboard?.today.foodEntries || []}
-            render={(entry) => (
-              <FoodRow key={`${entry.time}-${entry.meal}-${entry.food}`} entry={entry} />
-            )}
+        <OverviewPanel title="Nutrition" icon={<Utensils size={19} />}>
+          <ProgressMetric
+            label="Protein"
+            value={summary?.protein}
+            target={goals?.protein?.target}
+            unit="g"
           />
-        </section>
-
-        <section className="panel list-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Workouts</h2>
-              <p>{dashboard?.today.workouts.length || 0} sessions today</p>
-            </div>
-            <Dumbbell size={22} />
+          <div className="nutrition-stats">
+            <InlineStat label="Carbs" value={summary?.carbs} unit="g" />
+            <InlineStat label="Fat" value={summary?.fat} unit="g" />
+            <InlineStat label="Fiber" value={summary?.fiber} unit="g" />
           </div>
-          <EntryList
-            empty="No workouts logged today."
-            items={dashboard?.today.workouts || []}
-            render={(entry) => (
-              <WorkoutRow key={`${entry.time}-${entry.activity}-${entry.durationMinutes}`} entry={entry} />
-            )}
+        </OverviewPanel>
+
+        <OverviewPanel title="Activity" icon={<Footprints size={19} />}>
+          <div className="metric-matrix">
+            <SmallMetric icon={<Footprints size={16} />} label="Steps" value={summary?.stepCount} />
+            <SmallMetric icon={<Route size={16} />} label="Distance" value={summary?.distanceMiles} unit="mi" />
+            <SmallMetric icon={<Clock3 size={16} />} label="Exercise" value={summary?.exerciseMinutes} unit="min" />
+            <SmallMetric icon={<Activity size={16} />} label="Active energy" value={summary?.activeEnergy} unit="kcal" />
+          </div>
+        </OverviewPanel>
+
+        <OverviewPanel title="Recovery" icon={<HeartPulse size={19} />}>
+          <div className="metric-matrix">
+            <SmallMetric icon={<Moon size={16} />} label="Sleep" value={summary?.sleepHours} unit="h" duration />
+            <SmallMetric icon={<HeartPulse size={16} />} label="Resting HR" value={summary?.restingHeartRate} unit="bpm" />
+            <SmallMetric icon={<Activity size={16} />} label="HRV" value={summary?.hrv} unit="ms" />
+            <SmallMetric icon={<Activity size={16} />} label="Respiratory" value={summary?.respiratoryRate} unit="/min" />
+          </div>
+          {summary?.sleepHours !== null && summary?.sleepHours !== undefined ? (
+            <SleepStages summary={summary} />
+          ) : null}
+        </OverviewPanel>
+      </section>
+
+      <SectionHeading title="Today" detail="Meals, supplements, and training" />
+      <section className="today-grid">
+        <section className="panel log-panel">
+          <PanelHeading
+            title="Food"
+            detail={`${dashboard?.today.foodEntries.length || 0} entries`}
+            icon={<Utensils size={18} />}
           />
+          <EntryList empty="No food logged today.">
+            {(dashboard?.today.foodEntries || []).map((entry, index) => (
+              <FoodRow key={`${entry.time}-${entry.food}-${index}`} entry={entry} />
+            ))}
+          </EntryList>
+          {(dashboard?.today.supplements.length || 0) > 0 ? (
+            <div className="supplement-strip">
+              <span>Supplements</span>
+              {(dashboard?.today.supplements || []).map((entry, index) => (
+                <strong key={`${entry.name}-${index}`}>{[entry.name, entry.dose].filter(Boolean).join(' · ')}</strong>
+              ))}
+            </div>
+          ) : null}
         </section>
 
-        <section className="panel recovery-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Recovery</h2>
-              <p>Sleep and strain</p>
-            </div>
-            <Moon size={22} />
-          </div>
-          <div className="mini-metrics">
-            <MetricCard icon={<Moon size={17} />} label="Sleep" value={summary?.sleepHours ?? null} unit="h" />
-            <MetricCard icon={<Activity size={17} />} label="Recovery" value={summary?.recoveryScore ?? null} unit="%" />
-            <MetricCard icon={<Gauge size={17} />} label="Resting HR" value={summary?.restingHeartRate ?? null} unit="bpm" />
-            <MetricCard icon={<Activity size={17} />} label="HRV" value={summary?.hrv ?? null} unit="ms" />
-          </div>
+        <section className="panel log-panel">
+          <PanelHeading
+            title="Workouts"
+            detail={`${dashboard?.today.workouts.length || 0} sessions`}
+            icon={<Dumbbell size={18} />}
+          />
+          <EntryList empty="No workouts logged today.">
+            {(dashboard?.today.workouts || []).map((entry, index) => (
+              <WorkoutRow key={`${entry.time}-${entry.activity}-${index}`} entry={entry} />
+            ))}
+          </EntryList>
+        </section>
+      </section>
+
+      <SectionHeading title="Trends" detail="Last 30 days from Apple Health and MLog" />
+      <section className="trend-grid">
+        <section className="panel energy-chart-panel">
+          <PanelHeading title="Energy" detail="Consumed and expended" icon={<Flame size={18} />} />
+          <EnergyChart data={dashboard?.trends || []} />
+        </section>
+
+        <section className="panel trend-panel">
+          <PanelHeading title="Steps" detail="Daily movement" icon={<Footprints size={18} />} />
+          <LineChart data={dashboard?.trends || []} metric="stepCount" unit="steps" />
+        </section>
+
+        <section className="panel trend-panel">
+          <PanelHeading title="Sleep" detail="Hours per night" icon={<Moon size={18} />} />
+          <LineChart data={dashboard?.trends || []} metric="sleepHours" unit="h" duration />
+        </section>
+
+        <section className="panel trend-panel">
+          <PanelHeading title="Resting heart rate" detail="Daily average" icon={<HeartPulse size={18} />} />
+          <LineChart data={dashboard?.trends || []} metric="restingHeartRate" unit="bpm" />
         </section>
       </section>
 
       <footer className="sheet-footer">
-        <Database size={16} />
-        <span>
-          {dashboard?.spreadsheet.webViewLink ? (
-            <a href={dashboard.spreadsheet.webViewLink} target="_blank" rel="noreferrer">
-              {dashboard.spreadsheet.name}
-            </a>
-          ) : (
-            dashboard?.spreadsheet.name || 'MLog'
-          )}
-        </span>
-        <span>{lastRefresh ? `Refreshed ${formatTime(lastRefresh)}` : 'Waiting for MLog'}</span>
-        <span>{loadingDashboard ? 'Syncing...' : 'Auto-refreshes every 60 seconds'}</span>
+        <div>
+          <Database size={15} />
+          <span>
+            {dashboard?.coverage.days || 0} days · {dashboard?.coverage.workouts || 0} workouts · {dashboard?.coverage.foodEntries || 0} food entries
+          </span>
+        </div>
+        <button type="button" className="text-button" onClick={() => void signOut(true)} disabled={busyAuthAction}>
+          Disconnect Google Drive
+        </button>
       </footer>
     </main>
+  )
+}
+
+function OverviewPanel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <section className="panel overview-panel">
+      <PanelHeading title={title} icon={icon} />
+      {children}
+    </section>
+  )
+}
+
+function PanelHeading({ title, detail, icon }: { title: string; detail?: string; icon: ReactNode }) {
+  return (
+    <div className="panel-heading">
+      <div>
+        <h2>{title}</h2>
+        {detail ? <p>{detail}</p> : null}
+      </div>
+      <span>{icon}</span>
+    </div>
+  )
+}
+
+function BigMetric({ label, value, unit }: { label: string; value: NullableNumber | undefined; unit: string }) {
+  return (
+    <div className="big-metric">
+      <span>{label}</span>
+      <strong>{formatNumber(value)}</strong>
+      <small>{value == null ? '' : unit}</small>
+    </div>
+  )
+}
+
+function InlineStat({
+  label,
+  value,
+  unit,
+  signed = false,
+  fallback,
+}: {
+  label: string
+  value: NullableNumber | undefined
+  unit: string
+  signed?: boolean
+  fallback?: string
+}) {
+  return (
+    <div className="inline-stat">
+      <span>{label}</span>
+      <strong>{value == null && fallback ? fallback : signed ? formatSignedNumber(value) : formatNumber(value)}</strong>
+      {unit ? <small>{unit}</small> : null}
+    </div>
+  )
+}
+
+function SmallMetric({
+  icon,
+  label,
+  value,
+  unit = '',
+  duration = false,
+}: {
+  icon: ReactNode
+  label: string
+  value: NullableNumber | undefined
+  unit?: string
+  duration?: boolean
+}) {
+  return (
+    <div className="small-metric">
+      <span className="small-metric-icon">{icon}</span>
+      <div>
+        <span>{label}</span>
+        <strong>{duration ? formatDuration(value) : formatNumber(value)}</strong>
+        {value == null || duration ? null : <small>{unit}</small>}
+      </div>
+    </div>
+  )
+}
+
+function ProgressMetric({
+  label,
+  value,
+  target,
+  unit,
+}: {
+  label: string
+  value: NullableNumber | undefined
+  target: NullableNumber | undefined
+  unit: string
+}) {
+  const percentage = value != null && target ? Math.min(100, Math.max(0, (value / target) * 100)) : 0
+
+  return (
+    <div className="progress-metric">
+      <div>
+        <span>{label}</span>
+        <strong>{formatNumber(value)}{value == null ? '' : ` ${unit}`}</strong>
+      </div>
+      <div className="progress-track" aria-label={`${label} progress`}>
+        <span style={{ width: `${percentage}%` }} />
+      </div>
+      <small>{target ? `Target ${formatNumber(target)} ${unit}` : 'Target not logged'}</small>
+    </div>
+  )
+}
+
+function SleepStages({ summary }: { summary: Summary }) {
+  const stages = [
+    ['Core', summary.sleepCoreHours],
+    ['Deep', summary.sleepDeepHours],
+    ['REM', summary.sleepRemHours],
+  ] as const
+  const knownTotal = stages.reduce((total, [, value]) => total + (value || 0), 0)
+
+  if (!knownTotal) return null
+
+  return (
+    <div className="sleep-stages" aria-label="Sleep stages">
+      {stages.map(([label, value]) => (
+        <span key={label} style={{ flexGrow: value || 0 }} title={`${label}: ${formatDuration(value)}`}>
+          <i />
+          {label} {formatDuration(value)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function EntryList({ children, empty }: { children: ReactNode; empty: string }) {
+  const childArray = useMemo(() => (Array.isArray(children) ? children : [children]), [children])
+  if (childArray.length === 0) return <div className="empty-state">{empty}</div>
+  return <div className="entry-list">{children}</div>
+}
+
+function FoodRow({ entry }: { entry: FoodEntry }) {
+  const details = [entry.time, entry.meal, entry.portion].filter(Boolean).join(' · ')
+
+  return (
+    <article className="entry-row">
+      <div className="entry-copy">
+        <strong>{entry.food || entry.meal || 'Food entry'}</strong>
+        <span>{details || 'No details logged'}</span>
+      </div>
+      <div className="entry-values">
+        <strong>{formatNumber(entry.calories)} <small>kcal</small></strong>
+        <span>{formatNumber(entry.protein)} g protein</span>
+      </div>
+    </article>
+  )
+}
+
+function WorkoutRow({ entry }: { entry: WorkoutEntry }) {
+  const distance = entry.swimmingDistanceYards != null
+    ? `${formatNumber(entry.swimmingDistanceYards)} yd`
+    : entry.distanceMiles != null
+      ? `${formatNumber(entry.distanceMiles)} mi`
+      : ''
+  const details = [entry.time, formatMinutes(entry.durationMinutes), distance, entry.averagePace, entry.location]
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <article className="entry-row">
+      <div className="entry-copy">
+        <strong>{entry.activity || 'Workout'}</strong>
+        <span>{details || 'No details logged'}</span>
+      </div>
+      <div className="entry-values">
+        <strong>{formatNumber(entry.activeCalories)} <small>active kcal</small></strong>
+        <span>{entry.averageHeartRate == null ? entry.effort || entry.dataQuality : `${formatNumber(entry.averageHeartRate)} bpm avg`}</span>
+      </div>
+    </article>
+  )
+}
+
+function EnergyChart({ data }: { data: TrendPoint[] }) {
+  const visible = data.slice(-14)
+  const max = Math.max(...visible.flatMap((point) => [point.caloriesConsumed || 0, point.totalExpenditure || 0]), 1)
+  const hasConsumption = visible.some((point) => point.caloriesConsumed != null)
+
+  return (
+    <div className="energy-chart">
+      <div className="chart-legend">
+        <span><i className="legend-consumed" /> Consumed</span>
+        <span><i className="legend-expended" /> Expended</span>
+      </div>
+      <div className="energy-bars">
+        {visible.map((point, index) => (
+          <div className={`energy-day ${point.partialDay ? 'partial' : ''}`} key={point.date}>
+            <div className="bar-pair">
+              <span
+                className={`bar consumed ${point.caloriesConsumed == null ? 'missing' : ''}`}
+                style={{ height: `${barHeight(point.caloriesConsumed, max)}%` }}
+                title={`${formatShortDate(point.date)} consumed: ${formatNumber(point.caloriesConsumed)} kcal`}
+              />
+              <span
+                className={`bar expended ${point.totalExpenditure == null ? 'missing' : ''}`}
+                style={{ height: `${barHeight(point.totalExpenditure, max)}%` }}
+                title={`${formatShortDate(point.date)} expended: ${formatNumber(point.totalExpenditure)} kcal`}
+              />
+            </div>
+            <small>{index % 2 === 0 || index === visible.length - 1 ? formatTinyDate(point.date) : ''}</small>
+          </div>
+        ))}
+      </div>
+      {!hasConsumption ? <p className="chart-note">Energy expenditure is available; food intake has not been logged for this period.</p> : null}
+    </div>
+  )
+}
+
+function LineChart({
+  data,
+  metric,
+  unit,
+  duration = false,
+}: {
+  data: TrendPoint[]
+  metric: keyof TrendPoint
+  unit: string
+  duration?: boolean
+}) {
+  const points = data
+    .map((point, index) => ({
+      date: point.date,
+      index,
+      value: typeof point[metric] === 'number' ? point[metric] as number : null,
+    }))
+    .filter((point): point is { date: string; index: number; value: number } => point.value !== null)
+
+  if (points.length < 2) return <div className="empty-state chart-empty">Insufficient data</div>
+
+  const max = Math.max(...points.map((point) => point.value))
+  const min = Math.min(...points.map((point) => point.value))
+  const padding = Math.max((max - min) * 0.12, max * 0.03, 1)
+  const plotMin = Math.max(0, min - padding)
+  const plotMax = max + padding
+  const range = plotMax - plotMin || 1
+  const width = 480
+  const height = 150
+  const plotPoints = points.map((point) => ({
+    ...point,
+    x: data.length === 1 ? 0 : (point.index / (data.length - 1)) * width,
+    y: height - ((point.value - plotMin) / range) * height,
+  }))
+  const average = points.reduce((sum, point) => sum + point.value, 0) / points.length
+  const latest = points.at(-1)?.value ?? null
+
+  return (
+    <div className="line-chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${String(metric)} trend`}>
+        <line x1="0" y1={height} x2={width} y2={height} className="chart-axis" />
+        <polyline
+          points={plotPoints.map((point) => `${point.x},${point.y}`).join(' ')}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {plotPoints.map((point) => (
+          <circle key={`${point.date}-${point.value}`} cx={point.x} cy={point.y} r="3" />
+        ))}
+      </svg>
+      <div className="chart-summary">
+        <div>
+          <span>Latest</span>
+          <strong>{duration ? formatDuration(latest) : `${formatNumber(latest)}${latest == null ? '' : ` ${unit}`}`}</strong>
+        </div>
+        <div>
+          <span>30-day average</span>
+          <strong>{duration ? formatDuration(average) : `${formatNumber(average)} ${unit}`}</strong>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SectionHeading({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="section-heading">
+      <h2>{title}</h2>
+      <p>{detail}</p>
+    </div>
   )
 }
 
@@ -460,9 +747,9 @@ function LoadingScreen() {
   return (
     <main className="center-screen">
       <div className="loader-card">
-        <RefreshCw size={28} className="spin" />
+        <RefreshCw size={25} className="spin" />
         <h1>Fuel</h1>
-        <p>Checking your secure Google Drive session.</p>
+        <p>Loading your MLog dashboard.</p>
       </div>
     </main>
   )
@@ -472,12 +759,9 @@ function SignInScreen({ error }: { error: string }) {
   return (
     <main className="center-screen">
       <section className="signin-panel">
-        <span className="brand-mark">Fuel</span>
-        <h1>Personal athlete dashboard</h1>
-        <p>
-          Sign in with Google to connect the MLog spreadsheet in your Drive root. If MLog does not exist yet,
-          Fuel will create the workbook and initialize the required tabs without overwriting future data.
-        </p>
+        <div className="brand-mark signin-mark">F</div>
+        <h1>Fuel</h1>
+        <p>A private, read-only view of nutrition, activity, and recovery data stored in MLog.</p>
         {error ? <div className="error-banner compact">{error}</div> : null}
         <button className="primary-action" type="button" onClick={() => window.location.assign('/api/auth/google/start')}>
           <ShieldCheck size={18} />
@@ -488,311 +772,77 @@ function SignInScreen({ error }: { error: string }) {
   )
 }
 
-function MetricCard({
-  icon,
-  label,
-  value,
-  unit,
-  tone = 'neutral',
-  signed = false,
-}: {
-  icon: ReactNode
-  label: string
-  value: NullableNumber
-  unit: string
-  tone?: 'neutral' | 'positive' | 'negative'
-  signed?: boolean
-}) {
-  return (
-    <div className={`metric-card ${tone}`}>
-      <span>{icon}</span>
-      <p>{label}</p>
-      <strong>{signed ? formatSignedNumber(value) : formatNumber(value)}</strong>
-      {value === null ? null : <small>{unit}</small>}
-    </div>
-  )
-}
-
-function ProgressRow({
-  label,
-  value,
-  target,
-  unit,
-}: {
-  label: string
-  value: NullableNumber
-  target: NullableNumber | undefined
-  unit: string
-}) {
-  const percentage = value !== null && target ? Math.min(100, Math.max(0, (value / target) * 100)) : null
-
-  return (
-    <div className="progress-row">
-      <div>
-        <span>{label}</span>
-        <strong>
-          {formatNumber(value)}
-          {value !== null && unit ? ` ${unit}` : ''}
-        </strong>
-      </div>
-      <div className="progress-track" aria-hidden="true">
-        <span style={{ width: `${percentage ?? 0}%` }} className={percentage === null ? 'missing' : ''} />
-      </div>
-      <small>{target ? `Goal ${formatNumber(target)}${unit ? ` ${unit}` : ''}` : 'Goal not logged'}</small>
-    </div>
-  )
-}
-
-function DualBarChart({ data }: { data: TrendPoint[] }) {
-  const max = Math.max(
-    ...data.flatMap((point) => [point.caloriesConsumed ?? 0, point.totalExpenditure ?? 0]),
-    1,
-  )
-
-  return (
-    <div className="dual-chart">
-      <div className="chart-legend">
-        <span className="legend-item consumed">Consumed</span>
-        <span className="legend-item expenditure">Expenditure</span>
-      </div>
-      <div className="bar-grid">
-        {data.map((point) => (
-          <div className="bar-day" key={point.date}>
-            <div className="bar-pair">
-              <span
-                className={point.caloriesConsumed === null ? 'missing' : 'consumed'}
-                style={{ height: `${barHeight(point.caloriesConsumed, max)}%` }}
-                title={`Consumed: ${formatNumber(point.caloriesConsumed)} cal`}
-              />
-              <span
-                className={point.totalExpenditure === null ? 'missing' : 'expenditure'}
-                style={{ height: `${barHeight(point.totalExpenditure, max)}%` }}
-                title={`Expenditure: ${formatNumber(point.totalExpenditure)} cal`}
-              />
-            </div>
-            <small>{formatTinyDate(point.date)}</small>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function LineChart({
-  data,
-  metric,
-  unit,
-}: {
-  data: TrendPoint[]
-  metric: keyof TrendPoint
-  unit: string
-}) {
-  const points = data
-    .map((point, index) => ({
-      date: point.date,
-      index,
-      value: typeof point[metric] === 'number' ? point[metric] as number : null,
-    }))
-    .filter((point): point is { date: string; index: number; value: number } => point.value !== null)
-
-  if (points.length < 2) {
-    return <div className="empty-chart">{notLogged}</div>
-  }
-
-  const max = Math.max(...points.map((point) => point.value))
-  const min = Math.min(...points.map((point) => point.value))
-  const range = max - min || 1
-  const width = 320
-  const height = 132
-  const path = points
-    .map((point) => {
-      const x = data.length === 1 ? 0 : (point.index / (data.length - 1)) * width
-      const y = height - ((point.value - min) / range) * height
-      return `${x},${y}`
-    })
-    .join(' ')
-
-  return (
-    <div className="line-chart">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${String(metric)} trend`}>
-        <polyline points={path} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-        {points.map((point) => {
-          const x = data.length === 1 ? 0 : (point.index / (data.length - 1)) * width
-          const y = height - ((point.value - min) / range) * height
-
-          return <circle key={`${point.date}-${point.value}`} cx={x} cy={y} r="3.2" />
-        })}
-      </svg>
-      <div className="chart-summary">
-        <span>
-          Latest {formatNumber(points.at(-1)?.value ?? null)}
-          {unit ? ` ${unit}` : ''}
-        </span>
-        <span>
-          Range {formatNumber(min)}-{formatNumber(max)}
-          {unit ? ` ${unit}` : ''}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-function EntryList<T>({
-  items,
-  empty,
-  render,
-}: {
-  items: T[]
-  empty: string
-  render: (item: T) => ReactNode
-}) {
-  if (items.length === 0) {
-    return <div className="empty-list">{empty}</div>
-  }
-
-  return <div className="entry-list">{items.map(render)}</div>
-}
-
-function FoodRow({ entry }: { entry: FoodEntry }) {
-  return (
-    <article className="entry-row">
-      <div>
-        <strong>{entry.food || entry.meal || 'Food entry'}</strong>
-        <span>{[entry.time, entry.meal, entry.notes].filter(Boolean).join(' | ') || 'No details logged'}</span>
-      </div>
-      <div className="entry-metrics">
-        <small>{formatNumber(entry.calories)} cal</small>
-        <small>{formatNumber(entry.protein)} g protein</small>
-      </div>
-    </article>
-  )
-}
-
-function WorkoutRow({ entry }: { entry: WorkoutEntry }) {
-  return (
-    <article className="entry-row">
-      <div>
-        <strong>{entry.activity || 'Workout'}</strong>
-        <span>{[entry.time, entry.intensity, entry.notes].filter(Boolean).join(' | ') || 'No details logged'}</span>
-      </div>
-      <div className="entry-metrics">
-        <small>{formatNumber(entry.durationMinutes)} min</small>
-        <small>{formatNumber(entry.activeCalories)} cal</small>
-      </div>
-    </article>
-  )
-}
-
-function balanceIcon(value: NullableNumber | undefined) {
-  if (value === undefined || value === null || value === 0) {
-    return <Gauge size={18} />
-  }
-
-  return value > 0 ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />
-}
-
-function balanceLabel(value: NullableNumber | undefined) {
-  if (value === undefined || value === null) {
-    return 'Deficit / surplus'
-  }
-
-  if (value < 0) {
-    return 'Deficit'
-  }
-
-  if (value > 0) {
-    return 'Surplus'
-  }
-
-  return 'Balanced'
-}
-
-function balanceTone(value: NullableNumber | undefined): 'neutral' | 'positive' | 'negative' {
-  if (value === undefined || value === null || value === 0) {
-    return 'neutral'
-  }
-
-  return value < 0 ? 'negative' : 'positive'
-}
-
-function formatNumber(value: NullableNumber | undefined, options: { decimals?: number } = {}) {
-  if (value === undefined || value === null) {
-    return notLogged
-  }
-
+function formatNumber(value: NullableNumber | undefined, decimals?: number) {
+  if (value == null) return notLogged
   return new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: options.decimals ?? (Number.isInteger(value) ? 0 : 1),
+    maximumFractionDigits: decimals ?? (Number.isInteger(value) ? 0 : 1),
   }).format(value)
 }
 
 function formatSignedNumber(value: NullableNumber | undefined) {
-  if (value === undefined || value === null) {
-    return notLogged
-  }
+  if (value == null) return notLogged
+  if (value > 0) return `+${formatNumber(value)}`
+  return formatNumber(value)
+}
 
-  const formatted = formatNumber(Math.abs(value))
+function formatDuration(value: NullableNumber | undefined) {
+  if (value == null) return notLogged
+  const totalMinutes = Math.round(value * 60)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`
+}
 
-  if (value > 0) {
-    return `+${formatted}`
-  }
-
-  if (value < 0) {
-    return `-${formatted}`
-  }
-
-  return formatted
+function formatMinutes(value: NullableNumber | undefined) {
+  if (value == null) return ''
+  const rounded = Math.round(value)
+  return `${rounded} min`
 }
 
 function barHeight(value: NullableNumber, max: number) {
-  if (value === null) {
-    return 6
-  }
-
-  return Math.max(8, (value / max) * 100)
+  if (value == null) return 2
+  return Math.max(5, (value / max) * 100)
 }
 
 function formatDateKey(date: Date) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
-
   return `${year}-${month}-${day}`
 }
 
-function formatLongDate(date: Date) {
+function parseDateKey(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function formatLongDate(value: string) {
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
-  }).format(date)
+  }).format(parseDateKey(value))
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(parseDateKey(value))
 }
 
 function formatTinyDate(value: string) {
-  const [, month, day] = value.split('-')
-
-  return `${Number(month)}/${Number(day)}`
+  return new Intl.DateTimeFormat('en-US', { month: 'numeric', day: 'numeric' }).format(parseDateKey(value))
 }
 
-function formatTime(date: Date) {
-  return new Intl.DateTimeFormat('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date)
+function formatTime(value: Date) {
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(value)
 }
 
 function readAuthError() {
   const params = new URLSearchParams(window.location.search)
-  const error = params.get('auth_error')
-
-  if (!error) {
-    return ''
-  }
-
-  if (error === 'invalid_state') {
-    return 'Google sign-in could not be verified. Please try again.'
-  }
-
-  return 'Google sign-in failed. Please try again.'
+  const code = params.get('auth_error')
+  if (!code) return ''
+  if (code === 'access_denied') return 'Google Drive access was not granted.'
+  if (code === 'state_mismatch') return 'The sign-in session expired. Please try again.'
+  return 'Unable to connect Google Drive. Please try again.'
 }
 
 export default App
