@@ -21,10 +21,10 @@
 
 .brand-mark {
   align-items: center;
-  background: linear-gradient(135deg, rgba(118, 255, 176, 0.22), rgba(91, 176, 255, 0.16));
-  border: 1px solid rgba(132, 255, 188, 0.24);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+  border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 8px;
-  color: var(--green);
+  color: var(--accent);
   display: inline-flex;
   font-size: 13px;
   font-weight: 820;
@@ -130,7 +130,7 @@
 
 .panel-heading {
   align-items: flex-start;
-  color: var(--green);
+  color: var(--accent);
   display: flex;
   justify-content: space-between;
   margin-bottom: 14px;
@@ -152,7 +152,7 @@
 
 .fuel-score {
   background:
-    radial-gradient(circle at 30% 20%, rgba(111, 255, 178, 0.18), transparent 36%),
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.12), transparent 36%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
@@ -177,10 +177,10 @@
 
 .connection-card {
   align-items: flex-start;
-  background: rgba(115, 255, 177, 0.06);
-  border: 1px solid rgba(115, 255, 177, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
-  color: var(--green);
+  color: var(--accent);
   display: flex;
   gap: 10px;
   margin-top: 16px;
@@ -219,7 +219,7 @@
 }
 
 .metric-card > span {
-  color: var(--green);
+  color: var(--accent);
   display: inline-flex;
   margin-bottom: 16px;
 }
@@ -249,12 +249,12 @@
 
 .metric-card.positive > span,
 .metric-card.positive strong {
-  color: var(--blue);
+  color: var(--contrast);
 }
 
 .metric-card.negative > span,
 .metric-card.negative strong {
-  color: var(--tomato);
+  color: var(--warn);
 }
 
 .progress-stack {
@@ -293,7 +293,7 @@
 }
 
 .progress-track span {
-  background: linear-gradient(90deg, var(--green), var(--blue));
+  background: linear-gradient(90deg, var(--accent), rgba(255, 255, 255, 0.58));
   border-radius: inherit;
   display: block;
   height: 100%;
@@ -340,11 +340,11 @@
 }
 
 .legend-item.consumed::before {
-  background: var(--green);
+  background: var(--accent);
 }
 
 .legend-item.expenditure::before {
-  background: var(--blue);
+  background: var(--contrast);
 }
 
 .bar-grid {
@@ -382,11 +382,11 @@
 }
 
 .bar-pair .consumed {
-  background: linear-gradient(180deg, var(--green), rgba(115, 255, 177, 0.3));
+  background: linear-gradient(180deg, var(--accent), rgba(255, 255, 255, 0.28));
 }
 
 .bar-pair .expenditure {
-  background: linear-gradient(180deg, var(--blue), rgba(79, 182, 255, 0.3));
+  background: linear-gradient(180deg, var(--contrast), rgba(255, 255, 255, 0.18));
 }
 
 .bar-pair .missing {
@@ -394,7 +394,7 @@
 }
 
 .line-chart svg {
-  color: var(--green);
+  color: var(--accent);
   height: 150px;
   overflow: visible;
   width: 100%;
@@ -402,7 +402,7 @@
 
 .line-chart circle {
   fill: var(--panel);
-  stroke: var(--green);
+  stroke: var(--accent);
   stroke-width: 2;
 }
 
@@ -499,8 +499,8 @@
 }
 
 .primary-action {
-  background: var(--green);
-  color: #08120d;
+  background: var(--accent);
+  color: #030303;
   font-size: 14px;
   font-weight: 780;
   gap: 8px;
@@ -529,7 +529,7 @@
 
 .link-danger {
   background: transparent;
-  color: var(--tomato);
+  color: var(--warn);
   font-size: 12px;
   font-weight: 720;
   margin-top: 12px;
@@ -542,7 +542,7 @@ button:disabled {
 }
 
 .error-banner {
-  color: #ffd6d1;
+  color: #f2f2f2;
   font-size: 13px;
   margin: 0 auto 14px;
   max-width: 1480px;
@@ -563,7 +563,7 @@ button:disabled {
 }
 
 .sheet-footer a {
-  color: var(--green);
+  color: var(--accent);
   text-decoration: none;
 }
 

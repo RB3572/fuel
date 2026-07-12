@@ -6,29 +6,35 @@ const schemas = {
   'Food Log': ['Date','Time','Meal','Food / Description','Estimated Portion','Calories (kcal)','Protein (g)','Carbs (g)','Fat (g)','Fiber (g)','Confidence','Assumptions / Notes','Source / Image Reference'],
   'Daily Summary': ['Date','Calories (kcal)','Protein (g)','Carbs (g)','Fat (g)','Fiber (g)','Entries','Notes'],
   Recipes: ['Recipe','Yield / Serving','Ingredients and Instructions','Calories','Protein (g)','Carbs (g)','Fat (g)','Fiber (g)','Nutrition Assumptions / Notes','Source'],
-  'Workout Activity': ['Date','Start Time','Workout Type','Duration (min)','Active Calories','Total Calories','Distance (mi)','Avg. Pace','Avg. Heart Rate','Avg. Cadence','Effort','Location','Notes','Source'],
+  'Workout Activity': ['Date','Start Time','Workout Type','Duration (min)','Active Calories','Total Calories','Distance (mi)','Avg. Pace','Avg. Heart Rate','Avg. Cadence','Effort','Location','Notes','Source','Swimming Distance (yd)','Step Count','Stroke Count','Data Quality','Import ID'],
   'Energy Balance': ['Date','Calories Consumed','Resting Energy','Active Energy','Total Expenditure','Net Balance','Status','Running Net Balance','Assumptions / Notes','Protein (g)','Sleep (hr)','Protein Score','Energy Balance Score','Sleep Score','Training Fuel Score','Fuel Status'],
-  Recovery: ['Date','Sleep (hr)','Sleep Quality (1-10)','Energy (1-10)','Hunger (1-10)','Soreness (1-10)','Resting HR','Notes'],
+  Recovery: ['Date','Sleep (hr)','Sleep Quality (1-10)','Energy (1-10)','Hunger (1-10)','Soreness (1-10)','Resting HR','Notes','HRV','Respiratory Rate','Sleep Core (hr)','Sleep Deep (hr)','Sleep REM (hr)'],
   Goals: ['Metric','Minimum','Target','Maximum','Notes'],
 }
+const optionalSchemas = {
+  'Health Daily': ['Date','Active Energy (kcal)','Resting Energy (kcal)','Total Expenditure (kcal)','Exercise Time (min)','Step Count','Distance (mi)','Resting HR (bpm)','HRV (ms)','VO2 Max','Sleep (hr)','Respiratory Rate','Partial Day','Source'],
+  'Supplement Log': ['Date','Time','Supplement','Dose','Calories','Carbs (g)','Notes','Source'],
+}
+const allSchemas = { ...schemas, ...optionalSchemas }
 const required = [...Object.keys(schemas), 'Dashboard']
-const readable = Object.keys(schemas)
+const optional = Object.keys(optionalSchemas)
+const readable = Object.keys(allSchemas)
 const aliases = {
   calories: ['calories kcal','calories consumed','calories in','food calories','consumed','calories','energy'],
-  resting: ['resting energy','resting calories','basal calories','bmr'],
-  active: ['active energy','active calories','exercise calories','workout calories','calories burned'],
-  expenditure: ['total expenditure','total calories out','tdee','energy expenditure'],
+  resting: ['resting energy kcal','resting energy','resting calories','basal calories','bmr'],
+  active: ['active energy kcal','active energy','active calories','exercise calories','workout calories','calories burned'],
+  expenditure: ['total expenditure kcal','total expenditure','total calories out','total calories','tdee','energy expenditure'],
   balance: ['net balance','energy balance','deficit surplus','deficit/surplus','net calories'],
   protein: ['protein g','protein','protein grams'],
   carbs: ['carbs g','carbs','carbohydrates g','carbohydrates'],
   fat: ['fat g','fat','fats'],
   score: ['training fuel score','fuel score','score'],
   sleep: ['sleep hr','sleep hours','sleep','hours slept'],
-  rhr: ['resting hr','resting heart rate','rhr'],
+  rhr: ['resting hr bpm','resting hr','resting heart rate','rhr'],
   recovery: ['recovery score','recovery'],
-  hrv: ['hrv'],
+  hrv: ['hrv ms','hrv'],
   duration: ['duration min','duration minutes','duration','minutes'],
-  load: ['training load','load'],
+  load: ['training load','load','effort'],
 }
 
 export async function getMLogDashboard(session) {
@@ -104,26 +110,34 @@ async function readHeader(session, id, title) {
 }
 
 async function readWorkbook(session, id) {
+  const metadata = await spreadsheetMetadata(session, id)
+  const titles = new Set(metadata.sheets?.map(sheet => sheet.properties.title) || [])
+  const rangesToRead = [
+    ...Object.keys(schemas),
+    ...optional.filter(title => titles.has(title)),
+  ]
   const params = new URLSearchParams({ majorDimension: 'ROWS', valueRenderOption: 'UNFORMATTED_VALUE' })
-  readable.forEach(title => params.append('ranges', `${quote(title)}!A1:Z5000`))
+  rangesToRead.forEach(title => params.append('ranges', `${quote(title)}!A1:Z5000`))
   const result = await googleFetch(session, `https://sheets.googleapis.com/v4/spreadsheets/${id}/values:batchGet?${params}`)
-  return Object.fromEntries(readable.map((title, index) => [title, rowsToObjects(result.valueRanges?.[index]?.values || [])]))
+  const workbook = Object.fromEntries(rangesToRead.map((title, index) => [title, rowsToObjects(result.valueRanges?.[index]?.values || [])]))
+
+  return Object.fromEntries(readable.map(title => [title, workbook[title] || []]))
 }
 
-function normalizeWorkbook(values, timeZone) {
+export function normalizeWorkbook(values, timeZone = DEFAULT_TZ) {
   const date = dateKey(new Date(), timeZone)
   const dailyRows = values['Daily Summary'] || [], energyRows = values['Energy Balance'] || []
   const foodRows = values['Food Log'] || [], workoutRows = values['Workout Activity'] || []
-  const recoveryRows = values.Recovery || [], goalRows = values.Goals || []
+  const recoveryRows = values.Recovery || [], healthRows = values['Health Daily'] || [], goalRows = values.Goals || []
   const daily = findDateRow(dailyRows, date, timeZone), energy = findDateRow(energyRows, date, timeZone)
-  const recovery = findDateRow(recoveryRows, date, timeZone)
+  const recovery = findDateRow(recoveryRows, date, timeZone), health = findDateRow(healthRows, date, timeZone)
   const foods = filterDateRows(foodRows, date, timeZone), workouts = filterDateRows(workoutRows, date, timeZone)
   const foodTotals = sumFood(foods), workoutTotals = sumWorkouts(workouts)
   const calories = numberFrom(daily, aliases.calories) ?? numberFrom(energy, aliases.calories) ?? foodTotals.calories
-  const active = numberFrom(energy, aliases.active) ?? numberFrom(daily, aliases.active) ?? workoutTotals.activeCalories
-  const resting = numberFrom(energy, aliases.resting) ?? numberFrom(daily, aliases.resting)
-  const expenditure = numberFrom(energy, aliases.expenditure) ?? numberFrom(daily, aliases.expenditure) ?? (resting != null && active != null ? resting + active : null)
-  const balance = calories != null && expenditure != null ? calories - expenditure : numberFrom(energy, aliases.balance) ?? numberFrom(daily, aliases.balance)
+  const active = numberFrom(energy, aliases.active) ?? numberFrom(health, aliases.active) ?? numberFrom(daily, aliases.active) ?? workoutTotals.activeCalories
+  const resting = numberFrom(energy, aliases.resting) ?? numberFrom(health, aliases.resting) ?? numberFrom(daily, aliases.resting)
+  const expenditure = numberFrom(energy, aliases.expenditure) ?? numberFrom(health, aliases.expenditure) ?? numberFrom(daily, aliases.expenditure) ?? (resting != null && active != null ? resting + active : null)
+  const balance = numberFrom(energy, aliases.balance) ?? numberFrom(daily, aliases.balance) ?? (calories != null && expenditure != null ? calories - expenditure : null)
   const summary = {
     date, caloriesConsumed: calories, restingEnergy: resting, activeEnergy: active,
     totalExpenditure: expenditure, energyBalance: balance,
@@ -131,33 +145,34 @@ function normalizeWorkbook(values, timeZone) {
     carbs: numberFrom(daily, aliases.carbs) ?? foodTotals.carbs,
     fat: numberFrom(daily, aliases.fat) ?? foodTotals.fat,
     fuelScore: numberFrom(energy, aliases.score) ?? numberFrom(daily, aliases.score),
-    sleepHours: numberFrom(recovery, aliases.sleep) ?? numberFrom(energy, aliases.sleep) ?? numberFrom(daily, aliases.sleep),
+    sleepHours: numberFrom(recovery, aliases.sleep) ?? numberFrom(health, aliases.sleep) ?? numberFrom(energy, aliases.sleep) ?? numberFrom(daily, aliases.sleep),
     recoveryScore: numberFrom(recovery, aliases.recovery) ?? numberFrom(daily, aliases.recovery),
-    restingHeartRate: numberFrom(recovery, aliases.rhr), hrv: numberFrom(recovery, aliases.hrv),
+    restingHeartRate: numberFrom(recovery, aliases.rhr) ?? numberFrom(health, aliases.rhr),
+    hrv: numberFrom(recovery, aliases.hrv) ?? numberFrom(health, aliases.hrv),
   }
   return {
     today: { summary, foodEntries: foods.map(normalizeFood), workouts: workouts.map(normalizeWorkout) },
     goals: normalizeGoals(goalRows),
-    trends: buildTrends({ dailyRows, energyRows, foodRows, workoutRows, recoveryRows }, timeZone),
-    sheetStatus: required.map(title => ({ title, rows: values[title]?.length || 0, columns: schemas[title] || [] })),
+    trends: buildTrends({ dailyRows, energyRows, foodRows, workoutRows, recoveryRows, healthRows }, timeZone),
+    sheetStatus: [...required, ...optional.filter(title => values[title]?.length > 0)].map(title => ({ title, rows: values[title]?.length || 0, columns: allSchemas[title] || [] })),
   }
 }
 
 function buildTrends(rows, timeZone) {
   return lastDates(21, timeZone).map(date => {
     const daily = findDateRow(rows.dailyRows, date, timeZone), energy = findDateRow(rows.energyRows, date, timeZone)
-    const recovery = findDateRow(rows.recoveryRows, date, timeZone)
+    const recovery = findDateRow(rows.recoveryRows, date, timeZone), health = findDateRow(rows.healthRows, date, timeZone)
     const foods = filterDateRows(rows.foodRows, date, timeZone), workouts = filterDateRows(rows.workoutRows, date, timeZone)
     const food = sumFood(foods), workout = sumWorkouts(workouts)
     const consumed = numberFrom(daily, aliases.calories) ?? numberFrom(energy, aliases.calories) ?? food.calories
-    const active = numberFrom(energy, aliases.active) ?? numberFrom(daily, aliases.active) ?? workout.activeCalories
-    const resting = numberFrom(energy, aliases.resting) ?? numberFrom(daily, aliases.resting)
-    const expenditure = numberFrom(energy, aliases.expenditure) ?? numberFrom(daily, aliases.expenditure) ?? (resting != null && active != null ? resting + active : null)
+    const active = numberFrom(energy, aliases.active) ?? numberFrom(health, aliases.active) ?? numberFrom(daily, aliases.active) ?? workout.activeCalories
+    const resting = numberFrom(energy, aliases.resting) ?? numberFrom(health, aliases.resting) ?? numberFrom(daily, aliases.resting)
+    const expenditure = numberFrom(energy, aliases.expenditure) ?? numberFrom(health, aliases.expenditure) ?? numberFrom(daily, aliases.expenditure) ?? (resting != null && active != null ? resting + active : null)
     return {
       date, caloriesConsumed: consumed, totalExpenditure: expenditure,
-      energyBalance: consumed != null && expenditure != null ? consumed - expenditure : numberFrom(energy, aliases.balance) ?? numberFrom(daily, aliases.balance),
+      energyBalance: numberFrom(energy, aliases.balance) ?? numberFrom(daily, aliases.balance) ?? (consumed != null && expenditure != null ? consumed - expenditure : null),
       protein: numberFrom(daily, aliases.protein) ?? numberFrom(energy, aliases.protein) ?? food.protein,
-      sleepHours: numberFrom(recovery, aliases.sleep) ?? numberFrom(energy, aliases.sleep) ?? numberFrom(daily, aliases.sleep),
+      sleepHours: numberFrom(recovery, aliases.sleep) ?? numberFrom(health, aliases.sleep) ?? numberFrom(energy, aliases.sleep) ?? numberFrom(daily, aliases.sleep),
       trainingLoad: workout.trainingLoad,
       fuelScore: numberFrom(energy, aliases.score) ?? numberFrom(daily, aliases.score),
     }
@@ -210,7 +225,7 @@ function formatTime(value) {
 }
 function normalizeDate(value, tz) {
   if (value === '' || value == null) return ''
-  if (typeof value === 'number') return new Date(Date.UTC(1899, 11, 30) + value * 86400000).toISOString().slice(0, 10)
+  if (typeof value === 'number') return new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000).toISOString().slice(0, 10)
   const text = String(value).trim()
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text
   const match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
