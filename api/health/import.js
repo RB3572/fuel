@@ -43,8 +43,25 @@ export default async function handler(req, res) {
       return
     }
 
-    const shortcutPayload = body.payload || body.dictionary || body.health || body
+    const shortcutPayload = body.payload ?? body.dictionary ?? body.health ?? body
+    const receivedKeys = objectKeys(shortcutPayload)
+    if (!receivedKeys.length) {
+      sendJson(res, 422, {
+        error: 'The Shortcut sent an empty JSON body. Add one JSON Dictionary field named payload and set it to the orange Dictionary variable.',
+        receivedKeys: [],
+      })
+      return
+    }
+
     const normalized = normalizeShortcutDictionary(shortcutPayload)
+    if (!normalized || !hasHealthValues(normalized)) {
+      sendJson(res, 422, {
+        error: 'Fuel received the Shortcut dictionary but could not read any health values yet.',
+        receivedKeys,
+        receivedShape: describeShape(shortcutPayload),
+      })
+      return
+    }
 
     process.env.MLOG_SPREADSHEET_ID = MLOG_SPREADSHEET_ID
     process.env.GOOGLE_REFRESH_TOKEN = session.tokens.refreshToken
@@ -53,7 +70,8 @@ export default async function handler(req, res) {
     sendJson(res, 200, {
       ok: true,
       ...result,
-      receivedKeys: Object.keys(shortcutPayload || {}).slice(0, 30),
+      receivedKeys,
+      parsed: parsedSummary(normalized),
     })
   } catch (error) {
     console.error('Health import failed', error instanceof Error ? error.message : 'Unknown error')
@@ -66,33 +84,48 @@ export default async function handler(req, res) {
 function normalizeShortcutDictionary(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload
 
-  const active = sum(payload.activeEnergy)
-  const resting = sum(payload.restingEnergy)
-  const sleep = sleepHours(payload.sleep)
+  const active = sumMetric(get(payload, ['activeEnergy', 'activeCalories']))
+  const resting = sumMetric(get(payload, ['restingEnergy', 'basalEnergy']))
+  const sleep = sleepSummary(get(payload, ['sleep', 'sleepSamples']))
 
   return {
-    date: dateValue(payload.date) || today(),
+    date: dateValue(get(payload, ['date', 'day'])) || today(),
     activeEnergy: active,
     restingEnergy: resting,
     totalExpenditure: active == null || resting == null ? null : active + resting,
-    exerciseMinutes: sum(payload.exerciseMinutes || payload.exerciseMins),
-    steps: sum(payload.steps),
-    walkingRunningDistance: sum(payload.walkingrunDistance || payload.walkingRunningDistance),
-    restingHeartRate: latest(payload.restingHeartRate),
-    heartRateVariability: average(payload.HRV || payload.hrv),
-    respiratoryRate: average(payload.respiratoryRate),
-    vo2Max: latest(payload.cardioFitness),
-    sleepTotal: sleep,
+    exerciseMinutes: sumMetric(get(payload, ['exerciseMinutes', 'exerciseMins', 'exerciseTime']), durationToMinutes),
+    steps: sumMetric(get(payload, ['steps', 'stepCount'])),
+    walkingRunningDistance: sumMetric(get(payload, ['walkingrunDistance', 'walkingRunningDistance', 'distance']), distanceToMiles),
+    swimmingDistance: sumMetric(get(payload, ['swimDistance', 'swimmingDistance'])),
+    restingHeartRate: latestMetric(get(payload, ['restingHeartRate', 'restingHR'])),
+    heartRateVariability: averageMetric(get(payload, ['HRV', 'hrv', 'heartRateVariability'])),
+    respiratoryRate: averageMetric(get(payload, ['respiratoryRate', 'breathingRate'])),
+    vo2Max: latestMetric(get(payload, ['cardioFitness', 'vo2Max'])),
+    sleepTotal: sleep.total,
+    sleepCore: sleep.core,
+    sleepDeep: sleep.deep,
+    sleepREM: sleep.rem,
+    sleepAwake: sleep.awake,
     partialDay: true,
   }
+}
+
+function get(object, aliases) {
+  if (!object || typeof object !== 'object') return null
+  const wanted = new Set(aliases.map(normalizeKey))
+  for (const [key, value] of Object.entries(object)) {
+    if (wanted.has(normalizeKey(key))) return value
+  }
+  return null
 }
 
 function list(value) {
   if (value == null || value === '') return []
   if (Array.isArray(value)) return value.flatMap(list)
   if (typeof value === 'object') {
-    for (const key of ['samples', 'values', 'items', 'data', 'results']) {
-      if (Array.isArray(value[key])) return list(value[key])
+    for (const alias of ['samples', 'values', 'items', 'data', 'results']) {
+      const nested = get(value, [alias])
+      if (Array.isArray(nested)) return list(nested)
     }
   }
   return [value]
@@ -101,48 +134,110 @@ function list(value) {
 function numeric(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (value && typeof value === 'object') {
-    for (const key of ['value', 'quantity', 'amount', 'sum', 'average']) {
-      if (value[key] != null) return numeric(value[key])
-    }
+    const nested = get(value, ['value', 'quantity', 'amount', 'sum', 'average', 'avg', 'doubleValue'])
+    if (nested != null && nested !== value) return numeric(nested)
     return null
   }
   const match = String(value || '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/)
   return match ? Number(match[0]) : null
 }
 
-function values(value) {
-  return list(value).map(numeric).filter(Number.isFinite)
+function unitOf(value) {
+  if (!value || typeof value !== 'object') return ''
+  return String(get(value, ['unit', 'measurementUnit', 'quantityTypeUnit']) || '').toLowerCase()
 }
 
-function sum(value) {
-  const numbers = values(value)
-  return numbers.length ? numbers.reduce((total, number) => total + number, 0) : null
-}
-
-function average(value) {
-  const numbers = values(value)
-  return numbers.length ? numbers.reduce((total, number) => total + number, 0) / numbers.length : null
-}
-
-function latest(value) {
-  const numbers = values(value)
-  return numbers.length ? numbers.at(-1) : null
-}
-
-function sleepHours(value) {
+function sumMetric(value, transform = identity) {
   let total = 0
   let found = false
   for (const sample of list(value)) {
-    if (!sample || typeof sample !== 'object') continue
-    const stage = String(sample.value || sample.stage || sample.category || '').toLowerCase()
-    if (stage.includes('awake') || stage.includes('in bed')) continue
-    const start = new Date(sample.startDate || sample.start || '')
-    const end = new Date(sample.endDate || sample.end || '')
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue
-    total += (end.getTime() - start.getTime()) / 3600000
+    const number = numeric(sample)
+    if (number == null) continue
+    const converted = transform(number, unitOf(sample))
+    if (!Number.isFinite(converted)) continue
+    total += converted
     found = true
   }
   return found ? total : null
+}
+
+function averageMetric(value) {
+  const numbers = list(value).map(numeric).filter(Number.isFinite)
+  return numbers.length ? numbers.reduce((total, number) => total + number, 0) / numbers.length : null
+}
+
+function latestMetric(value) {
+  const samples = list(value)
+    .map((sample, index) => ({ sample, index, number: numeric(sample), time: sampleTime(sample) }))
+    .filter((item) => Number.isFinite(item.number))
+    .sort((a, b) => a.time - b.time || a.index - b.index)
+  return samples.length ? samples.at(-1).number : null
+}
+
+function sleepSummary(value) {
+  const totals = { total: null, core: null, deep: null, rem: null, awake: null }
+  const sums = { total: 0, core: 0, deep: 0, rem: 0, awake: 0 }
+  let found = false
+
+  for (const sample of list(value)) {
+    const stage = String(get(sample, ['stage', 'category', 'value', 'sleepStage']) || '').toLowerCase()
+    const hours = sampleDurationHours(sample)
+    if (!Number.isFinite(hours) || hours < 0) continue
+    found = true
+
+    if (stage.includes('awake')) sums.awake += hours
+    else if (stage.includes('deep')) { sums.deep += hours; sums.total += hours }
+    else if (stage.includes('rem')) { sums.rem += hours; sums.total += hours }
+    else if (stage.includes('core')) { sums.core += hours; sums.total += hours }
+    else if (!stage.includes('in bed')) sums.total += hours
+  }
+
+  if (!found) return totals
+  for (const key of Object.keys(totals)) totals[key] = sums[key] || null
+  return totals
+}
+
+function sampleDurationHours(sample) {
+  if (sample && typeof sample === 'object') {
+    const start = dateObject(get(sample, ['startDate', 'start', 'from']))
+    const end = dateObject(get(sample, ['endDate', 'end', 'to']))
+    if (start && end) return (end.getTime() - start.getTime()) / 3600000
+  }
+  const number = numeric(sample)
+  if (number == null) return null
+  const unit = unitOf(sample)
+  if (unit.includes('sec')) return number / 3600
+  if (unit.includes('min')) return number / 60
+  return number
+}
+
+function durationToMinutes(number, unit) {
+  if (unit.includes('sec')) return number / 60
+  if (unit.includes('hour') || unit === 'hr' || unit === 'h') return number * 60
+  return number
+}
+
+function distanceToMiles(number, unit) {
+  if (unit === 'km' || unit.includes('kilometer')) return number * 0.621371
+  if (unit === 'm' || unit.includes('meter')) return number / 1609.344
+  if (unit.includes('yard') || unit === 'yd') return number / 1760
+  return number
+}
+
+function identity(number) {
+  return number
+}
+
+function sampleTime(sample) {
+  if (!sample || typeof sample !== 'object') return 0
+  const date = dateObject(get(sample, ['startDate', 'endDate', 'date', 'start', 'end']))
+  return date ? date.getTime() : 0
+}
+
+function dateObject(value) {
+  if (!value) return null
+  const date = new Date(String(value))
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 function dateValue(value) {
@@ -151,6 +246,42 @@ function dateValue(value) {
   if (direct) return direct[1]
   const date = new Date(String(value))
   return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(date)
+}
+
+function hasHealthValues(record) {
+  return [
+    record.activeEnergy, record.restingEnergy, record.exerciseMinutes, record.steps,
+    record.walkingRunningDistance, record.swimmingDistance, record.restingHeartRate,
+    record.heartRateVariability, record.respiratoryRate, record.vo2Max,
+    record.sleepTotal, record.sleepCore, record.sleepDeep, record.sleepREM, record.sleepAwake,
+  ].some((value) => Number.isFinite(value))
+}
+
+function parsedSummary(record) {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => Number.isFinite(value) || typeof value === 'boolean'))
+}
+
+function objectKeys(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).slice(0, 30) : []
+}
+
+function describeShape(value) {
+  if (Array.isArray(value)) {
+    const objectItems = value.filter((item) => item && typeof item === 'object').slice(0, 3)
+    return { type: 'array', count: value.length, itemKeys: [...new Set(objectItems.flatMap((item) => Object.keys(item)))].slice(0, 30) }
+  }
+  if (value && typeof value === 'object') {
+    return {
+      type: 'object',
+      keys: Object.keys(value).slice(0, 30),
+      fields: Object.fromEntries(Object.entries(value).slice(0, 20).map(([key, field]) => [key, Array.isArray(field) ? `array(${field.length})` : typeof field])),
+    }
+  }
+  return { type: typeof value }
+}
+
+function normalizeKey(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
 function today() {
