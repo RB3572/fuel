@@ -50,15 +50,15 @@ export async function importHealthPayload(payload) {
     readValues(accessToken, spreadsheetId, "'Energy Balance'!A1:P1000"),
   ])
 
-  const normalized = records.map(normalizeRecord).filter((record) => record.date)
+  const normalized = records.map(normalizeRecord).filter((record) => record.date && hasHealthData(record))
   if (!normalized.length) {
-    return { imported: 0, dates: [], warning: 'Records were present, but none contained a valid date.' }
+    return { imported: 0, dates: [], warning: 'Records were present, but none contained usable health values.' }
   }
 
   const updates = []
   for (const record of dedupeByDate(normalized)) {
-    updates.push(upsertRequest('Health Daily', HEALTH_HEADERS, healthRows, healthRow(record)))
-    updates.push(upsertRequest('Recovery', RECOVERY_HEADERS, recoveryRows, recoveryRow(record)))
+    updates.push(upsertRequest('Health Daily', HEALTH_HEADERS, healthRows, healthRow(record), true))
+    updates.push(upsertRequest('Recovery', RECOVERY_HEADERS, recoveryRows, recoveryRow(record), true))
     updates.push(upsertRequest('Energy Balance', ENERGY_HEADERS, energyRows, energyRow(record), true))
   }
 
@@ -112,18 +112,26 @@ function normalizeRecord(record) {
   }
 }
 
+function hasHealthData(record) {
+  return [
+    record.active, record.resting, record.total, record.exerciseMinutes, record.steps,
+    record.distanceMiles, record.restingHeartRate, record.hrv, record.vo2Max,
+    record.respiratoryRate, record.sleep, record.sleepCore, record.sleepDeep, record.sleepRem,
+  ].some((value) => Number.isFinite(value))
+}
+
 function healthRow(record) {
   return [
     record.date, record.active, record.resting, record.total, record.exerciseMinutes,
     record.steps, record.distanceMiles, record.restingHeartRate, record.hrv, record.vo2Max,
-    record.sleep, record.respiratoryRate, record.partial ? 'Yes' : 'No', 'Health.md API',
+    record.sleep, record.respiratoryRate, record.partial ? 'Yes' : 'No', 'Apple Shortcuts API',
   ]
 }
 
 function recoveryRow(record) {
   return [
     record.date, record.sleep, '', '', '', '', record.restingHeartRate,
-    'Automatically synchronized from Health.md.', record.hrv, record.respiratoryRate,
+    'Automatically synchronized from Apple Shortcuts.', record.hrv, record.respiratoryRate,
     record.sleepCore, record.sleepDeep, record.sleepRem,
   ]
 }
@@ -132,8 +140,8 @@ function energyRow(record) {
   return [
     record.date, '', record.resting, record.active, record.total, '', '', '',
     record.partial
-      ? 'Health.md API sync. Current day is partial; balance is intentionally left blank.'
-      : 'Health.md API sync.',
+      ? 'Apple Shortcuts sync. Current day is partial; balance is intentionally left blank.'
+      : 'Apple Shortcuts sync.',
     '', record.sleep, '', '', '', '', '',
   ]
 }
