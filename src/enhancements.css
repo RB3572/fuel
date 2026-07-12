@@ -1,0 +1,187 @@
+.panel-heading > span,
+.small-metric-icon,
+.status-line a,
+.chart-legend i,
+.line-chart,
+.text-button {
+  color: #111111;
+}
+
+.status-dot,
+.status-badge.live .status-dot {
+  background: #111111;
+}
+
+.panel,
+.signin-panel,
+.loader-card,
+.error-banner {
+  box-shadow: 0 10px 32px rgba(17, 17, 17, 0.055);
+}
+
+.overview-panel:nth-child(2) {
+  min-height: 252px;
+}
+
+.visually-replaced {
+  display: none !important;
+}
+
+.macro-score-card {
+  align-items: center;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  min-height: 172px;
+}
+
+.macro-score-copy {
+  min-width: 0;
+}
+
+.macro-kicker {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 650;
+  margin-bottom: 7px;
+}
+
+.macro-score-copy > strong {
+  color: var(--ink);
+  display: inline;
+  font-size: clamp(36px, 4vw, 52px);
+  font-weight: 770;
+  letter-spacing: -0.06em;
+  line-height: 0.95;
+}
+
+.macro-score-copy > small {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+.macro-key {
+  display: grid;
+  gap: 7px;
+  margin-top: 20px;
+}
+
+.macro-key span {
+  align-items: center;
+  color: var(--muted-strong);
+  display: grid;
+  font-size: 11px;
+  grid-template-columns: 8px 1fr auto;
+  gap: 8px;
+}
+
+.macro-key b {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.macro-key i {
+  border-radius: 999px;
+  height: 8px;
+  width: 8px;
+}
+
+.protein-dot,
+.protein-segment {
+  stroke: #111111;
+  background: #111111;
+}
+
+.carb-dot,
+.carb-segment {
+  stroke: #777772;
+  background: #777772;
+}
+
+.fat-dot,
+.fat-segment {
+  stroke: #b9b9b3;
+  background: #b9b9b3;
+}
+
+.macro-ring-wrap {
+  height: 132px;
+  position: relative;
+  width: 132px;
+}
+
+.macro-ring-wrap svg {
+  height: 100%;
+  overflow: visible;
+  transform: rotate(-90deg);
+  width: 100%;
+}
+
+.macro-ring-track,
+.macro-ring-segment {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 11;
+}
+
+.macro-ring-track {
+  stroke: #ededeb;
+}
+
+.macro-ring-center {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  inset: 0;
+  justify-content: center;
+  pointer-events: none;
+  position: absolute;
+}
+
+.macro-ring-center strong {
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 760;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.macro-ring-center span {
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 4px;
+}
+
+.energy-bars .bar.consumed {
+  background: #111111;
+}
+
+.energy-bars .bar.expended {
+  background: #b9b9b3;
+}
+
+.line-chart polyline,
+.line-chart circle {
+  color: #111111;
+  fill: #ffffff;
+  stroke: #111111;
+}
+
+@media (max-width: 700px) {
+  .app-shell {
+    padding: 18px 14px 28px;
+  }
+
+  .macro-score-card {
+    grid-template-columns: minmax(0, 1fr) 112px;
+  }
+
+  .macro-ring-wrap {
+    height: 112px;
+    width: 112px;
+  }
+}
