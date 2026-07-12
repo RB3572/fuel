@@ -1,5 +1,5 @@
 import { authenticatedSession } from './_lib/google.js'
-import { getMLogDashboard } from './_lib/mlog.js'
+import { getMLogDashboard } from './_lib/mlog-v2.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
 
 export default async function handler(req, res) {
@@ -20,8 +20,9 @@ export default async function handler(req, res) {
 
     sendJson(res, 200, dashboard, cookie ? [cookie] : [])
   } catch (error) {
+    console.error('Unable to load MLog', error)
     sendJson(res, 500, {
-      error: error instanceof Error ? error.message : 'Unable to load MLog',
+      error: 'Unable to load MLog. Refresh the page or reconnect Google Drive.',
     })
   }
 }
