@@ -1,4 +1,4 @@
-import { importHealthPayload, verifyImportToken } from '../_lib/health-import.js'
+import { importHealthPayload, readHealthImportSession } from '../_lib/health-import.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 export default async function handler(req, res) {
@@ -7,7 +7,7 @@ export default async function handler(req, res) {
     return
   }
 
-  const auth = verifyImportToken(req)
+  const auth = await readHealthImportSession(req)
   if (!auth.ok) {
     sendJson(res, auth.status, { error: auth.error })
     return
@@ -26,12 +26,12 @@ export default async function handler(req, res) {
       return
     }
 
-    const result = await importHealthPayload(payload)
+    const result = await importHealthPayload(payload, auth.session)
     sendJson(res, 200, { ok: true, ...result })
   } catch (error) {
     console.error('Health import failed', error instanceof Error ? error.message : 'Unknown error')
     sendJson(res, 500, {
-      error: 'Health data could not be imported. Check the Fuel server configuration and payload format.',
+      error: 'Health data could not be imported. Reconnect Fuel and generate a new health sync token if needed.',
     })
   }
 }
