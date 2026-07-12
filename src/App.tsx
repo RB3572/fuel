@@ -390,8 +390,8 @@ function App() {
               <Timer size={22} />
             </div>
             <div className="bar-chart" aria-label="Weekly training minutes">
-              {weekly.map((day) => (
-                <div key={day.label} className="bar-column">
+              {weekly.map((day, index) => (
+                <div key={`${day.label}-${index}`} className="bar-column">
                   <span style={{ height: `${Math.max(8, day.percent)}%` }} />
                   <small>{day.label}</small>
                 </div>
