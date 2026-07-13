@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/health/import-text",
-      "destination": "/api/health/import-v3"
+      "destination": "/api/health/import"
     }
   ]
 }
