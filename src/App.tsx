@@ -61,8 +61,9 @@ export default function App(){
     </section>
     <Section title="Food consumed" detail={`${data?.today.foodEntries.length||0} entries today`} />
     <section className="panel"><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={i} e={e}/>)}</EntryList></section>
-    <Section title="Activity" detail="Daily totals from Apple Health" />
-    <section className="metric-grid">
+    <Section title="Fitness" detail="Daily activity totals from Apple Health" />
+    <ActivityRings summary={s}/>
+    <section className="metric-grid fitness-metrics">
       <Metric icon={<Activity/>} label="Active energy" value={s?.activeEnergy} unit="kcal" />
       <Metric icon={<Clock3/>} label="Exercise" value={s?.exerciseMinutes} unit="min" />
       <Metric icon={<Route/>} label="Walking + running" value={s?.distanceMiles} unit="mi" decimals={2}/>
@@ -89,6 +90,28 @@ export default function App(){
     <section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1} chartTitle="Sleep duration" yLabel="Hours" /></section></section>
     <footer><Database size={15}/><span>{data?.coverage.days||0} days · {data?.coverage.workouts||0} active days · {data?.coverage.foodEntries||0} food entries · Neon Postgres</span></footer>
   </main>
+}
+
+function ActivityRings({summary}:{summary:Summary|undefined}){
+  const rings=[
+    {label:'Move',value:summary?.activeEnergy||0,target:1000,unit:'CAL',radius:96,width:26,className:'move-ring'},
+    {label:'Exercise',value:summary?.exerciseMinutes||0,target:80,unit:'MIN',radius:67,width:24,className:'exercise-ring'},
+    {label:'Stand',value:summary?.standMinutes||0,target:120,unit:'MIN',radius:40,width:22,className:'stand-ring'},
+  ]
+  const {ref,visible}=useInView<HTMLDivElement>()
+  return <section ref={ref} className={`activity-rings panel ${visible?'is-visible':''}`}>
+    <div className="rings-graphic" role="img" aria-label={`Move ${fmt(summary?.activeEnergy)} of 1000 calories, exercise ${fmt(summary?.exerciseMinutes)} of 80 minutes, stand ${fmt(summary?.standMinutes)} of 120 minutes`}>
+      <svg viewBox="0 0 240 240" aria-hidden="true">
+        <defs>
+          <filter id="ring-glow"><feGaussianBlur stdDeviation="2.2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        {rings.map(r=>{const c=2*Math.PI*r.radius;const pct=Math.min(1,Math.max(0,r.value/r.target));return <g key={r.label} className={r.className}><circle className="fitness-track" cx="120" cy="120" r={r.radius} strokeWidth={r.width}/><circle className="fitness-progress" cx="120" cy="120" r={r.radius} strokeWidth={r.width} strokeDasharray={c} strokeDashoffset={c*(1-pct)}/></g>})}
+      </svg>
+    </div>
+    <div className="rings-copy">
+      {rings.map(r=><div className={`ring-stat ${r.className}`} key={r.label}><span>{r.label}</span><strong>{fmt(r.value)}/{fmt(r.target)}<small>{r.unit}</small></strong></div>)}
+    </div>
+  </section>
 }
 
 function EnergyHero({summary,trends,range,setRange}:{summary:Summary|undefined;trends:TrendPoint[];range:RangeKey;setRange:(r:RangeKey)=>void}){
