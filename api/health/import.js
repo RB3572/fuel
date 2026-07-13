@@ -2,7 +2,7 @@ import { sql, userForSyncToken } from '../_lib/db.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
-const PARSER_VERSION = 9
+const PARSER_VERSION = 10
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -127,7 +127,7 @@ function parseTextPayload(text) {
     'date', 'activeEnergy', 'restingEnergy', 'excersiseMinutes', 'exerciseMinutes', 'steps',
     'walkingrunDistance', 'walkingRunningDistance', 'swimDistance', 'swimmingDistance',
     'restingHeartRate', 'heartRateVariability', 'HRV', 'respiratoryRate', 'cardioFitness',
-    'vo2Max', 'sleepTotal', 'bloodOx', 'bloodOxygen', 'standMins', 'standMinutes',
+    'vo2Max', 'sleep', 'sleepTotal', 'sleepHours', 'bloodOx', 'bloodOxygen', 'standMins', 'standMinutes',
     'wlkHRAvg', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
     'flightsClimbed', 'swmStrokes', 'swimmingStrokes'
   ]
@@ -155,7 +155,7 @@ function normalize(payload) {
     hrv: number(value(payload, ['heartRateVariability', 'HRV', 'hrv'])),
     respiratoryRate: number(value(payload, ['respiratoryRate', 'breathingRate'])),
     vo2Max: number(value(payload, ['cardioFitness', 'vo2Max'])),
-    sleepHours: number(value(payload, ['sleepTotal', 'sleepHours'])),
+    sleepHours: sleepDurationHours(value(payload, ['sleep', 'sleepTotal', 'sleepHours'])),
     bloodOxygen: normalizeBloodOxygen(number(value(payload, ['bloodOx', 'bloodOxygen', 'oxygenSaturation']))),
     standMinutes: number(value(payload, ['standMins', 'standMinutes'])),
     walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHeartRateAverage', 'walkingHeartRate'])),
@@ -181,6 +181,31 @@ function number(input) {
   if (!match) return null
   const parsed = Number(match[0].replace(',', '.'))
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function sleepDurationHours(input) {
+  if (input == null || input === '') return null
+  if (typeof input === 'object') return sleepDurationHours(input.value ?? input.amount ?? input.quantity ?? input.sum ?? input.duration)
+
+  const text = String(input).replace(/[−–—]/g, '-').replace(/[\u00A0\u202F]/g, ' ').trim()
+  const hourMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/i)
+  const minuteMatch = text.match(/(\d+(?:[.,]\d+)?)\s*(?:m|min|mins|minute|minutes)\b/i)
+  if (hourMatch || minuteMatch) {
+    const hours = hourMatch ? Number(hourMatch[1].replace(',', '.')) : 0
+    const minutes = minuteMatch ? Number(minuteMatch[1].replace(',', '.')) : 0
+    const total = hours + minutes / 60
+    return Number.isFinite(total) ? total : null
+  }
+
+  // Apple Shortcuts can concatenate the sleep-stage labels and the summed Duration,
+  // for example "Core\nREM\nAwake\nREM25618.88". The final number is seconds.
+  const numbers = [...text.matchAll(/[-+]?\d+(?:[.,]\d+)?/g)]
+  if (!numbers.length) return null
+  const raw = Number(numbers.at(-1)[0].replace(',', '.'))
+  if (!Number.isFinite(raw)) return null
+  if (raw > 1440) return raw / 3600
+  if (raw > 24) return raw / 60
+  return raw
 }
 
 function normalizeBloodOxygen(input) {
