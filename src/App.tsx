@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { Activity, Clock3, Database, Footprints, HeartPulse, LogOut, Moon, RefreshCw, Route, ShieldCheck } from 'lucide-react'
+import { Activity, Bike, Clock3, Database, Footprints, HeartPulse, LogOut, Moon, RefreshCw, Route, ShieldCheck, Waves } from 'lucide-react'
 import './App.css'
 import './ChartLabels.css'
 
 type N = number | null
 type RangeKey = 'day' | 'week' | 'month'
 type SessionUser = { email?: string; name?: string; picture?: string }
-type Summary = { date:string; partialDay:boolean; caloriesConsumed:N; restingEnergy:N; activeEnergy:N; totalExpenditure:N; energyBalance:N; protein:N; carbs:N; fat:N; fiber:N; sleepHours:N; restingHeartRate:N; hrv:N; respiratoryRate:N; stepCount:N; distanceMiles:N; exerciseMinutes:N; vo2Max:N }
+type Summary = { date:string; partialDay:boolean; caloriesConsumed:N; restingEnergy:N; activeEnergy:N; totalExpenditure:N; energyBalance:N; protein:N; carbs:N; fat:N; fiber:N; sleepHours:N; restingHeartRate:N; hrv:N; respiratoryRate:N; bloodOxygen:N; walkingHeartRateAverage:N; stepCount:N; distanceMiles:N; cyclingDistanceMiles:N; swimmingDistanceYards:N; swimmingStrokes:N; standMinutes:N; flightsClimbed:N; exerciseMinutes:N; vo2Max:N }
 type FoodEntry = { time:string; meal:string; food:string; portion:string; calories:N; protein:N; carbs:N; fat:N; fiber:N }
-type WorkoutEntry = { time:string; activity:string; durationMinutes:N; activeCalories:N; distanceMiles:N; averagePace:string; averageHeartRate:N; effort:string; location:string; swimmingDistanceYards:N; stepCount:N; dataQuality:string }
+type WorkoutEntry = { time:string; activity:string; durationMinutes:N; activeCalories:N; distanceMiles:N; averagePace:string; averageHeartRate:N; effort:string; location:string; swimmingDistanceYards:N; stepCount:N; strokeCount:N; dataQuality:string }
 type TrendPoint = Summary & { workoutCount:number }
 type GoalRange = { minimum:N; target:N; maximum:N }
 type DashboardData = { generatedAt:string; today:{summary:Summary;foodEntries:FoodEntry[];workouts:WorkoutEntry[];supplements:Array<{name:string;dose:string}>}; goals:Partial<Record<'calories'|'protein'|'carbs'|'fat'|'fiber'|'sleepHours',GoalRange>>; trends:TrendPoint[]; coverage:{days:number;workouts:number;foodEntries:number}; storage?:string }
@@ -18,6 +18,7 @@ const fmt = (v:N|undefined, d=0) => v == null ? 'Not logged' : new Intl.NumberFo
 const dateFmt = (s:string) => new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric'}).format(new Date(`${s}T12:00:00`))
 const longDate = (s:string) => new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric'}).format(new Date(`${s}T12:00:00`))
 const duration = (v:N|undefined) => v == null ? 'Not logged' : `${Math.floor(v)}h ${Math.round((v%1)*60)}m`
+const positive = (v:N|undefined) => v != null && v > 0
 
 export default function App(){
   const [session,setSession]=useState<{loading:boolean;authenticated:boolean;user:SessionUser|null}>({loading:true,authenticated:false,user:null})
@@ -33,6 +34,7 @@ export default function App(){
   if(session.loading) return <Centered title="Fuel" text="Loading your dashboard." />
   if(!session.authenticated) return <SignIn />
   const s=data?.today.summary
+  const workoutDetail=s?.exerciseMinutes!=null?`${fmt(s.exerciseMinutes)} total exercise minutes`:`${data?.today.workouts.length||0} activity summaries`
   return <main className="app-shell">
     <header className="topbar"><div className="brand"><b>F</b><div><h1>Fuel</h1><p>{longDate(s?.date||new Date().toISOString().slice(0,10))}</p></div></div><div className="user"><div><strong>{session.user?.name||'Signed in'}</strong><span>{session.user?.email}</span></div><button onClick={load} aria-label="Refresh"><RefreshCw size={17} className={loading?'spin':''}/></button><button onClick={logout} aria-label="Sign out"><LogOut size={17}/></button></div></header>
     {error&&<div className="error">{error}</div>}
@@ -51,33 +53,38 @@ export default function App(){
     <Section title="Food consumed" detail={`${data?.today.foodEntries.length||0} entries today`} />
     <section className="panel"><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={i} e={e}/>)}</EntryList></section>
 
-    <Section title="Activity" detail="Movement and training from Apple Health" />
+    <Section title="Activity" detail="Daily totals from Apple Health" />
     <section className="metric-grid">
       <Metric icon={<Activity/>} label="Active energy" value={s?.activeEnergy} unit="kcal" />
       <Metric icon={<Clock3/>} label="Exercise" value={s?.exerciseMinutes} unit="min" />
-      <Metric icon={<Route/>} label="Distance" value={s?.distanceMiles} unit="mi" decimals={2}/>
+      <Metric icon={<Route/>} label="Walking + running" value={s?.distanceMiles} unit="mi" decimals={2}/>
       <Metric icon={<Footprints/>} label="Steps" value={s?.stepCount} unit="" />
+      {positive(s?.standMinutes)&&<Metric icon={<Clock3/>} label="Stand time" value={s?.standMinutes} unit="min" />}
+      {positive(s?.flightsClimbed)&&<Metric icon={<Activity/>} label="Flights climbed" value={s?.flightsClimbed} unit="flights" />}
+      {positive(s?.cyclingDistanceMiles)&&<Metric icon={<Bike/>} label="Cycling distance" value={s?.cyclingDistanceMiles} unit="mi" decimals={2}/>} 
     </section>
 
-    <Section title="Workouts" detail={`${data?.today.workouts.length||0} sessions`} />
-    <section className="panel"><EntryList empty="No workouts logged today.">{(data?.today.workouts||[]).map((e,i)=><WorkoutRow key={i} e={e}/>)}</EntryList></section>
+    <Section title="Workouts" detail={workoutDetail} />
+    <section className="panel"><EntryList empty="No workout activity logged today.">{(data?.today.workouts||[]).map((e,i)=><WorkoutRow key={i} e={e}/>)}</EntryList></section>
 
     <Section title="Steps" detail="Interactive 30-day movement trend" />
     <section className="panel"><InteractiveLine data={data?.trends||[]} metric="stepCount" unit="steps" chartTitle="Daily steps" yLabel="Steps" /></section>
 
-    <Section title="Vitals" detail="Resting cardiovascular and respiratory measures" />
+    <Section title="Vitals" detail="Resting cardiovascular, oxygen, and respiratory measures" />
     <section className="metric-grid">
       <Metric icon={<HeartPulse/>} label="Resting heart rate" value={s?.restingHeartRate} unit="bpm" />
       <Metric icon={<Activity/>} label="HRV" value={s?.hrv} unit="ms" />
       <Metric icon={<Activity/>} label="Respiratory rate" value={s?.respiratoryRate} unit="/min" decimals={1}/>
       <Metric icon={<Activity/>} label="VO₂ max" value={s?.vo2Max} unit="mL/kg/min" decimals={1}/>
+      {positive(s?.bloodOxygen)&&<Metric icon={<Activity/>} label="Blood oxygen" value={s?.bloodOxygen} unit="%" decimals={1}/>} 
+      {positive(s?.walkingHeartRateAverage)&&<Metric icon={<HeartPulse/>} label="Walking heart rate" value={s?.walkingHeartRateAverage} unit="bpm avg" />}
     </section>
     <section className="panel"><InteractiveLine data={data?.trends||[]} metric="restingHeartRate" unit="bpm" chartTitle="Resting heart rate trend" yLabel="Beats per minute" /></section>
 
     <Section title="Recovery" detail="Sleep and readiness context" />
     <section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1} chartTitle="Sleep duration" yLabel="Hours" /></section></section>
 
-    <footer><Database size={15}/><span>{data?.coverage.days||0} days · {data?.coverage.workouts||0} workouts · {data?.coverage.foodEntries||0} food entries · Neon Postgres</span></footer>
+    <footer><Database size={15}/><span>{data?.coverage.days||0} days · {data?.coverage.workouts||0} active days · {data?.coverage.foodEntries||0} food entries · Neon Postgres</span></footer>
   </main>
 }
 
@@ -96,7 +103,7 @@ function EnergyInteractiveChart({data}:{data:TrendPoint[]}){
   if(!data.length)return <div className="empty">No energy data</div>
   const p=data[active]||data.at(-1)!
   return <div className="energy-viz" onMouseLeave={()=>setActive(data.length-1)}>
-    <div className="chart-header-row"><div><strong className="chart-title">Daily energy intake and expenditure</strong><span className="chart-axis-note">Horizontal axis: date · Vertical axis: kilocalories</span></div><ChartLegend items={[['legend-consumed','Calories consumed'],['legend-expended','Total calories expended']]}/></div>
+    <div className="chart-header-row"><div><strong className="chart-title">Daily energy intake and expenditure</strong><span className="chart-axis-note">Horizontal axis: date · Vertical axis: kilocalories</span></div><ChartLegend items={[["legend-consumed","Calories consumed"],["legend-expended","Total calories expended"]]}/></div>
     <div className="tooltip"><strong>{dateFmt(p.date)}</strong><span>Consumed {fmt(p.caloriesConsumed)} kcal</span><span>Expended {fmt(p.totalExpenditure)} kcal</span><span>{p.caloriesConsumed!=null&&p.totalExpenditure!=null?`${p.caloriesConsumed-p.totalExpenditure>0?'+':''}${fmt(p.caloriesConsumed-p.totalExpenditure)} kcal balance`:'Balance unavailable'}</span></div>
     <div className="bars" aria-label="Energy chart by date">{data.map((d,i)=><button key={d.date} className={`bar-day ${i===active?'selected':''}`} onMouseEnter={()=>setActive(i)} onFocus={()=>setActive(i)} onClick={()=>setActive(i)} aria-label={`${dateFmt(d.date)}: ${fmt(d.caloriesConsumed)} calories consumed and ${fmt(d.totalExpenditure)} calories expended`}><span className="bar consumed" style={{height:`${Math.max(3,(d.caloriesConsumed||0)/max*100)}%`}}/><span className="bar burned" style={{height:`${Math.max(3,(d.totalExpenditure||0)/max*100)}%`}}/><small>{dateFmt(d.date)}</small></button>)}</div>
     <div className="x-axis-label">Date</div>
@@ -112,7 +119,7 @@ function InteractiveLine({data,metric,unit,decimals=0,chartTitle,yLabel}:{data:T
   const a=xy[active]||xy.at(-1)!
   const first=xy[0],last=xy.at(-1)!
   return <div className="interactive-line" onMouseLeave={()=>setActive(points.length-1)}>
-    <div className="chart-header-row"><div><strong className="chart-title">{chartTitle}</strong><span className="chart-axis-note">Horizontal axis: date · Vertical axis: {yLabel}</span></div><ChartLegend items={[['legend-line',chartTitle]]}/></div>
+    <div className="chart-header-row"><div><strong className="chart-title">{chartTitle}</strong><span className="chart-axis-note">Horizontal axis: date · Vertical axis: {yLabel}</span></div><ChartLegend items={[["legend-line",chartTitle]]}/></div>
     <div className="line-tooltip"><strong>{dateFmt(a.date)}</strong><span>{fmt(a.value,decimals)} {unit}</span></div>
     <div className="chart-stage"><span className="y-axis-label">{yLabel}</span><svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`${chartTitle}, plotted by date`} onMouseMove={e=>{const r=e.currentTarget.getBoundingClientRect(); const idx=Math.round(((e.clientX-r.left)/r.width)*(points.length-1));setActive(Math.max(0,Math.min(points.length-1,idx)))}}><defs><linearGradient id={`fill-${String(metric)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopOpacity=".18"/><stop offset="1" stopOpacity="0"/></linearGradient></defs><line className="gridline" x1={pad} x2={w-pad} y1={pad} y2={pad}/><line className="gridline" x1={pad} x2={w-pad} y1={h-pad} y2={h-pad}/><path className="area" d={`M ${xy[0].x} ${h-pad} L ${xy.map(p=>`${p.x} ${p.y}`).join(' L ')} L ${xy.at(-1)!.x} ${h-pad} Z`} fill={`url(#fill-${String(metric)})`}/><polyline points={xy.map(p=>`${p.x},${p.y}`).join(' ')} fill="none"/><line className="cursor" x1={a.x} x2={a.x} y1={pad} y2={h-pad}/>{xy.map((p,i)=><circle key={p.date} cx={p.x} cy={p.y} r={i===active?6:3} onClick={()=>setActive(i)}/>)}</svg><span className="y-max-label">{fmt(max,decimals)} {unit}</span><span className="y-min-label">{fmt(min,decimals)} {unit}</span></div>
     <div className="line-axis-footer"><span>{dateFmt(first.date)}</span><strong>Date</strong><span>{dateFmt(last.date)}</span></div>
@@ -127,6 +134,6 @@ function Stat({label,value}:{label:string;value:N|undefined}){return <div><span>
 function Section({title,detail}:{title:string;detail:string}){return <div className="section-title"><h2>{title}</h2><p>{detail}</p></div>}
 function EntryList({children,empty}:{children:ReactNode;empty:string}){const a=Array.isArray(children)?children:[children];return a.length?<div className="entry-list">{children}</div>:<div className="empty">{empty}</div>}
 function FoodRow({e}:{e:FoodEntry}){return <article className="entry"><div><strong>{e.food||e.meal}</strong><span>{[e.time,e.meal,e.portion].filter(Boolean).join(' · ')}</span></div><div><strong>{fmt(e.calories)} kcal</strong><span>{fmt(e.protein,1)}g protein · {fmt(e.carbs,1)}g carbs · {fmt(e.fat,1)}g fat</span></div></article>}
-function WorkoutRow({e}:{e:WorkoutEntry}){const dist=e.swimmingDistanceYards!=null?`${fmt(e.swimmingDistanceYards)} yd`:e.distanceMiles!=null?`${fmt(e.distanceMiles,2)} mi`:'';return <article className="entry"><div><strong>{e.activity||'Workout'}</strong><span>{[e.time,e.durationMinutes!=null?`${fmt(e.durationMinutes)} min`:'',dist,e.location].filter(Boolean).join(' · ')}</span></div><div><strong>{fmt(e.activeCalories)} active kcal</strong><span>{e.averageHeartRate!=null?`${fmt(e.averageHeartRate)} bpm avg`:e.dataQuality}</span></div></article>}
+function WorkoutRow({e}:{e:WorkoutEntry}){const facts=[e.swimmingDistanceYards!=null?`${fmt(e.swimmingDistanceYards)} yd`:e.distanceMiles!=null?`${fmt(e.distanceMiles,2)} mi`:'',e.strokeCount!=null?`${fmt(e.strokeCount)} strokes`:'',e.stepCount!=null?`${fmt(e.stepCount)} steps`:''].filter(Boolean);return <article className="entry"><div><strong>{e.activity||'Activity'}</strong><span>{facts.join(' · ')||e.dataQuality}</span></div><div><span>{e.dataQuality}</span></div></article>}
 function Centered({title,text}:{title:string;text:string}){return <main className="center"><RefreshCw className="spin"/><h1>{title}</h1><p>{text}</p></main>}
 function SignIn(){return <main className="center"><div className="signin"><b>F</b><h1>Fuel</h1><p>Your private nutrition, activity, and recovery dashboard.</p><button onClick={()=>location.assign('/api/auth/google/start')}><ShieldCheck size={18}/> Sign in with Google</button></div></main>}
