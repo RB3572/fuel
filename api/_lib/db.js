@@ -1,0 +1,85 @@
+import crypto from 'node:crypto'
+import { neon } from '@neondatabase/serverless'
+
+export function sql() {
+  const url = process.env.DATABASE_URL
+  if (!url) throw new Error('DATABASE_URL is not configured')
+  return neon(url)
+}
+
+export async function upsertUser(user) {
+  if (!user?.email) throw new Error('Google account email is required')
+  const db = sql()
+  const rows = await db`
+    INSERT INTO app_users (google_sub, email, name, picture_url, updated_at)
+    VALUES (${String(user.sub || user.email)}, ${String(user.email)}, ${user.name || null}, ${user.picture || null}, now())
+    ON CONFLICT (email) DO UPDATE SET
+      google_sub = EXCLUDED.google_sub,
+      name = EXCLUDED.name,
+      picture_url = EXCLUDED.picture_url,
+      updated_at = now()
+    RETURNING id, email, name, picture_url
+  `
+  return rows[0]
+}
+
+export async function ensureUserFromSession(session) {
+  if (session?.userId) return session.userId
+  const user = await upsertUser(session?.user)
+  return user.id
+}
+
+export function tokenHash(token) {
+  return crypto.createHash('sha256').update(token).digest('hex')
+}
+
+export function newSyncToken() {
+  return `fuel_${crypto.randomBytes(32).toString('base64url')}`
+}
+
+export async function getOrCreateSyncToken(userId) {
+  const db = sql()
+  const existing = await db`
+    SELECT id, token_prefix, created_at, last_used_at
+    FROM sync_tokens
+    WHERE user_id = ${userId} AND revoked_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  `
+  if (existing.length) return { ...existing[0], token: null }
+
+  const token = newSyncToken()
+  const rows = await db`
+    INSERT INTO sync_tokens (user_id, token_hash, token_prefix)
+    VALUES (${userId}, ${tokenHash(token)}, ${token.slice(0, 12)})
+    RETURNING id, token_prefix, created_at, last_used_at
+  `
+  return { ...rows[0], token }
+}
+
+export async function rotateSyncToken(userId) {
+  const db = sql()
+  await db`UPDATE sync_tokens SET revoked_at = now() WHERE user_id = ${userId} AND revoked_at IS NULL`
+  const token = newSyncToken()
+  const rows = await db`
+    INSERT INTO sync_tokens (user_id, token_hash, token_prefix)
+    VALUES (${userId}, ${tokenHash(token)}, ${token.slice(0, 12)})
+    RETURNING id, token_prefix, created_at, last_used_at
+  `
+  return { ...rows[0], token }
+}
+
+export async function userForSyncToken(token) {
+  if (!token) return null
+  const db = sql()
+  const rows = await db`
+    SELECT u.id, u.email, u.name
+    FROM sync_tokens t
+    JOIN app_users u ON u.id = t.user_id
+    WHERE t.token_hash = ${tokenHash(token)} AND t.revoked_at IS NULL
+    LIMIT 1
+  `
+  if (!rows.length) return null
+  await db`UPDATE sync_tokens SET last_used_at = now() WHERE token_hash = ${tokenHash(token)}`
+  return rows[0]
+}
