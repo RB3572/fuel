@@ -1,5 +1,6 @@
 const SHORTCUT_URL = 'https://www.icloud.com/shortcuts/bfdc6b641b3f4172a7b842fc60dc1dd3'
 
+// Redeploy marker: Neon-backed production configuration.
 let tokenData = null
 let panel = null
 let launcher = null
