@@ -1,5 +1,5 @@
 import { authenticatedSession } from './_lib/google.js'
-import { getMLogDashboard } from './_lib/mlog-v2.js'
+import { getMLogDashboard } from './_lib/mlog-enhanced.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
 
 export default async function handler(req, res) {
