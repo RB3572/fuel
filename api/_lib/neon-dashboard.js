@@ -3,6 +3,8 @@ import { sql } from './db.js'
 const TIME_ZONE = 'America/Los_Angeles'
 
 export async function getNeonDashboard(userId) {
+  if (!userId) throw new Error('Authenticated user ID is required')
+
   const db = sql()
   const today = dateKey(new Date())
   const [healthRows, foodRows, supplementRows] = await Promise.all([
@@ -23,7 +25,9 @@ export async function getNeonDashboard(userId) {
     `,
   ])
 
-  const healthByDate = new Map(healthRows.map((row) => [String(row.date).slice(0, 10), row]))
+  // Neon may return a PostgreSQL DATE as either a string or a JavaScript Date.
+  // String(row.date).slice(0, 10) is incorrect for Date objects (it produces "Sun Jul 12").
+  const healthByDate = new Map(healthRows.map((row) => [databaseDateKey(row.date), row]))
   const foodsByDate = groupByDate(foodRows, 'occurred_at')
   const supplementsByDate = groupByDate(supplementRows, 'occurred_at')
   const todayHealth = healthByDate.get(today) || null
@@ -57,6 +61,7 @@ export async function getNeonDashboard(userId) {
       hrv: number(health?.hrv_ms),
       stepCount: number(health?.step_count),
       distanceMiles: number(health?.walking_running_distance_mi),
+      swimmingDistanceYards: number(health?.swimming_distance_yd),
       exerciseMinutes: number(health?.exercise_minutes),
       vo2Max: number(health?.vo2_max),
       workoutCount: health ? Number(Boolean(number(health.exercise_minutes) || number(health.swimming_distance_yd))) : 0,
@@ -64,16 +69,17 @@ export async function getNeonDashboard(userId) {
     })
   }
 
+  const totalExpenditure = number(todayHealth?.total_expenditure_kcal)
   const summary = {
     date: today,
     partialDay: todayHealth ? Boolean(todayHealth.partial_day) : true,
     caloriesConsumed: nutrition.calories || null,
     restingEnergy: number(todayHealth?.resting_energy_kcal),
     activeEnergy: number(todayHealth?.active_energy_kcal),
-    totalExpenditure: number(todayHealth?.total_expenditure_kcal),
-    energyBalance: todayHealth?.partial_day || !nutrition.calories || !number(todayHealth?.total_expenditure_kcal)
+    totalExpenditure,
+    energyBalance: todayHealth?.partial_day || !nutrition.calories || !totalExpenditure
       ? null
-      : nutrition.calories - number(todayHealth.total_expenditure_kcal),
+      : nutrition.calories - totalExpenditure,
     protein: nutrition.protein || null,
     carbs: nutrition.carbs || null,
     fat: nutrition.fat || null,
@@ -91,6 +97,7 @@ export async function getNeonDashboard(userId) {
     sleepAwakeHours: null,
     stepCount: number(todayHealth?.step_count),
     distanceMiles: number(todayHealth?.walking_running_distance_mi),
+    swimmingDistanceYards: number(todayHealth?.swimming_distance_yd),
     exerciseMinutes: number(todayHealth?.exercise_minutes),
     vo2Max: number(todayHealth?.vo2_max),
   }
@@ -119,8 +126,8 @@ export async function getNeonDashboard(userId) {
     },
     trends,
     coverage: {
-      startDate: healthRows.length ? String(healthRows[0].date).slice(0, 10) : null,
-      endDate: healthRows.length ? String(healthRows.at(-1).date).slice(0, 10) : null,
+      startDate: healthRows.length ? databaseDateKey(healthRows[0].date) : null,
+      endDate: healthRows.length ? databaseDateKey(healthRows.at(-1).date) : null,
       days: healthRows.length,
       healthDays: healthRows.length,
       foodEntries: foodRows.length,
@@ -198,6 +205,19 @@ function groupByDate(rows, field) {
     map.get(key).push(row)
   }
   return map
+}
+
+function databaseDateKey(value) {
+  if (value == null) return ''
+  if (typeof value === 'string') {
+    const direct = value.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (direct) return direct[1]
+  }
+  const parsed = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  // PostgreSQL DATE values have no time zone. Using UTC preserves the literal date
+  // when Neon materializes one as midnight UTC.
+  return [parsed.getUTCFullYear(), String(parsed.getUTCMonth() + 1).padStart(2, '0'), String(parsed.getUTCDate()).padStart(2, '0')].join('-')
 }
 
 function dateKey(date) {
