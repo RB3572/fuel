@@ -5,19 +5,20 @@ import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 const MLOG_SPREADSHEET_ID = '1XWOQPqQJ4pbN93tQty-jDuiqv7_8CgEfNPVTD0k8MIs'
 const TOKEN_KIND = 'fuel-health-import'
-const PARSER_VERSION = 3
+const PARSER_VERSION = 4
+const TIME_ZONE = 'America/Los_Angeles'
 
 const METRICS = [
-  { key: 'activeEnergy', aliases: ['activeEnergy', 'active energy', 'activeCalories'], mode: 'sum', kind: 'energy', min: 0, max: 6000 },
-  { key: 'restingEnergy', aliases: ['restingEnergy', 'resting energy', 'basalEnergy'], mode: 'sum', kind: 'energy', min: 0, max: 6000 },
-  { key: 'exerciseMinutes', aliases: ['exerciseMinutes', 'exercise minutes', 'exerciseTime'], mode: 'sum', kind: 'durationMinutes', min: 0, max: 1440 },
-  { key: 'steps', aliases: ['steps', 'stepCount', 'step count'], mode: 'sum', kind: 'count', min: 0, max: 150000 },
-  { key: 'walkingRunningDistance', aliases: ['walkingrunDistance', 'walkingRunningDistance', 'walking running distance'], mode: 'sum', kind: 'distanceMiles', min: 0, max: 150 },
-  { key: 'swimmingDistance', aliases: ['swimDistance', 'swimmingDistance', 'swim distance'], mode: 'sum', kind: 'distanceYards', min: 0, max: 50000 },
-  { key: 'restingHeartRate', aliases: ['restingHeartRate', 'resting heart rate', 'restingHR'], mode: 'latest', kind: 'heartRate', min: 20, max: 250 },
-  { key: 'heartRateVariability', aliases: ['HRV', 'heartRateVariability', 'heart rate variability'], mode: 'average', kind: 'milliseconds', min: 0, max: 1000 },
-  { key: 'respiratoryRate', aliases: ['respiratoryRate', 'respiratory rate', 'breathingRate'], mode: 'average', kind: 'rate', min: 3, max: 80 },
-  { key: 'vo2Max', aliases: ['cardioFitness', 'cardio fitness', 'vo2Max', 'VO2 Max'], mode: 'latest', kind: 'vo2', min: 5, max: 100 },
+  { key: 'activeEnergy', aliases: ['activeEnergy', 'active energy', 'activeCalories'], mode: 'sum', kind: 'energy', datePolicy: 'day', min: 0, max: 6000, sampleMin: 0, sampleMax: 1500 },
+  { key: 'restingEnergy', aliases: ['restingEnergy', 'resting energy', 'basalEnergy', 'basal energy burned'], mode: 'sum', kind: 'energy', datePolicy: 'day', min: 0, max: 6000, sampleMin: 0, sampleMax: 1500 },
+  { key: 'exerciseMinutes', aliases: ['exerciseMinutes', 'exercise minutes', 'exerciseTime', 'apple exercise time'], mode: 'sum', kind: 'durationMinutes', datePolicy: 'day', min: 0, max: 1440, sampleMin: 0, sampleMax: 1440 },
+  { key: 'steps', aliases: ['steps', 'stepCount', 'step count'], mode: 'sum', kind: 'count', datePolicy: 'day', min: 0, max: 150000, sampleMin: 0, sampleMax: 100000 },
+  { key: 'walkingRunningDistance', aliases: ['walkingrunDistance', 'walkingRunningDistance', 'walking running distance', 'walking + running distance'], mode: 'sum', kind: 'distanceMiles', datePolicy: 'day', min: 0, max: 150, sampleMin: 0, sampleMax: 100 },
+  { key: 'swimmingDistance', aliases: ['swimDistance', 'swimmingDistance', 'swim distance', 'swimming distance'], mode: 'sum', kind: 'distanceYards', datePolicy: 'day', min: 0, max: 50000, sampleMin: 0, sampleMax: 50000 },
+  { key: 'restingHeartRate', aliases: ['restingHeartRate', 'resting heart rate', 'restingHR'], mode: 'latest', kind: 'heartRate', datePolicy: 'day', min: 20, max: 250, sampleMin: 20, sampleMax: 250 },
+  { key: 'heartRateVariability', aliases: ['HRV', 'heartRateVariability', 'heart rate variability', 'heart rate variability sdnn'], mode: 'average', kind: 'milliseconds', datePolicy: 'day', min: 0, max: 1000, sampleMin: 0, sampleMax: 1000 },
+  { key: 'respiratoryRate', aliases: ['respiratoryRate', 'respiratory rate', 'breathingRate'], mode: 'average', kind: 'rate', datePolicy: 'day', min: 3, max: 80, sampleMin: 3, sampleMax: 80 },
+  { key: 'vo2Max', aliases: ['cardioFitness', 'cardio fitness', 'vo2Max', 'VO2 Max', 'vo₂ max'], mode: 'latest', kind: 'vo2', datePolicy: 'latestAny', min: 5, max: 100, sampleMin: 5, sampleMax: 100 },
 ]
 
 export default async function handler(req, res) {
@@ -72,6 +73,8 @@ export default async function handler(req, res) {
       parsed: parsedSummary(normalized),
       missingMetrics: diagnostics.missingMetrics,
       rejectedMetrics: diagnostics.rejectedMetrics,
+      sampleCounts: diagnostics.selectedSampleCounts,
+      datedSampleCounts: diagnostics.datedSampleCounts,
     })
   } catch (error) {
     console.error('Shortcut text health import failed', error instanceof Error ? error.message : 'Unknown error')
@@ -116,7 +119,7 @@ function parseDictionaryText(text) {
 
   const markers = []
   const allAliases = [
-    { key: 'sleep', aliases: ['sleep', 'sleep samples'] },
+    { key: 'sleep', aliases: ['sleep', 'sleep samples', 'sleep analysis'] },
     ...METRICS,
   ]
 
@@ -147,15 +150,22 @@ function normalizePayload(payload) {
   if (Array.isArray(payload)) payload = payload[0] || {}
   if (!payload || typeof payload !== 'object') payload = {}
 
+  const targetDate = dateValue(get(payload, ['date', 'day'])) || today()
   const values = {}
   const rejectedMetrics = []
   const sectionCounts = {}
+  const selectedSampleCounts = {}
+  const datedSampleCounts = {}
 
   for (const rule of METRICS) {
     const source = get(payload, rule.aliases)
-    const measurements = collectMeasurements(source, rule)
-    sectionCounts[rule.key] = measurements.length
-    const rawValue = aggregate(measurements, rule.mode)
+    const allMeasurements = collectMeasurements(source, rule)
+    const selectedMeasurements = selectMeasurements(allMeasurements, rule, targetDate)
+    sectionCounts[rule.key] = allMeasurements.length
+    selectedSampleCounts[rule.key] = selectedMeasurements.length
+    datedSampleCounts[rule.key] = allMeasurements.filter((item) => item.time > 0).length
+
+    const rawValue = aggregate(selectedMeasurements, rule.mode)
     if (rawValue == null) {
       values[rule.key] = null
     } else if (rawValue < rule.min || rawValue > rule.max) {
@@ -166,9 +176,9 @@ function normalizePayload(payload) {
     }
   }
 
-  const sleep = sleepSummary(get(payload, ['sleep', 'sleepSamples']))
+  const sleep = sleepSummary(get(payload, ['sleep', 'sleepSamples']), targetDate)
   const normalized = {
-    date: dateValue(get(payload, ['date', 'day'])) || today(),
+    date: targetDate,
     activeEnergy: values.activeEnergy,
     restingEnergy: values.restingEnergy,
     totalExpenditure: values.activeEnergy == null || values.restingEnergy == null
@@ -198,8 +208,15 @@ function normalizePayload(payload) {
 
   return {
     normalized,
-    diagnostics: { missingMetrics, rejectedMetrics, sectionCounts },
+    diagnostics: { missingMetrics, rejectedMetrics, sectionCounts, selectedSampleCounts, datedSampleCounts },
   }
+}
+
+function selectMeasurements(measurements, rule, targetDate) {
+  if (!measurements.length || rule.datePolicy === 'latestAny') return measurements
+  const dated = measurements.filter((item) => item.time > 0)
+  if (!dated.length) return measurements
+  return dated.filter((item) => localDate(item.time) === targetDate)
 }
 
 function collectMeasurements(value, rule, inheritedUnit = '') {
@@ -208,7 +225,7 @@ function collectMeasurements(value, rule, inheritedUnit = '') {
 
   if (typeof value === 'number') {
     const converted = convert(value, inheritedUnit, rule.kind)
-    return Number.isFinite(converted) ? [{ number: converted, time: 0, fingerprint: `${converted}|${inheritedUnit}` }] : []
+    return validSample(converted, rule) ? [{ number: converted, time: 0, fingerprint: `${converted}|${inheritedUnit}` }] : []
   }
 
   if (typeof value === 'object') {
@@ -237,34 +254,48 @@ function collectMeasurements(value, rule, inheritedUnit = '') {
 }
 
 function parseTextMeasurements(text, rule) {
-  const cleaned = stripTemporalNoise(text)
+  const source = String(text)
   const measurements = []
   const unitPattern = '(kcal|calories?|cal|steps?|count(?:\\/min)?|breaths?(?:\\/min)?|bpm|ms|mL\\/kg\\/min|ml\\/kg\\/min|mi|miles?|km|kilometers?|m|meters?|yd|yards?|hours?|hrs?|hr|minutes?|mins?|min|seconds?|secs?|sec)'
   const regex = new RegExp(`(-?\\d+(?:\\.\\d+)?)\\s*${unitPattern}`, 'gi')
 
-  for (const match of cleaned.matchAll(regex)) {
+  for (const match of source.matchAll(regex)) {
     const converted = convert(Number(match[1]), String(match[2] || ''), rule.kind)
-    if (!Number.isFinite(converted)) continue
-    measurements.push({ number: converted, time: contextTime(cleaned, match.index || 0), fingerprint: contextFingerprint(cleaned, match.index || 0, converted, match[2]) })
+    if (!validSample(converted, rule)) continue
+    measurements.push({
+      number: converted,
+      time: contextTime(source, match.index || 0),
+      fingerprint: contextFingerprint(source, match.index || 0, converted, match[2]),
+    })
   }
 
   if (!measurements.length) {
     const labeled = /(?:value|quantity|amount|total|sum)\s*[:=]\s*(-?\d+(?:\.\d+)?)/gi
-    for (const match of cleaned.matchAll(labeled)) {
+    for (const match of source.matchAll(labeled)) {
       const converted = convert(Number(match[1]), '', rule.kind)
-      if (!Number.isFinite(converted)) continue
-      measurements.push({ number: converted, time: contextTime(cleaned, match.index || 0), fingerprint: contextFingerprint(cleaned, match.index || 0, converted, '') })
+      if (!validSample(converted, rule)) continue
+      measurements.push({
+        number: converted,
+        time: contextTime(source, match.index || 0),
+        fingerprint: contextFingerprint(source, match.index || 0, converted, ''),
+      })
     }
   }
 
-  if (!measurements.length && looksLikeSimpleNumberList(cleaned)) {
+  if (!measurements.length) {
+    const cleaned = stripTemporalNoise(source)
     for (const match of cleaned.matchAll(/-?\d+(?:\.\d+)?/g)) {
       const converted = convert(Number(match[0]), '', rule.kind)
-      if (Number.isFinite(converted)) measurements.push({ number: converted, time: 0, fingerprint: `${converted}|${match.index}` })
+      if (!validSample(converted, rule)) continue
+      measurements.push({ number: converted, time: 0, fingerprint: `${converted}|fallback|${match.index}` })
     }
   }
 
   return dedupeMeasurements(measurements)
+}
+
+function validSample(value, rule) {
+  return Number.isFinite(value) && value >= rule.sampleMin && value <= rule.sampleMax
 }
 
 function aggregate(measurements, mode) {
@@ -327,24 +358,17 @@ function convert(number, rawUnit, kind) {
   return number
 }
 
-function sleepSummary(value) {
+function sleepSummary(value, targetDate) {
   const output = { total: null, core: null, deep: null, rem: null, awake: null }
   if (value == null) return output
 
   const text = typeof value === 'string' ? value : JSON.stringify(value)
-  const intervals = []
-  const intervalRegex = /(awake|core|deep|rem|asleep)?[^\n\r]{0,120}?(20\d{2}-\d{2}-\d{2}[T ][0-9:.+-Z]+)[^\n\r]{0,100}?(20\d{2}-\d{2}-\d{2}[T ][0-9:.+-Z]+)/gi
-
-  for (const match of text.matchAll(intervalRegex)) {
-    const start = new Date(match[2])
-    const end = new Date(match[3])
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) continue
-    const duration = (end.getTime() - start.getTime()) / 3600000
-    if (duration > 24) continue
-    intervals.push({ stage: String(match[1] || 'asleep').toLowerCase(), start: start.getTime(), end: end.getTime() })
-  }
-
+  let intervals = parseSleepIntervals(text)
   if (intervals.length) {
+    const datedForTarget = intervals.filter((item) => localDate(item.end) === targetDate)
+    if (datedForTarget.length) intervals = datedForTarget
+    else if (intervals.some((item) => item.end > 0)) return output
+
     const awake = mergeIntervals(intervals.filter((item) => item.stage === 'awake'))
     const deep = mergeIntervals(intervals.filter((item) => item.stage === 'deep'))
     const rem = mergeIntervals(intervals.filter((item) => item.stage === 'rem'))
@@ -361,6 +385,38 @@ function sleepSummary(value) {
   const measurements = parseDurationMeasurements(text)
   if (measurements.length) output.total = measurements.reduce((sum, item) => sum + item.number, 0)
   return output
+}
+
+function parseSleepIntervals(text) {
+  const intervals = []
+  const chunks = String(text).split(/\n+|(?<=\})\s*,\s*(?=\{)/)
+
+  for (const chunk of chunks) {
+    const times = extractDateTimes(chunk)
+    if (times.length < 2) continue
+    const start = times[0].time
+    const end = times[1].time
+    if (!(end > start) || end - start > 24 * 3600000) continue
+    intervals.push({ stage: detectSleepStage(chunk), start, end })
+  }
+
+  if (!intervals.length) {
+    const times = extractDateTimes(text)
+    for (let index = 0; index + 1 < times.length; index += 2) {
+      const start = times[index].time
+      const end = times[index + 1].time
+      if (!(end > start) || end - start > 24 * 3600000) continue
+      const context = text.slice(Math.max(0, times[index].index - 120), Math.min(text.length, times[index + 1].index + times[index + 1].raw.length + 120))
+      intervals.push({ stage: detectSleepStage(context), start, end })
+    }
+  }
+
+  return dedupeIntervals(intervals)
+}
+
+function detectSleepStage(text) {
+  const match = String(text).match(/\b(awake|core|deep|rem|asleep)\b/i)
+  return match ? match[1].toLowerCase() : 'asleep'
 }
 
 function parseDurationMeasurements(text) {
@@ -390,6 +446,12 @@ function mergeIntervals(intervals) {
   return merged
 }
 
+function dedupeIntervals(intervals) {
+  const map = new Map()
+  for (const item of intervals) map.set(`${item.stage}|${item.start}|${item.end}`, item)
+  return [...map.values()]
+}
+
 function durationHours(intervals) {
   if (!intervals.length) return null
   return intervals.reduce((sum, item) => sum + (item.end - item.start) / 3600000, 0)
@@ -398,14 +460,10 @@ function durationHours(intervals) {
 function stripTemporalNoise(text) {
   return String(text)
     .replace(/20\d{2}-\d{2}-\d{2}[T ][0-9:.+-Z]+/g, ' ')
-    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, ' ')
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}(?:,?\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?/gi, ' ')
+    .replace(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+20\d{2}(?:,?\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?/gi, ' ')
     .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?\b/gi, ' ')
     .replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi, ' ')
-}
-
-function looksLikeSimpleNumberList(text) {
-  const residue = text.replace(/-?\d+(?:\.\d+)?/g, '').replace(/[\s,;\[\](){}'".-]/g, '')
-  return residue.length < 12
 }
 
 function dedupeMeasurements(measurements) {
@@ -418,9 +476,30 @@ function dedupeMeasurements(measurements) {
 }
 
 function contextTime(text, index) {
-  const window = text.slice(Math.max(0, index - 160), Math.min(text.length, index + 160))
-  const dates = [...window.matchAll(/20\d{2}-\d{2}-\d{2}[T ][0-9:.+-Z]+/g)]
-  return dates.length ? parseTime(dates.at(-1)[0]) : 0
+  const windowStart = Math.max(0, index - 220)
+  const window = text.slice(windowStart, Math.min(text.length, index + 220))
+  const times = extractDateTimes(window)
+  if (!times.length) return 0
+  const relativeIndex = index - windowStart
+  times.sort((a, b) => Math.abs(a.index - relativeIndex) - Math.abs(b.index - relativeIndex))
+  return times[0].time
+}
+
+function extractDateTimes(text) {
+  const patterns = [
+    /20\d{2}-\d{2}-\d{2}[T ][0-9:.+-Z]+/gi,
+    /\b\d{1,2}\/\d{1,2}\/\d{2,4}(?:,?\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?/gi,
+    /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+20\d{2}(?:,?\s+(?:at\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?/gi,
+  ]
+  const found = []
+  for (const pattern of patterns) {
+    for (const match of String(text).matchAll(pattern)) {
+      const raw = match[0]
+      const time = parseTime(raw.replace(/\sat\s/i, ' '))
+      if (time) found.push({ raw, time, index: match.index || 0 })
+    }
+  }
+  return found.sort((a, b) => a.index - b.index)
 }
 
 function contextFingerprint(text, index, number, unit) {
@@ -431,6 +510,10 @@ function contextFingerprint(text, index, number, unit) {
 function parseTime(value) {
   const date = new Date(String(value || ''))
   return Number.isNaN(date.getTime()) ? 0 : date.getTime()
+}
+
+function localDate(time) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date(time))
 }
 
 function normalizeUnit(value) {
@@ -474,7 +557,7 @@ function dateValue(value) {
   const direct = String(value).match(/\b(20\d{2}-\d{2}-\d{2})\b/)
   if (direct) return direct[1]
   const date = new Date(String(value))
-  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(date)
+  return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(date)
 }
 
 function decodeMaybe(value) {
@@ -494,5 +577,5 @@ function escapeRegex(value) {
 }
 
 function today() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date())
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date())
 }
