@@ -1,12 +1,13 @@
 import { verifyStateCookie } from '../../_lib/crypto.js'
+import { upsertUser } from '../../_lib/db.js'
 import {
   clearSessionCookie,
   exchangeCode,
   getUserInfo,
   sessionCookie,
   stateCookieName,
+  appUrl,
 } from '../../_lib/google.js'
-import { appUrl } from '../../_lib/google.js'
 import { clearCookie, parseCookies, redirect } from '../../_lib/http.js'
 
 export default async function handler(req, res) {
@@ -19,8 +20,7 @@ export default async function handler(req, res) {
   const url = new URL(req.url, appUrl())
   const code = url.searchParams.get('code')
   const returnedState = url.searchParams.get('state')
-  const cookies = parseCookies(req)
-  const expectedState = verifyStateCookie(cookies[stateCookieName])
+  const expectedState = verifyStateCookie(parseCookies(req)[stateCookieName])
   const baseCookies = [clearCookie(stateCookieName)]
 
   if (!code || !returnedState || !expectedState || returnedState !== expectedState) {
@@ -30,21 +30,21 @@ export default async function handler(req, res) {
 
   try {
     const tokens = await exchangeCode(code)
-    const session = { tokens, createdAt: Date.now() }
-    const user = await getUserInfo(session).catch(() => null)
+    const provisional = { tokens, createdAt: Date.now() }
+    const googleUser = await getUserInfo(provisional)
+    const dbUser = await upsertUser(googleUser)
     const nextSession = {
-      ...session,
-      user: user
-        ? {
-            email: user.email,
-            name: user.name,
-            picture: user.picture,
-          }
-        : null,
+      ...provisional,
+      userId: dbUser.id,
+      user: {
+        email: dbUser.email,
+        name: dbUser.name,
+        picture: dbUser.picture_url,
+      },
     }
-
     redirect(res, '/', [...baseCookies, sessionCookie(nextSession)])
-  } catch {
+  } catch (error) {
+    console.error('Google sign in failed', error)
     redirect(res, '/?auth_error=token_exchange_failed', [...baseCookies, clearSessionCookie()])
   }
 }
