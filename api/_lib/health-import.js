@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets'
+const SHEETS_EPOCH_MS = Date.UTC(1899, 11, 30)
 
 const HEALTH_HEADERS = [
   'Date', 'Active Energy (kcal)', 'Resting Energy (kcal)', 'Total Expenditure (kcal)',
@@ -51,22 +52,28 @@ export async function importHealthPayload(payload) {
   ])
 
   const normalized = records.map(normalizeRecord).filter((record) => record.date && hasHealthData(record))
-  if (!normalized.length) {
+  const uniqueRecords = dedupeByDate(normalized)
+  if (!uniqueRecords.length) {
     return { imported: 0, dates: [], warning: 'Records were present, but none contained usable health values.' }
   }
 
   const updates = []
-  for (const record of dedupeByDate(normalized)) {
-    updates.push(upsertRequest('Health Daily', HEALTH_HEADERS, healthRows, healthRow(record), true))
-    updates.push(upsertRequest('Recovery', RECOVERY_HEADERS, recoveryRows, recoveryRow(record), true))
-    updates.push(upsertRequest('Energy Balance', ENERGY_HEADERS, energyRows, energyRow(record), true))
+  let duplicatesCleared = 0
+  for (const record of uniqueRecords) {
+    const health = upsertRequests('Health Daily', HEALTH_HEADERS, healthRows, healthRow(record), true)
+    const recovery = upsertRequests('Recovery', RECOVERY_HEADERS, recoveryRows, recoveryRow(record), true)
+    const energy = upsertRequests('Energy Balance', ENERGY_HEADERS, energyRows, energyRow(record), true)
+    updates.push(...health.requests, ...recovery.requests, ...energy.requests)
+    duplicatesCleared += health.duplicatesCleared + recovery.duplicatesCleared + energy.duplicatesCleared
   }
 
   await batchWrite(accessToken, spreadsheetId, updates.filter(Boolean))
 
   return {
-    imported: dedupeByDate(normalized).length,
-    dates: dedupeByDate(normalized).map((record) => record.date),
+    imported: uniqueRecords.length,
+    dates: uniqueRecords.map((record) => record.date),
+    mode: 'upsert',
+    duplicatesCleared,
   }
 }
 
@@ -146,24 +153,48 @@ function energyRow(record) {
   ]
 }
 
-function upsertRequest(sheet, headers, existingRows, incoming, preserveExisting = false) {
+function upsertRequests(sheet, headers, existingRows, incoming, preserveExisting = false) {
   const rows = existingRows.length ? existingRows : [headers]
-  const date = incoming[0]
-  let index = rows.findIndex((row, rowIndex) => rowIndex > 0 && normalizeDate(row[0]) === date)
-  if (index < 0) index = rows.length
-
-  let values = incoming
-  if (preserveExisting && rows[index]) {
-    values = headers.map((_, columnIndex) => incoming[columnIndex] === '' || incoming[columnIndex] == null
-      ? (rows[index][columnIndex] ?? '')
-      : incoming[columnIndex])
+  const date = normalizeDate(incoming[0])
+  const matchingIndexes = []
+  for (let index = 1; index < rows.length; index += 1) {
+    if (normalizeDate(rows[index]?.[0]) === date) matchingIndexes.push(index)
   }
 
+  const targetIndex = matchingIndexes[0] ?? rows.length
+  const mergedExisting = Array(headers.length).fill('')
+  for (const index of matchingIndexes) {
+    const row = rows[index] || []
+    for (let columnIndex = 0; columnIndex < headers.length; columnIndex += 1) {
+      if (hasCellValue(row[columnIndex])) mergedExisting[columnIndex] = row[columnIndex]
+    }
+  }
+
+  const values = headers.map((_, columnIndex) => {
+    const incomingValue = incoming[columnIndex]
+    if (columnIndex === 0) return date
+    if (hasCellValue(incomingValue)) return incomingValue
+    return preserveExisting ? (mergedExisting[columnIndex] ?? '') : ''
+  })
+
+  const requests = [valueUpdate(sheet, headers.length, targetIndex, values)]
+  for (const duplicateIndex of matchingIndexes.slice(1)) {
+    requests.push(valueUpdate(sheet, headers.length, duplicateIndex, Array(headers.length).fill('')))
+  }
+
+  return { requests, duplicatesCleared: Math.max(0, matchingIndexes.length - 1) }
+}
+
+function valueUpdate(sheet, width, zeroBasedRowIndex, values) {
   return {
-    range: `'${sheet}'!A${index + 1}:${columnLetter(headers.length)}${index + 1}`,
+    range: `'${sheet}'!A${zeroBasedRowIndex + 1}:${columnLetter(width)}${zeroBasedRowIndex + 1}`,
     majorDimension: 'ROWS',
     values: [values.map((value) => value ?? '')],
   }
+}
+
+function hasCellValue(value) {
+  return value !== '' && value != null
 }
 
 async function getGoogleAccessToken() {
@@ -289,8 +320,15 @@ function booleanValue(value) {
 }
 
 function normalizeDate(value) {
-  if (!value) return ''
-  const text = typeof value === 'object' ? String(value.value || value.date || '') : String(value)
+  if (value == null || value === '') return ''
+
+  const raw = typeof value === 'object' ? (value.value ?? value.date ?? '') : value
+  const numeric = typeof raw === 'number' ? raw : (/^\d+(?:\.\d+)?$/.test(String(raw).trim()) ? Number(raw) : null)
+  if (numeric != null && Number.isFinite(numeric) && numeric > 20000 && numeric < 80000) {
+    return new Date(SHEETS_EPOCH_MS + Math.floor(numeric) * 86400000).toISOString().slice(0, 10)
+  }
+
+  const text = String(raw)
   const direct = text.match(/^(\d{4}-\d{2}-\d{2})/)
   if (direct) return direct[1]
   const parsed = new Date(text)
@@ -304,8 +342,19 @@ function isToday(date) {
 
 function dedupeByDate(records) {
   const map = new Map()
-  for (const record of records) map.set(record.date, record)
+  for (const record of records) {
+    const previous = map.get(record.date) || { date: record.date }
+    map.set(record.date, mergeRecord(previous, record))
+  }
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date))
+}
+
+function mergeRecord(previous, incoming) {
+  const merged = { ...previous }
+  for (const [key, value] of Object.entries(incoming)) {
+    if (key === 'date' || hasCellValue(value)) merged[key] = value
+  }
+  return merged
 }
 
 function sumNullable(a, b) {
