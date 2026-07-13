@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { Activity, Clock3, Database, Footprints, HeartPulse, LogOut, Moon, RefreshCw, Route, ShieldCheck } from 'lucide-react'
 import './App.css'
+import './ChartLabels.css'
 
 type N = number | null
 type RangeKey = 'day' | 'week' | 'month'
@@ -62,7 +63,7 @@ export default function App(){
     <section className="panel"><EntryList empty="No workouts logged today.">{(data?.today.workouts||[]).map((e,i)=><WorkoutRow key={i} e={e}/>)}</EntryList></section>
 
     <Section title="Steps" detail="Interactive 30-day movement trend" />
-    <section className="panel"><InteractiveLine data={data?.trends||[]} metric="stepCount" unit="steps" /></section>
+    <section className="panel"><InteractiveLine data={data?.trends||[]} metric="stepCount" unit="steps" chartTitle="Daily steps" yLabel="Steps" /></section>
 
     <Section title="Vitals" detail="Resting cardiovascular and respiratory measures" />
     <section className="metric-grid">
@@ -71,10 +72,10 @@ export default function App(){
       <Metric icon={<Activity/>} label="Respiratory rate" value={s?.respiratoryRate} unit="/min" decimals={1}/>
       <Metric icon={<Activity/>} label="VO₂ max" value={s?.vo2Max} unit="mL/kg/min" decimals={1}/>
     </section>
-    <section className="panel"><InteractiveLine data={data?.trends||[]} metric="restingHeartRate" unit="bpm" /></section>
+    <section className="panel"><InteractiveLine data={data?.trends||[]} metric="restingHeartRate" unit="bpm" chartTitle="Resting heart rate trend" yLabel="Beats per minute" /></section>
 
     <Section title="Recovery" detail="Sleep and readiness context" />
-    <section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1}/></section></section>
+    <section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1} chartTitle="Sleep duration" yLabel="Hours" /></section></section>
 
     <footer><Database size={15}/><span>{data?.coverage.days||0} days · {data?.coverage.workouts||0} workouts · {data?.coverage.foodEntries||0} food entries · Neon Postgres</span></footer>
   </main>
@@ -89,10 +90,36 @@ function EnergyHero({summary,trends,range,setRange}:{summary:Summary|undefined;t
   return <section className="hero panel"><div className="hero-head"><div><span className="eyebrow">ENERGY BALANCE</span><h2>{balance==null?'Incomplete data':balance>0?`${fmt(balance)} kcal surplus`:`${fmt(Math.abs(balance))} kcal deficit`}</h2><p>{range==='day'?'Today':range==='week'?'Last 7 days':'Last 30 days'} · intake versus total expenditure</p></div><div className="tabs">{(['day','week','month'] as RangeKey[]).map(r=><button className={range===r?'active':''} onClick={()=>setRange(r)} key={r}>{r==='day'?'Day':r==='week'?'Week':'Month'}</button>)}</div></div><EnergyInteractiveChart data={visible}/><div className="hero-stats"><Stat label="Consumed" value={consumed||summary?.caloriesConsumed} /><Stat label="Resting" value={range==='day'?summary?.restingEnergy:visible.reduce((a,p)=>a+(p.restingEnergy||0),0)} /><Stat label="Active" value={range==='day'?summary?.activeEnergy:visible.reduce((a,p)=>a+(p.activeEnergy||0),0)} /><Stat label="Expended" value={expended||summary?.totalExpenditure} /></div></section>
 }
 
-function EnergyInteractiveChart({data}:{data:TrendPoint[]}){ const [active,setActive]=useState(Math.max(0,data.length-1)); const max=Math.max(1,...data.flatMap(p=>[p.caloriesConsumed||0,p.totalExpenditure||0])); if(!data.length)return <div className="empty">No energy data</div>; const p=data[active]||data.at(-1)!; return <div className="energy-viz" onMouseLeave={()=>setActive(data.length-1)}><div className="tooltip"><strong>{dateFmt(p.date)}</strong><span>Consumed {fmt(p.caloriesConsumed)} kcal</span><span>Expended {fmt(p.totalExpenditure)} kcal</span><span>{p.caloriesConsumed!=null&&p.totalExpenditure!=null?`${p.caloriesConsumed-p.totalExpenditure>0?'+':''}${fmt(p.caloriesConsumed-p.totalExpenditure)} kcal balance`:'Balance unavailable'}</span></div><div className="bars">{data.map((d,i)=><button key={d.date} className={`bar-day ${i===active?'selected':''}`} onMouseEnter={()=>setActive(i)} onFocus={()=>setActive(i)} onClick={()=>setActive(i)}><span className="bar consumed" style={{height:`${Math.max(3,(d.caloriesConsumed||0)/max*100)}%`}}/><span className="bar burned" style={{height:`${Math.max(3,(d.totalExpenditure||0)/max*100)}%`}}/><small>{dateFmt(d.date)}</small></button>)}</div></div> }
+function EnergyInteractiveChart({data}:{data:TrendPoint[]}){
+  const [active,setActive]=useState(Math.max(0,data.length-1))
+  const max=Math.max(1,...data.flatMap(p=>[p.caloriesConsumed||0,p.totalExpenditure||0]))
+  if(!data.length)return <div className="empty">No energy data</div>
+  const p=data[active]||data.at(-1)!
+  return <div className="energy-viz" onMouseLeave={()=>setActive(data.length-1)}>
+    <div className="chart-header-row"><div><strong className="chart-title">Daily energy intake and expenditure</strong><span className="chart-axis-note">Horizontal axis: date · Vertical axis: kilocalories</span></div><ChartLegend items={[['legend-consumed','Calories consumed'],['legend-expended','Total calories expended']]}/></div>
+    <div className="tooltip"><strong>{dateFmt(p.date)}</strong><span>Consumed {fmt(p.caloriesConsumed)} kcal</span><span>Expended {fmt(p.totalExpenditure)} kcal</span><span>{p.caloriesConsumed!=null&&p.totalExpenditure!=null?`${p.caloriesConsumed-p.totalExpenditure>0?'+':''}${fmt(p.caloriesConsumed-p.totalExpenditure)} kcal balance`:'Balance unavailable'}</span></div>
+    <div className="bars" aria-label="Energy chart by date">{data.map((d,i)=><button key={d.date} className={`bar-day ${i===active?'selected':''}`} onMouseEnter={()=>setActive(i)} onFocus={()=>setActive(i)} onClick={()=>setActive(i)} aria-label={`${dateFmt(d.date)}: ${fmt(d.caloriesConsumed)} calories consumed and ${fmt(d.totalExpenditure)} calories expended`}><span className="bar consumed" style={{height:`${Math.max(3,(d.caloriesConsumed||0)/max*100)}%`}}/><span className="bar burned" style={{height:`${Math.max(3,(d.totalExpenditure||0)/max*100)}%`}}/><small>{dateFmt(d.date)}</small></button>)}</div>
+    <div className="x-axis-label">Date</div>
+  </div>
+}
 
-function InteractiveLine({data,metric,unit,decimals=0}:{data:TrendPoint[];metric:keyof TrendPoint;unit:string;decimals?:number}){ const points=data.map((p,i)=>({date:p.date,value:typeof p[metric]==='number'?p[metric] as number:null,i})).filter((p):p is {date:string;value:number;i:number}=>p.value!=null); const [active,setActive]=useState(Math.max(0,points.length-1)); if(points.length<2)return <div className="empty">Insufficient data</div>; const max=Math.max(...points.map(p=>p.value)),min=Math.min(...points.map(p=>p.value)),w=760,h=190,pad=18,range=max-min||1; const xy=points.map((p,i)=>({...p,x:pad+i/(points.length-1)*(w-pad*2),y:pad+(max-p.value)/range*(h-pad*2)})); const a=xy[active]||xy.at(-1)!; return <div className="interactive-line" onMouseLeave={()=>setActive(points.length-1)}><div className="line-tooltip"><strong>{dateFmt(a.date)}</strong><span>{fmt(a.value,decimals)} {unit}</span></div><svg viewBox={`0 0 ${w} ${h}`} onMouseMove={e=>{const r=e.currentTarget.getBoundingClientRect(); const idx=Math.round(((e.clientX-r.left)/r.width)*(points.length-1));setActive(Math.max(0,Math.min(points.length-1,idx)))}}><defs><linearGradient id={`fill-${String(metric)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopOpacity=".18"/><stop offset="1" stopOpacity="0"/></linearGradient></defs><path className="area" d={`M ${xy[0].x} ${h-pad} L ${xy.map(p=>`${p.x} ${p.y}`).join(' L ')} L ${xy.at(-1)!.x} ${h-pad} Z`} fill={`url(#fill-${String(metric)})`}/><polyline points={xy.map(p=>`${p.x},${p.y}`).join(' ')} fill="none"/><line className="cursor" x1={a.x} x2={a.x} y1={pad} y2={h-pad}/>{xy.map((p,i)=><circle key={p.date} cx={p.x} cy={p.y} r={i===active?6:3} onClick={()=>setActive(i)}/>)}</svg></div> }
+function InteractiveLine({data,metric,unit,decimals=0,chartTitle,yLabel}:{data:TrendPoint[];metric:keyof TrendPoint;unit:string;decimals?:number;chartTitle:string;yLabel:string}){
+  const points=data.map((p,i)=>({date:p.date,value:typeof p[metric]==='number'?p[metric] as number:null,i})).filter((p):p is {date:string;value:number;i:number}=>p.value!=null)
+  const [active,setActive]=useState(Math.max(0,points.length-1))
+  if(points.length<2)return <div className="empty">Insufficient data</div>
+  const max=Math.max(...points.map(p=>p.value)),min=Math.min(...points.map(p=>p.value)),w=760,h=190,pad=24,range=max-min||1
+  const xy=points.map((p,i)=>({...p,x:pad+i/(points.length-1)*(w-pad*2),y:pad+(max-p.value)/range*(h-pad*2)}))
+  const a=xy[active]||xy.at(-1)!
+  const first=xy[0],last=xy.at(-1)!
+  return <div className="interactive-line" onMouseLeave={()=>setActive(points.length-1)}>
+    <div className="chart-header-row"><div><strong className="chart-title">{chartTitle}</strong><span className="chart-axis-note">Horizontal axis: date · Vertical axis: {yLabel}</span></div><ChartLegend items={[['legend-line',chartTitle]]}/></div>
+    <div className="line-tooltip"><strong>{dateFmt(a.date)}</strong><span>{fmt(a.value,decimals)} {unit}</span></div>
+    <div className="chart-stage"><span className="y-axis-label">{yLabel}</span><svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`${chartTitle}, plotted by date`} onMouseMove={e=>{const r=e.currentTarget.getBoundingClientRect(); const idx=Math.round(((e.clientX-r.left)/r.width)*(points.length-1));setActive(Math.max(0,Math.min(points.length-1,idx)))}}><defs><linearGradient id={`fill-${String(metric)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopOpacity=".18"/><stop offset="1" stopOpacity="0"/></linearGradient></defs><line className="gridline" x1={pad} x2={w-pad} y1={pad} y2={pad}/><line className="gridline" x1={pad} x2={w-pad} y1={h-pad} y2={h-pad}/><path className="area" d={`M ${xy[0].x} ${h-pad} L ${xy.map(p=>`${p.x} ${p.y}`).join(' L ')} L ${xy.at(-1)!.x} ${h-pad} Z`} fill={`url(#fill-${String(metric)})`}/><polyline points={xy.map(p=>`${p.x},${p.y}`).join(' ')} fill="none"/><line className="cursor" x1={a.x} x2={a.x} y1={pad} y2={h-pad}/>{xy.map((p,i)=><circle key={p.date} cx={p.x} cy={p.y} r={i===active?6:3} onClick={()=>setActive(i)}/>)}</svg><span className="y-max-label">{fmt(max,decimals)} {unit}</span><span className="y-min-label">{fmt(min,decimals)} {unit}</span></div>
+    <div className="line-axis-footer"><span>{dateFmt(first.date)}</span><strong>Date</strong><span>{dateFmt(last.date)}</span></div>
+  </div>
+}
 
+function ChartLegend({items}:{items:Array<[string,string]>}){return <div className="chart-legend" aria-label="Chart legend">{items.map(([className,label])=><span key={label}><i className={className}/>{label}</span>)}</div>}
 function GoalRing({label,value,target,unit}:{label:string;value:N|undefined;target:number;unit:string}){const pct=Math.min(100,Math.max(0,((value||0)/target)*100));return <div className="goal-ring"><div className="ring" style={{'--pct':`${pct*3.6}deg`} as CSSProperties}><div><strong>{fmt(value)}</strong><span>of {fmt(target)} {unit}</span></div></div><h3>{label}</h3></div>}
 function GoalBar({label,value,target,unit}:{label:string;value:N|undefined;target:number;unit:string}){const pct=Math.min(120,Math.max(0,((value||0)/target)*100));return <div className="goal-bar"><div><strong>{label}</strong><span>{fmt(value)} / {fmt(target)} {unit}</span></div><div className="track"><i style={{width:`${Math.min(100,pct)}%`}}/></div></div>}
 function Metric({icon,label,value,unit,decimals=0,display}:{icon:ReactNode;label:string;value:N|undefined;unit:string;decimals?:number;display?:string}){return <section className="metric-card panel"><span>{icon}</span><div><p>{label}</p><strong>{display||fmt(value,decimals)}</strong>{value!=null&&!display&&<small>{unit}</small>}</div></section>}
