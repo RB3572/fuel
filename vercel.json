@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/health/import-text",
+      "destination": "/api/health/import-v2"
+    }
+  ]
+}
