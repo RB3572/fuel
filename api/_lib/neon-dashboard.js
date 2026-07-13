@@ -25,8 +25,6 @@ export async function getNeonDashboard(userId) {
     `,
   ])
 
-  // Neon may return a PostgreSQL DATE as either a string or a JavaScript Date.
-  // String(row.date).slice(0, 10) is incorrect for Date objects (it produces "Sun Jul 12").
   const healthByDate = new Map(healthRows.map((row) => [databaseDateKey(row.date), row]))
   const foodsByDate = groupByDate(foodRows, 'occurred_at')
   const supplementsByDate = groupByDate(supplementRows, 'occurred_at')
@@ -59,12 +57,19 @@ export async function getNeonDashboard(userId) {
       sleepHours: number(health?.sleep_hours),
       restingHeartRate: number(health?.resting_heart_rate_bpm),
       hrv: number(health?.hrv_ms),
+      respiratoryRate: number(health?.respiratory_rate),
+      bloodOxygen: number(health?.blood_oxygen_percent),
+      walkingHeartRateAverage: number(health?.walking_heart_rate_avg_bpm),
       stepCount: number(health?.step_count),
       distanceMiles: number(health?.walking_running_distance_mi),
+      cyclingDistanceMiles: number(health?.cycling_distance_mi),
       swimmingDistanceYards: number(health?.swimming_distance_yd),
+      swimmingStrokes: number(health?.swimming_strokes),
+      standMinutes: number(health?.stand_minutes),
+      flightsClimbed: number(health?.flights_climbed),
       exerciseMinutes: number(health?.exercise_minutes),
       vo2Max: number(health?.vo2_max),
-      workoutCount: health ? Number(Boolean(number(health.exercise_minutes) || number(health.swimming_distance_yd))) : 0,
+      workoutCount: health ? Number(Boolean(number(health.exercise_minutes) || number(health.swimming_distance_yd) || number(health.cycling_distance_mi))) : 0,
       fuelScore: null,
     })
   }
@@ -91,13 +96,19 @@ export async function getNeonDashboard(userId) {
     restingHeartRate: number(todayHealth?.resting_heart_rate_bpm),
     hrv: number(todayHealth?.hrv_ms),
     respiratoryRate: number(todayHealth?.respiratory_rate),
+    bloodOxygen: number(todayHealth?.blood_oxygen_percent),
+    walkingHeartRateAverage: number(todayHealth?.walking_heart_rate_avg_bpm),
     sleepCoreHours: null,
     sleepDeepHours: null,
     sleepRemHours: null,
     sleepAwakeHours: null,
     stepCount: number(todayHealth?.step_count),
     distanceMiles: number(todayHealth?.walking_running_distance_mi),
+    cyclingDistanceMiles: number(todayHealth?.cycling_distance_mi),
     swimmingDistanceYards: number(todayHealth?.swimming_distance_yd),
+    swimmingStrokes: number(todayHealth?.swimming_strokes),
+    standMinutes: number(todayHealth?.stand_minutes),
+    flightsClimbed: number(todayHealth?.flights_climbed),
     exerciseMinutes: number(todayHealth?.exercise_minutes),
     vo2Max: number(todayHealth?.vo2_max),
   }
@@ -117,9 +128,12 @@ export async function getNeonDashboard(userId) {
       supplements: todaySupplements.map(normalizeSupplement),
     },
     goals: {
+      calories: { minimum: null, target: totalExpenditure ? Math.max(0, totalExpenditure - 350) : 1950, maximum: null },
       protein: { minimum: 100, target: 112, maximum: null },
-      calorieDeficit: { minimum: 200, target: 350, maximum: 500 },
+      carbs: { minimum: 250, target: 300, maximum: 400 },
       fat: { minimum: 48, target: 60, maximum: 75 },
+      fiber: { minimum: 25, target: 30, maximum: null },
+      calorieDeficit: { minimum: 200, target: 350, maximum: 500 },
       sleepHours: { minimum: 7, target: 8, maximum: 9 },
       fuelScore: { minimum: 70, target: 85, maximum: 100 },
       strengthSessions: { minimum: 1, target: 2, maximum: 3 },
@@ -131,7 +145,7 @@ export async function getNeonDashboard(userId) {
       days: healthRows.length,
       healthDays: healthRows.length,
       foodEntries: foodRows.length,
-      workouts: healthRows.filter((row) => number(row.exercise_minutes) || number(row.swimming_distance_yd)).length,
+      workouts: healthRows.filter((row) => number(row.exercise_minutes) || number(row.swimming_distance_yd) || number(row.cycling_distance_mi)).length,
       recoveryDays: healthRows.filter((row) => number(row.sleep_hours) || number(row.resting_heart_rate_bpm)).length,
     },
     sheetStatus: [
@@ -146,21 +160,35 @@ export async function getNeonDashboard(userId) {
 function healthWorkouts(health) {
   if (!health) return []
   const entries = []
-  const swim = number(health.swimming_distance_yd)
-  if (swim) {
+  const swimDistance = number(health.swimming_distance_yd)
+  const swimStrokes = number(health.swimming_strokes)
+  if (swimDistance || swimStrokes) {
     entries.push({
-      time: '', activity: 'Swimming', durationMinutes: number(health.exercise_minutes),
-      activeCalories: number(health.active_energy_kcal), totalCalories: null,
+      time: '', activity: 'Swimming', durationMinutes: null,
+      activeCalories: null, totalCalories: null,
       distanceMiles: null, averagePace: '', averageHeartRate: null,
-      averageCadence: null, effort: '', location: '', swimmingDistanceYards: swim,
-      stepCount: null, strokeCount: null, dataQuality: 'Apple Health',
-      notes: 'Synchronized from Apple Health through Shortcuts.', source: 'Apple Shortcuts',
+      averageCadence: null, effort: '', location: '', swimmingDistanceYards: swimDistance,
+      stepCount: null, strokeCount: swimStrokes, dataQuality: 'Apple Health',
+      notes: 'Daily swimming totals synchronized from Apple Health.', source: 'Apple Shortcuts',
     })
   }
+
+  const cyclingDistance = number(health.cycling_distance_mi)
+  if (cyclingDistance) {
+    entries.push({
+      time: '', activity: 'Cycling', durationMinutes: null,
+      activeCalories: null, totalCalories: null,
+      distanceMiles: cyclingDistance, averagePace: '', averageHeartRate: null,
+      averageCadence: null, effort: '', location: '', swimmingDistanceYards: null,
+      stepCount: null, strokeCount: null, dataQuality: 'Apple Health',
+      notes: 'Daily cycling distance synchronized from Apple Health.', source: 'Apple Shortcuts',
+    })
+  }
+
   if (number(health.walking_running_distance_mi) || number(health.step_count)) {
     entries.push({
-      time: '', activity: 'Daily movement', durationMinutes: number(health.exercise_minutes),
-      activeCalories: number(health.active_energy_kcal), totalCalories: null,
+      time: '', activity: 'Walking and running', durationMinutes: null,
+      activeCalories: null, totalCalories: null,
       distanceMiles: number(health.walking_running_distance_mi), averagePace: '', averageHeartRate: null,
       averageCadence: null, effort: '', location: '', swimmingDistanceYards: null,
       stepCount: number(health.step_count), strokeCount: null, dataQuality: 'Apple Health',
@@ -215,8 +243,6 @@ function databaseDateKey(value) {
   }
   const parsed = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(parsed.getTime())) return ''
-  // PostgreSQL DATE values have no time zone. Using UTC preserves the literal date
-  // when Neon materializes one as midnight UTC.
   return [parsed.getUTCFullYear(), String(parsed.getUTCMonth() + 1).padStart(2, '0'), String(parsed.getUTCDate()).padStart(2, '0')].join('-')
 }
 
