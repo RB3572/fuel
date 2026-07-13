@@ -2,6 +2,8 @@ import crypto from 'node:crypto'
 import { neon } from '@neondatabase/serverless'
 import { decryptJson, encryptJson } from './crypto.js'
 
+const LEGACY_EMAIL = 'legacy@fuel.local'
+
 export function sql() {
   const url = process.env.DATABASE_URL
   if (!url) throw new Error('DATABASE_URL is not configured')
@@ -21,7 +23,30 @@ export async function upsertUser(user) {
       updated_at = now()
     RETURNING id, email, name, picture_url
   `
+  await claimLegacyData(rows[0].id)
   return rows[0]
+}
+
+async function claimLegacyData(userId) {
+  const db = sql()
+  const legacy = await db`SELECT id FROM app_users WHERE email = ${LEGACY_EMAIL} LIMIT 1`
+  if (!legacy.length || legacy[0].id === userId) return
+
+  const existing = await db`
+    SELECT
+      (SELECT count(*) FROM health_daily WHERE user_id = ${userId}) +
+      (SELECT count(*) FROM food_entries WHERE user_id = ${userId}) +
+      (SELECT count(*) FROM supplements WHERE user_id = ${userId}) +
+      (SELECT count(*) FROM recipes WHERE user_id = ${userId}) AS total
+  `
+  if (Number(existing[0]?.total || 0) > 0) return
+
+  await db.transaction([
+    db`UPDATE health_daily SET user_id = ${userId} WHERE user_id = ${legacy[0].id}`,
+    db`UPDATE food_entries SET user_id = ${userId} WHERE user_id = ${legacy[0].id}`,
+    db`UPDATE supplements SET user_id = ${userId} WHERE user_id = ${legacy[0].id}`,
+    db`UPDATE recipes SET user_id = ${userId} WHERE user_id = ${legacy[0].id}`,
+  ])
 }
 
 export async function ensureUserFromSession(session) {
