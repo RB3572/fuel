@@ -1,6 +1,7 @@
+import { ensureUserFromSession } from './_lib/db.js'
 import { authenticatedSession } from './_lib/google.js'
-import { getMLogDashboard } from './_lib/mlog-enhanced.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
+import { getNeonDashboard } from './_lib/neon-dashboard.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -10,19 +11,16 @@ export default async function handler(req, res) {
 
   try {
     const { session, cookie } = await authenticatedSession(req)
-
     if (!session) {
       sendJson(res, 401, { error: 'Not authenticated' })
       return
     }
 
-    const dashboard = await getMLogDashboard(session)
-
+    const userId = await ensureUserFromSession(session)
+    const dashboard = await getNeonDashboard(userId)
     sendJson(res, 200, dashboard, cookie ? [cookie] : [])
   } catch (error) {
-    console.error('Unable to load MLog', error)
-    sendJson(res, 500, {
-      error: 'Unable to load MLog. Refresh the page or reconnect Google Drive.',
-    })
+    console.error('Unable to load Fuel data from Neon', error)
+    sendJson(res, 500, { error: 'Unable to load Fuel data.' })
   }
 }
