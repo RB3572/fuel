@@ -177,12 +177,47 @@ function upsertRequests(sheet, headers, existingRows, incoming, preserveExisting
     return preserveExisting ? (mergedExisting[columnIndex] ?? '') : ''
   })
 
+  recomputeDerivedValues(sheet, values)
+
   const requests = [valueUpdate(sheet, headers.length, targetIndex, values)]
   for (const duplicateIndex of matchingIndexes.slice(1)) {
     requests.push(valueUpdate(sheet, headers.length, duplicateIndex, Array(headers.length).fill('')))
   }
 
   return { requests, duplicatesCleared: Math.max(0, matchingIndexes.length - 1) }
+}
+
+function recomputeDerivedValues(sheet, values) {
+  if (sheet === 'Health Daily') {
+    const active = numericCell(values[1])
+    const resting = numericCell(values[2])
+    if (active != null && resting != null) values[3] = active + resting
+    return
+  }
+
+  if (sheet === 'Energy Balance') {
+    const consumed = numericCell(values[1])
+    const resting = numericCell(values[2])
+    const active = numericCell(values[3])
+    if (active != null && resting != null) values[4] = active + resting
+
+    const partial = /partial/i.test(String(values[8] || ''))
+    const expenditure = numericCell(values[4])
+    if (!partial && consumed != null && expenditure != null) {
+      const balance = consumed - expenditure
+      values[5] = balance
+      values[6] = balance < 0 ? 'Deficit' : balance > 0 ? 'Surplus' : 'Balanced'
+    } else if (partial) {
+      values[5] = ''
+      values[6] = ''
+    }
+  }
+}
+
+function numericCell(value) {
+  if (value == null || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function valueUpdate(sheet, width, zeroBasedRowIndex, values) {
