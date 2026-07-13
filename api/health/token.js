@@ -1,30 +1,36 @@
-import { encryptJson } from '../_lib/crypto.js'
+import { ensureUserFromSession, getOrCreateSyncToken, rotateSyncToken } from '../_lib/db.js'
 import { authenticatedSession } from '../_lib/google.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
-const TOKEN_KIND = 'fuel-health-import'
+const SHORTCUT_URL = 'https://www.icloud.com/shortcuts/bfdc6b641b3f4172a7b842fc60dc1dd3'
 
 export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    methodNotAllowed(res, ['GET'])
+  if (!['GET', 'POST'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST'])
     return
   }
 
-  const { session, cookie } = await authenticatedSession(req)
-  if (!session?.tokens?.refreshToken) {
-    sendJson(res, 401, { error: 'Sign in to Fuel before generating a health sync token.' })
-    return
+  try {
+    const { session, cookie } = await authenticatedSession(req)
+    if (!session) {
+      sendJson(res, 401, { error: 'Sign in to Fuel before viewing a health sync token.' })
+      return
+    }
+
+    const userId = await ensureUserFromSession(session)
+    const record = req.method === 'POST' ? await rotateSyncToken(userId) : await getOrCreateSyncToken(userId)
+
+    sendJson(res, 200, {
+      token: record.token,
+      tokenPrefix: record.token_prefix,
+      createdAt: record.created_at,
+      lastUsedAt: record.last_used_at,
+      endpoint: 'https://fuel.rishib.com/api/health/import',
+      shortcutUrl: SHORTCUT_URL,
+      instructions: 'Install the shortcut, then replace its Authorization header token with this token. Keep the word Bearer and one space before the token.',
+    }, cookie ? [cookie] : [])
+  } catch (error) {
+    console.error('Unable to provide sync token', error)
+    sendJson(res, 500, { error: 'Unable to provide a health sync token.' })
   }
-
-  const token = encryptJson({
-    kind: TOKEN_KIND,
-    issuedAt: Date.now(),
-    session,
-  })
-
-  sendJson(res, 200, {
-    token,
-    endpoint: 'https://fuel.rishib.com/api/health/import',
-    note: 'Use this token only in Health.md. Disconnecting Google Drive revokes the underlying Google authorization.',
-  }, cookie ? [cookie] : [])
 }
