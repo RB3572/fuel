@@ -2,7 +2,7 @@ import { sql, userForSyncToken } from '../_lib/db.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
-const PARSER_VERSION = 8
+const PARSER_VERSION = 9
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -29,16 +29,30 @@ export default async function handler(req, res) {
     }
 
     const db = sql()
+    await db`
+      ALTER TABLE health_daily
+        ADD COLUMN IF NOT EXISTS blood_oxygen_percent double precision,
+        ADD COLUMN IF NOT EXISTS stand_minutes double precision,
+        ADD COLUMN IF NOT EXISTS walking_heart_rate_avg_bpm double precision,
+        ADD COLUMN IF NOT EXISTS cycling_distance_mi double precision,
+        ADD COLUMN IF NOT EXISTS flights_climbed double precision,
+        ADD COLUMN IF NOT EXISTS swimming_strokes double precision
+    `
+
     const rows = await db`
       INSERT INTO health_daily (
         user_id, date, active_energy_kcal, resting_energy_kcal, total_expenditure_kcal,
         exercise_minutes, step_count, walking_running_distance_mi, swimming_distance_yd,
         resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
+        blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
+        cycling_distance_mi, flights_climbed, swimming_strokes,
         partial_day, source, raw_payload, updated_at
       ) VALUES (
         ${user.id}, ${record.date}, ${record.activeEnergy}, ${record.restingEnergy}, ${record.totalExpenditure},
         ${record.exerciseMinutes}, ${record.steps}, ${record.walkingRunningDistance}, ${record.swimmingDistance},
         ${record.restingHeartRate}, ${record.hrv}, ${record.vo2Max}, ${record.sleepHours}, ${record.respiratoryRate},
+        ${record.bloodOxygen}, ${record.standMinutes}, ${record.walkingHeartRateAverage},
+        ${record.cyclingDistance}, ${record.flightsClimbed}, ${record.swimmingStrokes},
         ${record.partialDay}, 'Apple Shortcuts', ${JSON.stringify(payload)}, now()
       )
       ON CONFLICT (user_id, date) DO UPDATE SET
@@ -54,13 +68,21 @@ export default async function handler(req, res) {
         vo2_max = COALESCE(EXCLUDED.vo2_max, health_daily.vo2_max),
         sleep_hours = COALESCE(EXCLUDED.sleep_hours, health_daily.sleep_hours),
         respiratory_rate = COALESCE(EXCLUDED.respiratory_rate, health_daily.respiratory_rate),
+        blood_oxygen_percent = COALESCE(EXCLUDED.blood_oxygen_percent, health_daily.blood_oxygen_percent),
+        stand_minutes = COALESCE(EXCLUDED.stand_minutes, health_daily.stand_minutes),
+        walking_heart_rate_avg_bpm = COALESCE(EXCLUDED.walking_heart_rate_avg_bpm, health_daily.walking_heart_rate_avg_bpm),
+        cycling_distance_mi = COALESCE(EXCLUDED.cycling_distance_mi, health_daily.cycling_distance_mi),
+        flights_climbed = COALESCE(EXCLUDED.flights_climbed, health_daily.flights_climbed),
+        swimming_strokes = COALESCE(EXCLUDED.swimming_strokes, health_daily.swimming_strokes),
         partial_day = EXCLUDED.partial_day,
         source = EXCLUDED.source,
         raw_payload = EXCLUDED.raw_payload,
         updated_at = now()
       RETURNING date, active_energy_kcal, resting_energy_kcal, total_expenditure_kcal,
         exercise_minutes, step_count, walking_running_distance_mi, swimming_distance_yd,
-        resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate, partial_day
+        resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
+        blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
+        cycling_distance_mi, flights_climbed, swimming_strokes, partial_day
     `
 
     sendJson(res, 200, {
@@ -101,7 +123,14 @@ function parseTextPayload(text) {
   if (!trimmed) return {}
   try { return JSON.parse(trimmed) } catch { /* tolerant parsing below */ }
   const output = {}
-  const keys = ['date', 'activeEnergy', 'restingEnergy', 'excersiseMinutes', 'exerciseMinutes', 'steps', 'walkingrunDistance', 'walkingRunningDistance', 'swimDistance', 'swimmingDistance', 'restingHeartRate', 'heartRateVariability', 'HRV', 'respiratoryRate', 'cardioFitness', 'vo2Max', 'sleepTotal']
+  const keys = [
+    'date', 'activeEnergy', 'restingEnergy', 'excersiseMinutes', 'exerciseMinutes', 'steps',
+    'walkingrunDistance', 'walkingRunningDistance', 'swimDistance', 'swimmingDistance',
+    'restingHeartRate', 'heartRateVariability', 'HRV', 'respiratoryRate', 'cardioFitness',
+    'vo2Max', 'sleepTotal', 'bloodOx', 'bloodOxygen', 'standMins', 'standMinutes',
+    'wlkHRAvg', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
+    'flightsClimbed', 'swmStrokes', 'swimmingStrokes'
+  ]
   for (const key of keys) {
     const match = trimmed.match(new RegExp(`(?:^|[\\n,{])\\s*["']?${key}["']?\\s*[:=]\\s*["']?([^,"'\\n}]+)`, 'i'))
     if (match) output[key] = match[1].trim()
@@ -127,6 +156,12 @@ function normalize(payload) {
     respiratoryRate: number(value(payload, ['respiratoryRate', 'breathingRate'])),
     vo2Max: number(value(payload, ['cardioFitness', 'vo2Max'])),
     sleepHours: number(value(payload, ['sleepTotal', 'sleepHours'])),
+    bloodOxygen: normalizeBloodOxygen(number(value(payload, ['bloodOx', 'bloodOxygen', 'oxygenSaturation']))),
+    standMinutes: number(value(payload, ['standMins', 'standMinutes'])),
+    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHeartRateAverage', 'walkingHeartRate'])),
+    cyclingDistance: number(value(payload, ['BikeDist', 'bikeDistance', 'cyclingDistance'])),
+    flightsClimbed: number(value(payload, ['flightsClimb', 'flightsClimbed'])),
+    swimmingStrokes: number(value(payload, ['swmStrokes', 'swimmingStrokes', 'swimStrokes'])),
     partialDay: booleanValue(value(payload, ['partialDay'])) ?? true,
   }
 }
@@ -146,6 +181,11 @@ function number(input) {
   if (!match) return null
   const parsed = Number(match[0].replace(',', '.'))
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function normalizeBloodOxygen(input) {
+  if (input == null) return null
+  return input > 0 && input <= 1 ? input * 100 : input
 }
 
 function booleanValue(input) {
