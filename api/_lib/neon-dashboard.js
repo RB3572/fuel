@@ -1,28 +1,17 @@
 import { sql } from './db.js'
+import { getUserGoals } from './goals.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
 export async function getNeonDashboard(userId) {
   if (!userId) throw new Error('Authenticated user ID is required')
-
   const db = sql()
   const today = dateKey(new Date())
-  const [healthRows, foodRows, supplementRows] = await Promise.all([
-    db`
-      SELECT * FROM health_daily
-      WHERE user_id = ${userId} AND date >= (${today}::date - interval '30 days')
-      ORDER BY date ASC
-    `,
-    db`
-      SELECT * FROM food_entries
-      WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days')
-      ORDER BY occurred_at ASC
-    `,
-    db`
-      SELECT * FROM supplements
-      WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days')
-      ORDER BY occurred_at ASC
-    `,
+  const [healthRows, foodRows, supplementRows, userGoals] = await Promise.all([
+    db`SELECT * FROM health_daily WHERE user_id = ${userId} AND date >= (${today}::date - interval '30 days') ORDER BY date ASC`,
+    db`SELECT * FROM food_entries WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
+    db`SELECT * FROM supplements WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
+    getUserGoals(userId),
   ])
 
   const healthByDate = new Map(healthRows.map((row) => [databaseDateKey(row.date), row]))
@@ -39,8 +28,7 @@ export async function getNeonDashboard(userId) {
     date.setDate(date.getDate() - offset)
     const key = dateKey(date)
     const health = healthByDate.get(key) || null
-    const foods = foodsByDate.get(key) || []
-    const totals = sumFoods(foods)
+    const totals = sumFoods(foodsByDate.get(key) || [])
     const expenditure = number(health?.total_expenditure_kcal)
     const calories = totals.calories || null
     trends.push({
@@ -54,6 +42,7 @@ export async function getNeonDashboard(userId) {
       protein: totals.protein || null,
       carbs: totals.carbs || null,
       fat: totals.fat || null,
+      fiber: totals.fiber || null,
       sleepHours: number(health?.sleep_hours),
       restingHeartRate: number(health?.resting_heart_rate_bpm),
       hrv: number(health?.hrv_ms),
@@ -82,9 +71,7 @@ export async function getNeonDashboard(userId) {
     restingEnergy: number(todayHealth?.resting_energy_kcal),
     activeEnergy: number(todayHealth?.active_energy_kcal),
     totalExpenditure,
-    energyBalance: todayHealth?.partial_day || !nutrition.calories || !totalExpenditure
-      ? null
-      : nutrition.calories - totalExpenditure,
+    energyBalance: todayHealth?.partial_day || !nutrition.calories || !totalExpenditure ? null : nutrition.calories - totalExpenditure,
     protein: nutrition.protein || null,
     carbs: nutrition.carbs || null,
     fat: nutrition.fat || null,
@@ -114,12 +101,7 @@ export async function getNeonDashboard(userId) {
   }
 
   return {
-    spreadsheet: {
-      id: 'neon',
-      name: 'Fuel Database',
-      webViewLink: null,
-      modifiedTime: todayHealth?.updated_at || null,
-    },
+    spreadsheet: { id: 'neon', name: 'Fuel Database', webViewLink: null, modifiedTime: todayHealth?.updated_at || null },
     generatedAt: new Date().toISOString(),
     today: {
       summary,
@@ -128,16 +110,18 @@ export async function getNeonDashboard(userId) {
       supplements: todaySupplements.map(normalizeSupplement),
     },
     goals: {
-      calories: { minimum: null, target: totalExpenditure ? Math.max(0, totalExpenditure - 350) : 1950, maximum: null },
-      protein: { minimum: 100, target: 112, maximum: null },
-      carbs: { minimum: 250, target: 300, maximum: 400 },
-      fat: { minimum: 48, target: 60, maximum: 75 },
-      fiber: { minimum: 25, target: 30, maximum: null },
-      calorieDeficit: { minimum: 200, target: 350, maximum: 500 },
-      sleepHours: { minimum: 7, target: 8, maximum: 9 },
-      fuelScore: { minimum: 70, target: 85, maximum: 100 },
-      strengthSessions: { minimum: 1, target: 2, maximum: 3 },
+      calories: range(userGoals.calories),
+      protein: range(userGoals.protein),
+      carbs: range(userGoals.carbs),
+      fat: range(userGoals.fat),
+      fiber: range(userGoals.fiber),
+      move: range(userGoals.move),
+      exercise: range(userGoals.exercise),
+      stand: range(userGoals.stand),
+      steps: range(userGoals.steps),
+      sleepHours: range(userGoals.sleepHours),
     },
+    goalProfile: userGoals.profile,
     trends,
     coverage: {
       startDate: healthRows.length ? databaseDateKey(healthRows[0].date) : null,
@@ -157,44 +141,32 @@ export async function getNeonDashboard(userId) {
   }
 }
 
+function range(target) { return { minimum: null, target, maximum: null } }
+
 function healthWorkouts(health) {
   if (!health) return []
   const entries = []
   const swimDistance = number(health.swimming_distance_yd)
   const swimStrokes = number(health.swimming_strokes)
-  if (swimDistance || swimStrokes) {
-    entries.push({
-      time: '', activity: 'Swimming', durationMinutes: null,
-      activeCalories: null, totalCalories: null,
-      distanceMiles: null, averagePace: '', averageHeartRate: null,
-      averageCadence: null, effort: '', location: '', swimmingDistanceYards: swimDistance,
-      stepCount: null, strokeCount: swimStrokes, dataQuality: 'Apple Health',
-      notes: 'Daily swimming totals synchronized from Apple Health.', source: 'Apple Shortcuts',
-    })
-  }
-
+  if (swimDistance || swimStrokes) entries.push({
+    time: '', activity: 'Swimming', durationMinutes: null, activeCalories: null, totalCalories: null,
+    distanceMiles: null, averagePace: '', averageHeartRate: null, averageCadence: null, effort: '', location: '',
+    swimmingDistanceYards: swimDistance, stepCount: null, strokeCount: swimStrokes, dataQuality: 'Apple Health',
+    notes: 'Daily swimming totals synchronized from Apple Health.', source: 'Apple Shortcuts',
+  })
   const cyclingDistance = number(health.cycling_distance_mi)
-  if (cyclingDistance) {
-    entries.push({
-      time: '', activity: 'Cycling', durationMinutes: null,
-      activeCalories: null, totalCalories: null,
-      distanceMiles: cyclingDistance, averagePace: '', averageHeartRate: null,
-      averageCadence: null, effort: '', location: '', swimmingDistanceYards: null,
-      stepCount: null, strokeCount: null, dataQuality: 'Apple Health',
-      notes: 'Daily cycling distance synchronized from Apple Health.', source: 'Apple Shortcuts',
-    })
-  }
-
-  if (number(health.walking_running_distance_mi) || number(health.step_count)) {
-    entries.push({
-      time: '', activity: 'Walking and running', durationMinutes: null,
-      activeCalories: null, totalCalories: null,
-      distanceMiles: number(health.walking_running_distance_mi), averagePace: '', averageHeartRate: null,
-      averageCadence: null, effort: '', location: '', swimmingDistanceYards: null,
-      stepCount: number(health.step_count), strokeCount: null, dataQuality: 'Apple Health',
-      notes: 'Daily walking and running totals.', source: 'Apple Shortcuts',
-    })
-  }
+  if (cyclingDistance) entries.push({
+    time: '', activity: 'Cycling', durationMinutes: null, activeCalories: null, totalCalories: null,
+    distanceMiles: cyclingDistance, averagePace: '', averageHeartRate: null, averageCadence: null, effort: '', location: '',
+    swimmingDistanceYards: null, stepCount: null, strokeCount: null, dataQuality: 'Apple Health',
+    notes: 'Daily cycling distance synchronized from Apple Health.', source: 'Apple Shortcuts',
+  })
+  if (number(health.walking_running_distance_mi) || number(health.step_count)) entries.push({
+    time: '', activity: 'Walking and running', durationMinutes: null, activeCalories: null, totalCalories: null,
+    distanceMiles: number(health.walking_running_distance_mi), averagePace: '', averageHeartRate: null, averageCadence: null,
+    effort: '', location: '', swimmingDistanceYards: null, stepCount: number(health.step_count), strokeCount: null,
+    dataQuality: 'Apple Health', notes: 'Daily walking and running totals.', source: 'Apple Shortcuts',
+  })
   return entries
 }
 
@@ -203,18 +175,15 @@ function normalizeFood(row) {
     time: new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(row.occurred_at)),
     meal: row.meal || '', food: row.description || '', portion: row.portion || '',
     calories: number(row.calories_kcal), protein: number(row.protein_g), carbs: number(row.carbs_g),
-    fat: number(row.fat_g), fiber: number(row.fiber_g), confidence: row.confidence || '',
-    notes: row.notes || '', source: row.source || '',
+    fat: number(row.fat_g), fiber: number(row.fiber_g), confidence: row.confidence || '', notes: row.notes || '', source: row.source || '',
   }
 }
-
 function normalizeSupplement(row) {
   return {
     time: new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(row.occurred_at)),
     name: row.name || '', dose: row.dose || '', calories: number(row.calories_kcal), notes: row.notes || '',
   }
 }
-
 function sumFoods(rows) {
   return rows.reduce((totals, row) => ({
     calories: totals.calories + (number(row.calories_kcal) || 0),
@@ -224,7 +193,6 @@ function sumFoods(rows) {
     fiber: totals.fiber + (number(row.fiber_g) || 0),
   }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 })
 }
-
 function groupByDate(rows, field) {
   const map = new Map()
   for (const row of rows) {
@@ -234,7 +202,6 @@ function groupByDate(rows, field) {
   }
   return map
 }
-
 function databaseDateKey(value) {
   if (value == null) return ''
   if (typeof value === 'string') {
@@ -245,11 +212,7 @@ function databaseDateKey(value) {
   if (Number.isNaN(parsed.getTime())) return ''
   return [parsed.getUTCFullYear(), String(parsed.getUTCMonth() + 1).padStart(2, '0'), String(parsed.getUTCDate()).padStart(2, '0')].join('-')
 }
-
-function dateKey(date) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(date)
-}
-
+function dateKey(date) { return new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(date) }
 function number(value) {
   if (value == null || value === '') return null
   const parsed = Number(value)
