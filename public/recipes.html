@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Recipes · Fuel</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/recipes.css" />
+</head>
+<body>
+  <main class="recipe-shell">
+    <header class="recipe-header">
+      <a class="back-link" href="/" aria-label="Back to Fuel">←</a>
+      <div>
+        <h1>Recipes</h1>
+        <p>Your saved recipe index</p>
+      </div>
+      <label class="search-wrap"><span>Search</span><input id="recipe-search" type="search" placeholder="Search recipes or ingredients" /></label>
+    </header>
+    <section id="recipe-status" class="status-card">Loading recipes…</section>
+    <section id="recipe-groups" class="recipe-groups" hidden></section>
+  </main>
+  <script src="/recipes.js" defer></script>
+</body>
+</html>
