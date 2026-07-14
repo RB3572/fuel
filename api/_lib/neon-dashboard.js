@@ -7,10 +7,11 @@ export async function getNeonDashboard(userId) {
   if (!userId) throw new Error('Authenticated user ID is required')
   const db = sql()
   const today = dateKey(new Date())
-  const [healthRows, foodRows, supplementRows, userGoals] = await Promise.all([
+  const [healthRows, foodRows, supplementRows, recipeRows, userGoals] = await Promise.all([
     db`SELECT * FROM health_daily WHERE user_id = ${userId} AND date >= (${today}::date - interval '30 days') ORDER BY date ASC`,
     db`SELECT * FROM food_entries WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
     db`SELECT * FROM supplements WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
+    db`SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, notes, source, updated_at FROM recipes WHERE user_id = ${userId} ORDER BY name ASC`,
     getUserGoals(userId),
   ])
 
@@ -109,6 +110,7 @@ export async function getNeonDashboard(userId) {
       workouts: healthWorkouts(todayHealth),
       supplements: todaySupplements.map(normalizeSupplement),
     },
+    recipes: recipeRows.map(normalizeRecipe),
     goals: {
       calories: range(userGoals.calories),
       protein: range(userGoals.protein),
@@ -136,12 +138,45 @@ export async function getNeonDashboard(userId) {
       { title: 'Health', rows: healthRows.length },
       { title: 'Food', rows: foodRows.length },
       { title: 'Supplements', rows: supplementRows.length },
+      { title: 'Recipes', rows: recipeRows.length },
     ],
     storage: 'Neon Postgres',
   }
 }
 
 function range(target) { return { minimum: null, target, maximum: null } }
+
+function normalizeRecipe(row) {
+  const name = row.name || 'Untitled recipe'
+  const lower = name.toLowerCase()
+  const category = lower.includes('creami') || lower.includes('ninja') ? 'Ninja Creami' : lower.includes('oat') ? 'Breakfast and oats' : lower.includes('smoothie') || lower.includes('shake') ? 'Drinks and smoothies' : lower.includes('dessert') || lower.includes('cookie') || lower.includes('ice cream') ? 'Desserts' : 'Other recipes'
+  return {
+    id: row.id,
+    name,
+    category,
+    serving: row.serving || '',
+    ingredients: splitList(row.ingredients),
+    instructions: splitInstructions(row.notes),
+    nutrition: {
+      calories: number(row.calories_kcal),
+      protein: number(row.protein_g),
+      carbs: number(row.carbs_g),
+      fat: number(row.fat_g),
+      fiber: number(row.fiber_g),
+    },
+    source: row.source || '',
+    updatedAt: row.updated_at || null,
+  }
+}
+
+function splitList(value) {
+  if (!value) return []
+  return String(value).split(/\s*;\s*|\n+/).map(item => item.trim()).filter(Boolean)
+}
+function splitInstructions(value) {
+  if (!value || /^saved recipe\.?$/i.test(String(value).trim())) return []
+  return String(value).split(/\n+|(?<=\.)\s+(?=[A-Z0-9])/).map(item => item.trim()).filter(Boolean)
+}
 
 function healthWorkouts(health) {
   if (!health) return []
