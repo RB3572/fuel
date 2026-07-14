@@ -8,7 +8,7 @@ searchEl.addEventListener('input', render)
 
 async function loadRecipes() {
   try {
-    const response = await fetch('/api/recipes', { cache: 'no-store', headers: { Accept: 'application/json' } })
+    const response = await fetch('/api/mlog', { cache: 'no-store', headers: { Accept: 'application/json' } })
     if (response.status === 401) {
       location.assign('/')
       return
