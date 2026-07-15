@@ -2,8 +2,9 @@ import { sql } from './_lib/db.js'
 import { automaticallySetGoals, getUserGoals, saveUserGoals } from './_lib/goals.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { bearerToken, oauthChallenge, verifyAccessToken } from './_lib/mcp-auth.js'
+import { appendUserContext, getUserContext, saveUserContext } from './_lib/user-context.js'
 
-const SERVER_VERSION = '1.0.0'
+const SERVER_VERSION = '1.1.0'
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -14,7 +15,7 @@ const tools = [
   {
     name: 'get_fuel_dashboard',
     title: 'Get Fuel dashboard',
-    description: 'Retrieve the signed-in user’s current Fuel summary, nutrition, activity, recovery, goals, food, workouts, and optional 30-day trends.',
+    description: 'Retrieve the signed-in user’s current Fuel summary, nutrition, activity, recovery, goals, food, workouts, saved context, and optional 30-day trends.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -63,7 +64,7 @@ const tools = [
   {
     name: 'log_food',
     title: 'Log food',
-    description: 'Add a food or drink entry to the signed-in user’s Fuel log. Use nutrition values supplied by the user or clearly mark estimates with confidence and notes.',
+    description: 'Add a food or drink entry to the signed-in user’s Fuel log. Read the user context first, use nutrition values supplied by the user, and clearly mark estimates with confidence and notes.',
     inputSchema: {
       type: 'object',
       required: ['description', 'idempotency_key'],
@@ -138,6 +139,32 @@ const tools = [
     outputSchema: { type: 'object', additionalProperties: true },
     securitySchemes: WRITE_SECURITY,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'get_user_context',
+    title: 'Get Fuel preferences and context',
+    description: 'Read the signed-in user’s saved food preferences, allergies, activity preferences, goals, and other guidance for interpreting and updating Fuel.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: READ_SECURITY,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'update_user_context',
+    title: 'Update Fuel preferences and context',
+    description: 'Append new durable user preferences or replace the complete Fuel context. Use append for newly learned facts so existing context is preserved.',
+    inputSchema: {
+      type: 'object',
+      required: ['context'],
+      properties: {
+        context: { type: 'string', minLength: 1, maxLength: 20000, description: 'Preference or context text to save.' },
+        mode: { type: 'string', enum: ['append', 'replace'], description: 'Defaults to append. Replace overwrites the complete saved context.' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: WRITE_SECURITY,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: 'list_recipes',
@@ -235,7 +262,7 @@ async function handleMessage(req, message) {
       protocolVersion: String(message.params?.protocolVersion || DEFAULT_PROTOCOL_VERSION),
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'Fuel', title: 'Fuel Health and Nutrition', version: SERVER_VERSION },
-      instructions: 'Fuel is a private per-user health and nutrition dashboard. Read current data before interpreting progress. For food logging, use user-supplied nutrition when available and clearly mark estimates. Never expose another user’s data. Goal updates and food logs require the write scope.',
+      instructions: 'Fuel is a private per-user health and nutrition dashboard. Read get_user_context before interpreting health data, recommending food, or estimating food entries. Read current Fuel data before interpreting progress. Use user-supplied nutrition when available and clearly mark estimates. Never expose another user’s data. Context, goal, and food updates require the write scope.',
     })
   }
   if (message.method === 'ping') return rpcResult(id, {})
@@ -271,12 +298,16 @@ async function callTool(req, params) {
 
 async function executeTool(name, userId, args) {
   if (name === 'get_fuel_dashboard') {
-    const dashboard = await getNeonDashboard(userId)
+    const [dashboard, userContext] = await Promise.all([
+      getNeonDashboard(userId),
+      getUserContext(userId),
+    ])
+    const complete = { ...dashboard, userContext }
     if (args.include_trends === false) {
-      const { trends, ...withoutTrends } = dashboard
+      const { trends, ...withoutTrends } = complete
       return withoutTrends
     }
-    return dashboard
+    return complete
   }
 
   if (name === 'get_health_data') {
@@ -369,6 +400,16 @@ async function executeTool(name, userId, args) {
     })
   }
 
+  if (name === 'get_user_context') return getUserContext(userId)
+
+  if (name === 'update_user_context') {
+    const context = text(args.context, 20000)
+    if (!context) throw new Error('context is required.')
+    return args.mode === 'replace'
+      ? saveUserContext(userId, context)
+      : appendUserContext(userId, context)
+  }
+
   if (name === 'list_recipes') {
     const query = text(args.query, 200) || ''
     const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`
@@ -447,6 +488,8 @@ function toolError(message) {
 function summarize(name, data) {
   if (name === 'log_food') return data.duplicatePrevented ? 'This food entry was already logged, so no duplicate was created.' : 'Food was logged in Fuel.'
   if (name === 'set_goals' || name === 'automatically_set_goals') return 'Fuel goals were updated.'
+  if (name === 'update_user_context') return 'Fuel preferences and context were updated.'
+  if (name === 'get_user_context') return data.context ? 'Fuel preferences and context were retrieved.' : 'No Fuel preferences or context are saved yet.'
   if (name === 'list_food_entries') return `Found ${data.count} food entries from ${data.startDate} through ${data.endDate}.`
   if (name === 'get_health_data') return `Found ${data.count} daily health records from ${data.startDate} through ${data.endDate}.`
   if (name === 'list_recipes') return `Found ${data.count} saved recipes.`
