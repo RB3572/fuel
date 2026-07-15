@@ -1,13 +1,44 @@
 import { ensureUserFromSession, sql, userForSyncToken } from './_lib/db.js'
-import { authenticatedSession } from './_lib/google.js'
+import { authenticatedSession, appUrl } from './_lib/google.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
 import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
+import { authorizationServerMetadata } from './_lib/mcp-auth.js'
+import { registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
 export default async function handler(req, res) {
   const integrationRoute = routeFromRequest(req)
+  if (integrationRoute === 'authorization-server') {
+    if (req.method !== 'GET') {
+      methodNotAllowed(res, ['GET'])
+      return
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    sendJson(res, 200, {
+      ...authorizationServerMetadata(),
+      registration_endpoint: `${appUrl()}/oauth/register`,
+    })
+    return
+  }
+  if (integrationRoute === 'register') {
+    if (req.method !== 'POST') {
+      methodNotAllowed(res, ['POST'])
+      return
+    }
+    res.setHeader('Cache-Control', 'no-store')
+    try {
+      const client = await registerDynamicClient(unwrap(req.body))
+      sendJson(res, 201, client)
+    } catch (error) {
+      sendJson(res, error.statusCode || 400, {
+        error: error.oauthCode || 'invalid_client_metadata',
+        error_description: error.message || 'Unable to register this OAuth client.',
+      })
+    }
+    return
+  }
   if (integrationRoute) {
     await handleMcpOAuthRoute(integrationRoute, req, res)
     return
