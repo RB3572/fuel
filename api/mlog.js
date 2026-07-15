@@ -3,7 +3,7 @@ import { authenticatedSession, appUrl } from './_lib/google.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
 import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
 import { authorizationServerMetadata } from './_lib/mcp-auth.js'
-import { registerDynamicClient } from './_lib/mcp-dcr.js'
+import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
@@ -37,6 +37,23 @@ export default async function handler(req, res) {
         error_description: error.message || 'Unable to register this OAuth client.',
       })
     }
+    return
+  }
+  if (integrationRoute === 'client-metadata') {
+    if (req.method !== 'GET') {
+      methodNotAllowed(res, ['GET'])
+      return
+    }
+    const requestUrl = new URL(req.url, appUrl())
+    requestUrl.searchParams.delete('fuel_route')
+    const clientId = `${appUrl()}/oauth/client-metadata?id=${encodeURIComponent(requestUrl.searchParams.get('id') || '')}`
+    const metadata = await getDynamicClientMetadata(clientId)
+    if (!metadata) {
+      sendJson(res, 404, { error: 'OAuth client not found.' })
+      return
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    sendJson(res, 200, metadata)
     return
   }
   if (integrationRoute) {
