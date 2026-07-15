@@ -13,6 +13,14 @@
       "destination": "/api/mlog?fuel_route=authorization-server"
     },
     {
+      "source": "/oauth/register",
+      "destination": "/api/mlog?fuel_route=register"
+    },
+    {
+      "source": "/oauth/client-metadata",
+      "destination": "/api/mlog?fuel_route=client-metadata"
+    },
+    {
       "source": "/oauth/authorize",
       "destination": "/api/mlog?fuel_route=authorize"
     },
