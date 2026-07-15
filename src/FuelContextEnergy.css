@@ -1,0 +1,259 @@
+.hero .tabs,
+.hero .energy-viz {
+  display: none !important;
+}
+
+.intraday-energy-card {
+  margin-top: 22px;
+  min-width: 0;
+}
+
+.intraday-chart-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.intraday-chart-head > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.intraday-chart-head strong {
+  color: #111;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.intraday-chart-head > div:first-child span {
+  color: #777;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.intraday-legend {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  justify-content: flex-end;
+}
+
+.intraday-legend span {
+  align-items: center;
+  color: #555;
+  display: inline-flex;
+  font-size: 10px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.intraday-legend i {
+  border-radius: 999px;
+  display: inline-block;
+  height: 4px;
+  width: 20px;
+}
+
+.intraday-chart-stage {
+  background: #fafafa;
+  border: 1px solid #ececec;
+  border-radius: 14px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 6px 0;
+}
+
+.intraday-chart-stage svg {
+  display: block;
+  height: auto;
+  max-width: 100%;
+  overflow: visible;
+  width: 100%;
+}
+
+.intraday-grid line {
+  stroke: #e4e4e4;
+  stroke-width: 1;
+}
+
+.intraday-grid text,
+.intraday-axis-label {
+  fill: #777;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.intraday-series path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.intraday-series circle {
+  fill: #fff;
+  stroke: currentColor;
+  stroke-width: 3;
+}
+
+.series-total {
+  color: #111;
+}
+
+.series-active {
+  color: #e06b2d;
+}
+
+.series-resting {
+  color: #929292;
+}
+
+.series-consumed {
+  color: #2563eb;
+}
+
+.intraday-legend .series-total {
+  background: #111;
+}
+
+.intraday-legend .series-active {
+  background: #e06b2d;
+}
+
+.intraday-legend .series-resting {
+  background: #929292;
+}
+
+.intraday-legend .series-consumed {
+  background: #2563eb;
+}
+
+.intraday-loading,
+.intraday-empty {
+  color: #777;
+  padding: 44px 20px;
+  text-align: center;
+}
+
+.context-modal {
+  max-height: min(88vh, 860px);
+  overflow: auto;
+  padding: 24px;
+  width: min(760px, 100%);
+}
+
+.context-modal h2,
+.context-modal p {
+  margin: 0;
+}
+
+.context-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 750;
+  margin: 20px 0 8px;
+}
+
+.context-modal textarea {
+  background: #fafafa;
+  border: 1px solid #d9d9d9;
+  border-radius: 12px;
+  box-sizing: border-box;
+  color: #111;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  min-height: 390px;
+  outline: none;
+  padding: 15px;
+  resize: vertical;
+  width: 100%;
+}
+
+.context-modal textarea:focus {
+  border-color: #111;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, .07);
+}
+
+.context-modal textarea:disabled {
+  opacity: .62;
+}
+
+.context-footer {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.context-footer > span {
+  color: #777;
+  font-size: 11px;
+}
+
+.save-context-button {
+  align-items: center;
+  background: #111;
+  border: 0;
+  border-radius: 11px;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 700;
+  justify-content: center;
+  min-width: 142px;
+  padding: 12px 16px;
+}
+
+.save-context-button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.context-close-button {
+  font-size: 25px;
+  line-height: 1;
+}
+
+.context-message:empty {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .intraday-chart-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .intraday-legend {
+    justify-content: flex-start;
+  }
+
+  .intraday-chart-stage {
+    padding: 2px 2px 0;
+  }
+
+  .intraday-chart-stage svg {
+    min-height: 230px;
+  }
+
+  .context-modal {
+    padding: 20px;
+  }
+
+  .context-modal textarea {
+    min-height: 52vh;
+  }
+
+  .context-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .save-context-button {
+    width: 100%;
+  }
+}
