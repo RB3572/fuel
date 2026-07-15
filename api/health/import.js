@@ -2,7 +2,7 @@ import { sql, userForSyncToken } from '../_lib/db.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
-const PARSER_VERSION = 10
+const PARSER_VERSION = 11
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -126,7 +126,7 @@ function parseTextPayload(text) {
   const keys = [
     'date', 'activeEnergy', 'restingEnergy', 'excersiseMinutes', 'exerciseMinutes', 'steps',
     'walkingrunDistance', 'walkingRunningDistance', 'swimDistance', 'swimmingDistance',
-    'restingHeartRate', 'heartRateVariability', 'HRV', 'respiratoryRate', 'cardioFitness',
+    'restingHeartRate', 'heartRateVariability', 'HRV', 'hrv', 'respiratoryRate', 'respRate', 'cardioFitness',
     'vo2Max', 'sleep', 'sleepTotal', 'sleepHours', 'bloodOx', 'bloodOxygen', 'standMins', 'standMinutes',
     'wlkHRAvg', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
     'flightsClimbed', 'swmStrokes', 'swimmingStrokes'
@@ -153,7 +153,7 @@ function normalize(payload) {
     swimmingDistance: number(value(payload, ['swimDistance', 'swimmingDistance'])),
     restingHeartRate: number(value(payload, ['restingHeartRate', 'restingHR'])),
     hrv: number(value(payload, ['heartRateVariability', 'HRV', 'hrv'])),
-    respiratoryRate: number(value(payload, ['respiratoryRate', 'breathingRate'])),
+    respiratoryRate: number(value(payload, ['respiratoryRate', 'respRate', 'breathingRate'])),
     vo2Max: number(value(payload, ['cardioFitness', 'vo2Max'])),
     sleepHours: sleepDurationHours(value(payload, ['sleep', 'sleepTotal', 'sleepHours'])),
     bloodOxygen: normalizeBloodOxygen(number(value(payload, ['bloodOx', 'bloodOxygen', 'oxygenSaturation']))),
