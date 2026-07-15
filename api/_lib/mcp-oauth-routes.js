@@ -11,8 +11,8 @@ import {
   protectedResourceMetadata,
   readConsentToken,
   validateAuthorizeParameters,
-  validateClientRedirect,
 } from './mcp-auth.js'
+import { validateRegisteredOrMetadataClient } from './mcp-dcr.js'
 import { methodNotAllowed, redirect, sendJson, setCookies } from './http.js'
 
 export async function handleMcpOAuthRoute(route, req, res) {
@@ -58,7 +58,7 @@ async function authorizeGet(req, res) {
   }
 
   const parameters = validateAuthorizeParameters(Object.fromEntries(requestUrl.searchParams.entries()))
-  await validateClientRedirect(parameters.clientId, parameters.redirectUri)
+  await validateRegisteredOrMetadataClient(parameters.clientId, parameters.redirectUri)
 
   const { session, cookie } = await authenticatedSession(req)
   if (!session) {
