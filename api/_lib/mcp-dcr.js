@@ -1,5 +1,6 @@
 import { randomToken } from './crypto.js'
 import { sql } from './db.js'
+import { appUrl } from './google.js'
 import { oauthError, validateClientRedirect } from './mcp-auth.js'
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
@@ -39,7 +40,8 @@ export async function registerDynamicClient(body) {
   }
 
   await ensureMcpClientTable()
-  const clientId = `fuel_dcr_${randomToken(24)}`
+  const registrationId = randomToken(24)
+  const clientId = `${appUrl()}/oauth/client-metadata?id=${encodeURIComponent(registrationId)}`
   const metadata = {
     client_id: clientId,
     client_name: String(body?.client_name || 'Fuel MCP client').slice(0, 200),
@@ -61,6 +63,18 @@ export async function registerDynamicClient(body) {
     )
   `
   return metadata
+}
+
+export async function getDynamicClientMetadata(clientId) {
+  await ensureMcpClientTable()
+  const db = sql()
+  const rows = await db`
+    SELECT metadata
+    FROM mcp_oauth_clients
+    WHERE client_id = ${String(clientId || '')}
+    LIMIT 1
+  `
+  return rows[0]?.metadata || null
 }
 
 export async function validateRegisteredOrMetadataClient(clientId, redirectUri) {
