@@ -1,9 +1,16 @@
 import { ensureUserFromSession, sql, userForSyncToken } from './_lib/db.js'
 import { authenticatedSession } from './_lib/google.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
+import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 
 export default async function handler(req, res) {
+  const integrationRoute = routeFromRequest(req)
+  if (integrationRoute) {
+    await handleMcpOAuthRoute(integrationRoute, req, res)
+    return
+  }
+
   if (!['GET', 'POST'].includes(req.method)) {
     methodNotAllowed(res, ['GET', 'POST'])
     return
@@ -54,6 +61,14 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error(req.method === 'POST' ? 'Food logging failed' : 'Unable to load Fuel data from Neon', error)
     sendJson(res, 500, { error: req.method === 'POST' ? 'Food could not be logged.' : 'Unable to load Fuel data.' })
+  }
+}
+
+function routeFromRequest(req) {
+  try {
+    return new URL(req.url, 'https://fuel.rishib.com').searchParams.get('fuel_route') || ''
+  } catch {
+    return ''
   }
 }
 
