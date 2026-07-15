@@ -87,7 +87,7 @@ async function authorizePost(req, res) {
     target.searchParams.set('error', 'access_denied')
     target.searchParams.set('error_description', 'The user declined access to Fuel.')
     if (consent.state) target.searchParams.set('state', consent.state)
-    redirect(res, target.toString(), cookie ? [cookie] : [])
+    redirectAfterPost(res, target.toString(), cookie ? [cookie] : [])
     return
   }
 
@@ -101,7 +101,7 @@ async function authorizePost(req, res) {
   })
   target.searchParams.set('code', code)
   if (consent.state) target.searchParams.set('state', consent.state)
-  redirect(res, target.toString(), cookie ? [cookie] : [])
+  redirectAfterPost(res, target.toString(), cookie ? [cookie] : [])
 }
 
 async function token(req, res) {
@@ -174,9 +174,19 @@ function sendHtml(res, statusCode, html) {
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
   res.end(html)
 }
+
+function redirectAfterPost(res, location, cookies = []) {
+  setCookies(res, cookies)
+  res.statusCode = 303
+  res.setHeader('Location', location)
+  res.setHeader('Cache-Control', 'no-store')
+  res.end()
+}
+
 function escapeHtml(value) {
   return String(value || '').replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character])
 }
+
 function oauthFailure(code, message, statusCode = 400) {
   const error = new Error(message)
   error.oauthCode = code
