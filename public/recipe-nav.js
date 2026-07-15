@@ -6,7 +6,7 @@ function ensureToolbarLabels(){
   const workoutButton=userActions.querySelector('button.lift-nav-button')
   if(workoutButton){
     const workoutLabel=workoutButton.querySelector('span:last-child')
-    if(workoutLabel)workoutLabel.textContent='Workouts'
+    if(workoutLabel&&workoutLabel.textContent!=='Workouts')workoutLabel.textContent='Workouts'
     workoutButton.setAttribute('aria-label','Open workouts')
     workoutButton.setAttribute('title','Workouts')
   }
@@ -21,7 +21,7 @@ function ensureToolbarLabels(){
     userActions.insertBefore(recipeLink,userActions.firstChild)
   }
   const recipeLabel=recipeLink.querySelector('span:last-child')
-  if(recipeLabel)recipeLabel.textContent='Recipes'
+  if(recipeLabel&&recipeLabel.textContent!=='Recipes')recipeLabel.textContent='Recipes'
   recipeLink.setAttribute('aria-label','Open recipes')
   recipeLink.setAttribute('title','Recipes')
 }
