@@ -5,6 +5,7 @@ import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
 import { authorizationServerMetadata } from './_lib/mcp-auth.js'
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
+import { getUserContext, saveUserContext } from './_lib/user-context.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -54,6 +55,10 @@ export default async function handler(req, res) {
     }
     res.setHeader('Cache-Control', 'public, max-age=300')
     sendJson(res, 200, metadata)
+    return
+  }
+  if (integrationRoute === 'user-context') {
+    await handleUserContext(req, res)
     return
   }
   if (integrationRoute) {
@@ -115,6 +120,27 @@ export default async function handler(req, res) {
   }
 }
 
+async function handleUserContext(req, res) {
+  if (!['GET', 'PUT'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'PUT'])
+    return
+  }
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to manage Fuel context.' })
+      return
+    }
+    const result = req.method === 'GET'
+      ? await getUserContext(auth.id)
+      : await saveUserContext(auth.id, unwrap(req.body).context)
+    sendJson(res, 200, { ok: true, ...result }, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Fuel user context request failed', error)
+    sendJson(res, 500, { error: error instanceof Error ? error.message : 'Unable to update Fuel context.' })
+  }
+}
+
 async function getIntradayEnergy(userId) {
   const db = sql()
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date())
@@ -146,7 +172,10 @@ async function getIntradayEnergy(userId) {
     })),
     consumed: foods.map((row) => {
       consumed += finite(row.calories_kcal) || 0
-      return { collectedAt: new Date(row.occurred_at).toISOString(), caloriesConsumed: consumed }
+      return {
+        collectedAt: new Date(row.occurred_at).toISOString(),
+        caloriesConsumed: consumed,
+      }
     }),
   }
 }
