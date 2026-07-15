@@ -4,6 +4,8 @@ import { methodNotAllowed, sendJson } from './_lib/http.js'
 import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 
+const TIME_ZONE = 'America/Los_Angeles'
+
 export default async function handler(req, res) {
   const integrationRoute = routeFromRequest(req)
   if (integrationRoute) {
@@ -25,6 +27,7 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       const dashboard = await getNeonDashboard(auth.id)
+      dashboard.intradayEnergy = await getIntradayEnergy(auth.id)
       sendJson(res, 200, dashboard, auth.cookie ? [auth.cookie] : [])
       return
     }
@@ -62,6 +65,48 @@ export default async function handler(req, res) {
     console.error(req.method === 'POST' ? 'Food logging failed' : 'Unable to load Fuel data from Neon', error)
     sendJson(res, 500, { error: req.method === 'POST' ? 'Food could not be logged.' : 'Unable to load Fuel data.' })
   }
+}
+
+async function getIntradayEnergy(userId) {
+  const db = sql()
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date())
+  const [snapshots, foods] = await Promise.all([
+    db`
+      SELECT collected_at, active_energy_kcal, resting_energy_kcal, total_expenditure_kcal
+      FROM health_energy_snapshots
+      WHERE user_id = ${userId} AND date = ${today}::date
+      ORDER BY collected_at ASC
+    `,
+    db`
+      SELECT occurred_at, calories_kcal
+      FROM food_entries
+      WHERE user_id = ${userId}
+        AND occurred_at >= (${today}::date AT TIME ZONE ${TIME_ZONE})
+        AND occurred_at < ((${today}::date + interval '1 day') AT TIME ZONE ${TIME_ZONE})
+      ORDER BY occurred_at ASC
+    `,
+  ])
+
+  let consumed = 0
+  return {
+    date: today,
+    expenditure: snapshots.map((row) => ({
+      collectedAt: new Date(row.collected_at).toISOString(),
+      activeEnergy: finite(row.active_energy_kcal),
+      restingEnergy: finite(row.resting_energy_kcal),
+      totalExpenditure: finite(row.total_expenditure_kcal),
+    })),
+    consumed: foods.map((row) => {
+      consumed += finite(row.calories_kcal) || 0
+      return { collectedAt: new Date(row.occurred_at).toISOString(), caloriesConsumed: consumed }
+    }),
+  }
+}
+
+function finite(value) {
+  if (value == null || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function routeFromRequest(req) {
