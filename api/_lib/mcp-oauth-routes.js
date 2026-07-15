@@ -80,7 +80,7 @@ async function authorizeGet(req, res) {
 
 async function authorizeDecision(req, res, body, cameFromPost) {
   const consent = readConsentToken(body.consent_token)
-  if (!consent) throw oauthFailure('invalid_request', 'The authorization request expired. Return to ChatGPT and try connecting again.')
+  if (!consent) throw oauthFailure('invalid_request', 'The authorization request expired. Return to the client and try connecting again.')
 
   const { session, cookie } = await authenticatedSession(req)
   if (!session) throw oauthFailure('login_required', 'Sign in to Fuel before approving access.', 401)
@@ -110,7 +110,7 @@ async function authorizeDecision(req, res, body, cameFromPost) {
     callbackOrigin: target.origin,
     callbackPath: target.pathname,
     statePresent: Boolean(consent.state),
-    navigation: loopback ? 'local-redirect-bridge' : (cameFromPost ? 'post-fallback-page' : 'top-level-get-redirect'),
+    navigation: loopback ? 'single-local-redirect' : (cameFromPost ? 'post-fallback-page' : 'top-level-get-redirect'),
   })
   finishAuthorization(res, target.toString(), cookie ? [cookie] : [], cameFromPost)
 }
@@ -197,7 +197,7 @@ function consentPage({ consentToken, email, name, scopes }) {
 function completionPage(location, { loopback = false } = {}) {
   const encoded = Buffer.from(location, 'utf8').toString('base64')
   const destination = loopback ? 'your local assistant' : 'the requesting client'
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0.2;url=${escapeHtml(location)}"><title>Connecting Fuel</title><style>body{margin:0;background:#f5f5f5;color:#111;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{max-width:520px;margin:12vh auto;background:#fff;border:1px solid #ddd;border-radius:24px;padding:28px;text-align:center}a{display:inline-block;margin-top:18px;background:#111;color:#fff;padding:13px 18px;border-radius:12px;text-decoration:none;font-weight:700}.muted{color:#666}</style></head><body><main class="card"><h1>Connecting Fuel</h1><p>Returning to ${destination}…</p><p class="muted">This window should close after authorization completes.</p><a href="${escapeHtml(location)}" target="_self">Continue</a></main><script>const target=atob('${encoded}');try{window.opener&&window.opener.postMessage({type:'fuel-mcp-oauth-redirect',url:target},'*')}catch(e){}function go(){try{window.location.replace(target)}catch(e){try{window.location.href=target}catch(_){}}}setTimeout(go,25);setTimeout(go,500)</script></body></html>`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connecting Fuel</title><style>body{margin:0;background:#f5f5f5;color:#111;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{max-width:520px;margin:12vh auto;background:#fff;border:1px solid #ddd;border-radius:24px;padding:28px;text-align:center}a{display:inline-block;margin-top:18px;background:#111;color:#fff;padding:13px 18px;border-radius:12px;text-decoration:none;font-weight:700}.muted{color:#666}</style></head><body><main class="card"><h1>Connecting Fuel</h1><p>Returning to ${destination}…</p><p class="muted">This page sends the authorization result once. Use Continue only if the automatic return is blocked.</p><a href="${escapeHtml(location)}" target="_self">Continue</a></main><script>const target=atob('${encoded}');let sent=false;function go(){if(sent)return;sent=true;try{window.location.replace(target)}catch(error){sent=false}}setTimeout(go,75)</script></body></html>`
 }
 
 function isLoopbackRedirect(value) {
