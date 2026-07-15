@@ -5,6 +5,10 @@
       "destination": "/api/health/import"
     },
     {
+      "source": "/api/context",
+      "destination": "/api/mlog?fuel_route=user-context"
+    },
+    {
       "source": "/.well-known/oauth-protected-resource",
       "destination": "/api/mlog?fuel_route=protected-resource"
     },
