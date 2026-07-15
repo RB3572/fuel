@@ -63,3 +63,24 @@ a:focus-visible {
   background: #cacac6;
   border-radius: 999px;
 }
+
+#root {
+  min-height: 100dvh;
+}
+
+.center {
+  min-height: 100dvh !important;
+  width: 100%;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center !important;
+  justify-content: center !important;
+  place-content: unset !important;
+  padding: 24px;
+  text-align: center;
+}
+
+.center > .spin {
+  display: block;
+  margin: 0 auto 12px;
+}
