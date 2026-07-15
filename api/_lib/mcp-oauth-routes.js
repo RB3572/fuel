@@ -42,7 +42,7 @@ async function authorize(req, res) {
   res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
   try {
     if (req.method === 'GET') return authorizeGet(req, res)
-    return authorizePost(req, res)
+    return authorizeDecision(req, res, parseForm(req.body), true)
   } catch (error) {
     console.error('Fuel MCP authorization failed', error)
     sendHtml(res, error.statusCode || 400, errorPage(error.oauthCode || 'invalid_request', error.message || 'Unable to authorize Fuel.'))
@@ -52,6 +52,11 @@ async function authorize(req, res) {
 async function authorizeGet(req, res) {
   const requestUrl = new URL(req.url, appUrl())
   requestUrl.searchParams.delete('fuel_route')
+
+  if (requestUrl.searchParams.has('consent_token')) {
+    return authorizeDecision(req, res, Object.fromEntries(requestUrl.searchParams.entries()), false)
+  }
+
   const parameters = validateAuthorizeParameters(Object.fromEntries(requestUrl.searchParams.entries()))
   await validateClientRedirect(parameters.clientId, parameters.redirectUri)
 
@@ -73,8 +78,7 @@ async function authorizeGet(req, res) {
   }))
 }
 
-async function authorizePost(req, res) {
-  const body = parseForm(req.body)
+async function authorizeDecision(req, res, body, cameFromPost) {
   const consent = readConsentToken(body.consent_token)
   if (!consent) throw oauthFailure('invalid_request', 'The authorization request expired. Return to ChatGPT and try connecting again.')
 
@@ -87,7 +91,7 @@ async function authorizePost(req, res) {
     target.searchParams.set('error', 'access_denied')
     target.searchParams.set('error_description', 'The user declined access to Fuel.')
     if (consent.state) target.searchParams.set('state', consent.state)
-    redirectAfterPost(res, target.toString(), cookie ? [cookie] : [])
+    finishAuthorization(res, target.toString(), cookie ? [cookie] : [], cameFromPost)
     return
   }
 
@@ -101,7 +105,26 @@ async function authorizePost(req, res) {
   })
   target.searchParams.set('code', code)
   if (consent.state) target.searchParams.set('state', consent.state)
-  redirectAfterPost(res, target.toString(), cookie ? [cookie] : [])
+  console.info('Fuel MCP consent approved', {
+    callbackOrigin: target.origin,
+    callbackPath: target.pathname,
+    statePresent: Boolean(consent.state),
+    navigation: cameFromPost ? 'post-fallback-page' : 'top-level-get-redirect',
+  })
+  finishAuthorization(res, target.toString(), cookie ? [cookie] : [], cameFromPost)
+}
+
+function finishAuthorization(res, location, cookies = [], cameFromPost = false) {
+  if (!cameFromPost) {
+    redirect(res, location, cookies)
+    return
+  }
+
+  setCookies(res, cookies)
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+  sendHtml(res, 200, completionPage(location))
 }
 
 async function token(req, res) {
@@ -120,17 +143,21 @@ async function token(req, res) {
     if (resource !== MCP_RESOURCE) throw oauthError('invalid_target', 'The requested resource does not match Fuel MCP.')
 
     if (grantType === 'authorization_code') {
-      sendJson(res, 200, await exchangeAuthorizationCode({
+      const tokens = await exchangeAuthorizationCode({
         code: body.code,
         clientId,
         redirectUri: body.redirect_uri,
         resource,
         codeVerifier: body.code_verifier,
-      }))
+      })
+      console.info('Fuel MCP authorization code exchanged', { clientId, resource })
+      sendJson(res, 200, tokens)
       return
     }
     if (grantType === 'refresh_token') {
-      sendJson(res, 200, await exchangeRefreshToken({ refreshToken: body.refresh_token, clientId, resource }))
+      const tokens = await exchangeRefreshToken({ refreshToken: body.refresh_token, clientId, resource })
+      console.info('Fuel MCP refresh token exchanged', { clientId, resource })
+      sendJson(res, 200, tokens)
       return
     }
     throw oauthError('unsupported_grant_type', 'Fuel supports authorization_code and refresh_token grants.')
@@ -162,7 +189,12 @@ function consentPage({ consentToken, email, name, scopes }) {
   const permissions = scopes.map((scope) => scope === 'fuel:write'
     ? '<li>Log food and update your personal goals</li>'
     : '<li>Read your nutrition, health, fitness, goals, and recipes</li>').join('')
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Fuel</title><style>body{margin:0;background:#f5f5f5;color:#111;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:520px;margin:8vh auto;padding:24px}.card{background:#fff;border:1px solid #ddd;border-radius:24px;padding:28px;box-shadow:0 12px 40px #0000000d}h1{margin:0 0 8px;font-size:28px}.muted{color:#666;line-height:1.5}ul{padding-left:22px;line-height:1.7}.account{background:#f5f5f5;border-radius:14px;padding:14px;margin:20px 0}.buttons{display:flex;gap:12px;margin-top:24px}button{flex:1;border-radius:12px;padding:13px 16px;font:inherit;font-weight:700;cursor:pointer}.approve{background:#111;color:#fff;border:1px solid #111}.deny{background:#fff;color:#111;border:1px solid #bbb}.fine{font-size:13px;color:#777;margin-top:20px;line-height:1.45}</style></head><body><main class="wrap"><section class="card"><h1>Connect Fuel to ChatGPT</h1><p class="muted">ChatGPT is requesting access to your private Fuel account.</p><div class="account"><strong>${escapeHtml(name)}</strong><br><span class="muted">${escapeHtml(email)}</span></div><p><strong>This connection can:</strong></p><ul>${permissions}</ul><form method="post" action="/oauth/authorize"><input type="hidden" name="consent_token" value="${escapeHtml(consentToken)}"><div class="buttons"><button class="deny" type="submit" name="decision" value="deny">Cancel</button><button class="approve" type="submit" name="decision" value="approve">Allow</button></div></form><p class="fine">Fuel keeps each user’s data isolated in Neon. ChatGPT receives an OAuth token scoped only to this Fuel account.</p></section></main></body></html>`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Fuel</title><style>body{margin:0;background:#f5f5f5;color:#111;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:520px;margin:8vh auto;padding:24px}.card{background:#fff;border:1px solid #ddd;border-radius:24px;padding:28px;box-shadow:0 12px 40px #0000000d}h1{margin:0 0 8px;font-size:28px}.muted{color:#666;line-height:1.5}ul{padding-left:22px;line-height:1.7}.account{background:#f5f5f5;border-radius:14px;padding:14px;margin:20px 0}.buttons{display:flex;gap:12px;margin-top:24px}button{flex:1;border-radius:12px;padding:13px 16px;font:inherit;font-weight:700;cursor:pointer}.approve{background:#111;color:#fff;border:1px solid #111}.deny{background:#fff;color:#111;border:1px solid #bbb}.fine{font-size:13px;color:#777;margin-top:20px;line-height:1.45}</style></head><body><main class="wrap"><section class="card"><h1>Connect Fuel to ChatGPT</h1><p class="muted">ChatGPT is requesting access to your private Fuel account.</p><div class="account"><strong>${escapeHtml(name)}</strong><br><span class="muted">${escapeHtml(email)}</span></div><p><strong>This connection can:</strong></p><ul>${permissions}</ul><form method="get" action="/oauth/authorize" target="_top"><input type="hidden" name="consent_token" value="${escapeHtml(consentToken)}"><div class="buttons"><button class="deny" type="submit" name="decision" value="deny">Cancel</button><button class="approve" type="submit" name="decision" value="approve">Allow</button></div></form><p class="fine">Fuel keeps each user’s data isolated in Neon. ChatGPT receives an OAuth token scoped only to this Fuel account.</p></section></main></body></html>`
+}
+
+function completionPage(location) {
+  const encoded = Buffer.from(location, 'utf8').toString('base64')
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0;url=${escapeHtml(location)}"><title>Connecting Fuel</title><style>body{margin:0;background:#f5f5f5;color:#111;font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{max-width:520px;margin:12vh auto;background:#fff;border:1px solid #ddd;border-radius:24px;padding:28px;text-align:center}a{display:inline-block;margin-top:18px;background:#111;color:#fff;padding:13px 18px;border-radius:12px;text-decoration:none;font-weight:700}</style></head><body><main class="card"><h1>Connecting Fuel</h1><p>Returning to ChatGPT…</p><a href="${escapeHtml(location)}" target="_top">Continue to ChatGPT</a></main><script>const target=atob('${encoded}');try{window.top.location.replace(target)}catch(error){window.location.replace(target)}setTimeout(()=>window.location.replace(target),250)</script></body></html>`
 }
 
 function errorPage(code, description) {
@@ -173,14 +205,6 @@ function sendHtml(res, statusCode, html) {
   res.statusCode = statusCode
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
   res.end(html)
-}
-
-function redirectAfterPost(res, location, cookies = []) {
-  setCookies(res, cookies)
-  res.statusCode = 303
-  res.setHeader('Location', location)
-  res.setHeader('Cache-Control', 'no-store')
-  res.end()
 }
 
 function escapeHtml(value) {
