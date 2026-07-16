@@ -144,9 +144,52 @@ function chartMarkup(payload) {
   `
 }
 
+function summaryBarsMarkup(payload) {
+  const summary = payload?.today?.summary || {}
+  const resting = Number(summary.restingEnergy) || 0
+  const active = Number(summary.activeEnergy) || 0
+  const total = Number(summary.totalExpenditure) || resting + active
+  const consumed = Number(summary.caloriesConsumed) || 0
+  const max = Math.max(total, consumed, active, 1)
+  const pct = (value) => `${Math.max(0, value / max * 100)}%`
+  const restingShare = total > 0 ? resting / total * 100 : 0
+  const activeShare = total > 0 ? active / total * 100 : 0
+
+  return `
+    <div class="energy-summary-bars" data-energy-summary-bars>
+      <div class="energy-summary-row">
+        <div class="energy-summary-label"><span>Total burned</span><strong>${Math.round(total).toLocaleString()} kcal</strong></div>
+        <div class="energy-summary-track" aria-label="Total burned ${Math.round(total)} kilocalories">
+          <div class="energy-summary-fill total-burned-fill" style="width:${pct(total)}">
+            <span class="resting-segment" style="width:${restingShare}%"></span>
+            <span class="active-segment" style="width:${activeShare}%"></span>
+          </div>
+        </div>
+      </div>
+      <div class="energy-summary-row">
+        <div class="energy-summary-label"><span>Consumed</span><strong>${Math.round(consumed).toLocaleString()} kcal</strong></div>
+        <div class="energy-summary-track" aria-label="Consumed ${Math.round(consumed)} kilocalories"><span class="energy-summary-fill consumed-fill" style="width:${pct(consumed)}"></span></div>
+      </div>
+      <div class="energy-summary-row">
+        <div class="energy-summary-label"><span>Active calories</span><strong>${Math.round(active).toLocaleString()} kcal</strong></div>
+        <div class="energy-summary-track" aria-label="Active ${Math.round(active)} kilocalories"><span class="energy-summary-fill active-fill" style="width:${pct(active)}"></span></div>
+      </div>
+      <div class="energy-summary-key"><span><i class="resting-dot"></i>Resting</span><span><i class="active-dot"></i>Active</span><span><i class="consumed-dot"></i>Consumed</span></div>
+    </div>`
+}
+
 function renderChart(payload) {
   const hero = document.querySelector('.hero.panel')
   if (!hero) return false
+
+  let summaryBars = hero.querySelector('[data-energy-summary-bars]')
+  if (!summaryBars) {
+    summaryBars = document.createElement('div')
+    const stats = hero.querySelector('.hero-stats')
+    hero.insertBefore(summaryBars, stats || null)
+  }
+  summaryBars.outerHTML = summaryBarsMarkup(payload)
+
   let wrap = document.querySelector('[data-intraday-energy]')
   if (!wrap) {
     wrap = document.createElement('section')
@@ -158,7 +201,31 @@ function renderChart(payload) {
   return true
 }
 
+function restartFitnessRingAnimation() {
+  const container = document.querySelector('.activity-rings')
+  if (!container || container.dataset.ringAnimationBound === 'true') return
+  container.dataset.ringAnimationBound = 'true'
+  const rings = [...container.querySelectorAll('.fitness-progress')]
+  for (const ring of rings) {
+    const radius = Number(ring.getAttribute('r')) || 0
+    const circumference = 2 * Math.PI * radius
+    const target = ring.getAttribute('stroke-dashoffset') || '0'
+    ring.style.setProperty('--ring-start', String(circumference))
+    ring.style.setProperty('--ring-target', target)
+  }
+
+  const observer = new IntersectionObserver(([entry]) => {
+    if (!entry.isIntersecting) return
+    container.classList.remove('ring-animation-ready')
+    void container.getBoundingClientRect()
+    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('ring-animation-ready')))
+    observer.disconnect()
+  }, { threshold: .2 })
+  observer.observe(container)
+}
+
 async function refreshIntradayEnergy() {
+  restartFitnessRingAnimation()
   if (energyRequestRunning || (location.pathname !== '/' && location.pathname !== '/index.html')) return
   const hero = document.querySelector('.hero.panel')
   if (!hero) return
@@ -167,6 +234,7 @@ async function refreshIntradayEnergy() {
     const response = await fetch('/api/mlog', { cache: 'no-store', headers: { Accept: 'application/json' } })
     if (!response.ok) return
     renderChart(await response.json())
+    restartFitnessRingAnimation()
   } catch {
     // The authenticated dashboard handles its own connection errors.
   } finally {
@@ -174,7 +242,10 @@ async function refreshIntradayEnergy() {
   }
 }
 
-new MutationObserver(() => void refreshIntradayEnergy()).observe(document.documentElement, { childList: true, subtree: true })
+new MutationObserver(() => {
+  restartFitnessRingAnimation()
+  void refreshIntradayEnergy()
+}).observe(document.documentElement, { childList: true, subtree: true })
 addEventListener('DOMContentLoaded', () => void refreshIntradayEnergy())
 addEventListener('focus', () => void refreshIntradayEnergy())
 setInterval(() => void refreshIntradayEnergy(), 30000)
