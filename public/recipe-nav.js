@@ -49,6 +49,18 @@ function ensureToolbarLayout(){
   }
   recipeLink.setAttribute('aria-label','Open recipes')
   recipeLink.setAttribute('title','Recipes')
+
+  let mealPlanLink=userActions.querySelector('[data-meal-plan-nav]')
+  if(!mealPlanLink){
+    mealPlanLink=document.createElement('a')
+    mealPlanLink.href='/meal-plan.html'
+    mealPlanLink.dataset.mealPlanNav='true'
+    mealPlanLink.className='lift-nav-button recipe-nav-button icon-only-nav-button'
+    mealPlanLink.innerHTML=`<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg>`
+    userActions.insertBefore(mealPlanLink,recipeLink)
+  }
+  mealPlanLink.setAttribute('aria-label','Open meal planner')
+  mealPlanLink.setAttribute('title','Meal planner')
 }
 
 new MutationObserver(ensureToolbarLayout).observe(document.documentElement,{childList:true,subtree:true})
