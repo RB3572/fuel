@@ -1,6 +1,7 @@
 import { ensureUserFromSession, sql, userForSyncToken } from './_lib/db.js'
 import { authenticatedSession, appUrl } from './_lib/google.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
+import { handleMealPlan } from './_lib/meal-plan.js'
 import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
 import { authorizationServerMetadata } from './_lib/mcp-auth.js'
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
@@ -59,6 +60,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'user-context') {
     await handleUserContext(req, res)
+    return
+  }
+  if (integrationRoute === 'meal-plan') {
+    await handleMealPlan(req, res)
     return
   }
   if (integrationRoute) {
