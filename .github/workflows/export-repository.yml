@@ -1,0 +1,23 @@
+name: Export repository
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove Git metadata
+        run: rm -rf .git
+      - name: Upload repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuel-repository
+          path: .
+          include-hidden-files: true
+          retention-days: 1
