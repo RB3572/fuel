@@ -9,6 +9,10 @@
       "destination": "/api/mlog?fuel_route=user-context"
     },
     {
+      "source": "/api/meal-plan",
+      "destination": "/api/mlog?fuel_route=meal-plan"
+    },
+    {
       "source": "/.well-known/oauth-protected-resource",
       "destination": "/api/mlog?fuel_route=protected-resource"
     },
