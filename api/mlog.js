@@ -155,8 +155,8 @@ async function getIntradayEnergy(userId) {
       SELECT occurred_at, calories_kcal
       FROM food_entries
       WHERE user_id = ${userId}
-        AND occurred_at >= (${today}::date AT TIME ZONE ${TIME_ZONE})
-        AND occurred_at < ((${today}::date + interval '1 day') AT TIME ZONE ${TIME_ZONE})
+        AND occurred_at >= (${today}::date::timestamp AT TIME ZONE ${TIME_ZONE})
+        AND occurred_at < (((${today}::date + interval '1 day')::timestamp) AT TIME ZONE ${TIME_ZONE})
       ORDER BY occurred_at ASC
     `,
   ])
