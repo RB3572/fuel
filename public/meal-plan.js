@@ -1,3 +1,4 @@
+// Fuel location-aware Gemini meal planner.
 const state={status:null,busy:false}
 const els={
   generate:document.getElementById('generate-button'),
