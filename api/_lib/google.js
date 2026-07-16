@@ -9,6 +9,7 @@ const revokeEndpoint = 'https://oauth2.googleapis.com/revoke'
 const userInfoEndpoint = 'https://openidconnect.googleapis.com/v1/userinfo'
 
 export const googleScopes = ['openid', 'email', 'profile']
+export const geminiGoogleScope = 'https://www.googleapis.com/auth/cloud-platform'
 
 export function appUrl() {
   return process.env.APP_URL || 'https://fuel.rishib.com'
@@ -23,6 +24,20 @@ export function googleEnv() {
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET
   if (!clientId || !clientSecret) throw new Error('Google OAuth environment variables are not configured')
   return { clientId, clientSecret }
+}
+
+export function googleQuotaProject() {
+  const configured = process.env.GEMINI_QUOTA_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT
+  if (configured) return configured
+  const { clientId } = googleEnv()
+  const projectNumber = String(clientId).match(/^(\d+)-/)?.[1]
+  if (!projectNumber) throw new Error('Set GEMINI_QUOTA_PROJECT to the Google Cloud project ID that owns the OAuth client.')
+  return projectNumber
+}
+
+export function hasGoogleScope(session, requiredScope) {
+  const scopes = String(session?.tokens?.scope || '').split(/\s+/).filter(Boolean)
+  return scopes.includes(requiredScope)
 }
 
 export function sessionCookie(session, maxAge = 60 * 60 * 24 * 30) {
