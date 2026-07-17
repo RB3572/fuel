@@ -8,8 +8,8 @@ const tokenEndpoint = 'https://oauth2.googleapis.com/token'
 const revokeEndpoint = 'https://oauth2.googleapis.com/revoke'
 const userInfoEndpoint = 'https://openidconnect.googleapis.com/v1/userinfo'
 
-export const googleScopes = ['openid', 'email', 'profile']
 export const geminiGoogleScope = 'https://www.googleapis.com/auth/cloud-platform'
+export const googleScopes = ['openid', 'email', 'profile', geminiGoogleScope]
 
 export function appUrl() {
   return process.env.APP_URL || 'https://fuel.rishib.com'
