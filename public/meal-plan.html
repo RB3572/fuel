@@ -4,43 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f7f7f5">
-  <title>Meal plan · Fuel</title>
+  <title>AI meal plan · Fuel</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/meal-plan.css">
 </head>
 <body>
   <main class="meal-shell">
     <header class="meal-topbar">
-      <a class="icon-button" href="/" aria-label="Back to Fuel" title="Dashboard">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
-      </a>
-      <div class="meal-title"><span>FUEL</span><h1>Meal plan</h1></div>
+      <a class="icon-button" href="/" aria-label="Back to Fuel" title="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></a>
+      <div class="meal-title"><span>FUEL AI</span><h1>Meal planner</h1></div>
       <div class="top-actions">
-        <a class="icon-button active" href="/meal-plan.html" aria-label="Meal planner" title="Meal planner">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/><path d="m19 14-1 2.5-2.5 1 2.5 1 1 2.5 1-2.5 2.5-1-2.5-1L19 14Z"/></svg>
-        </a>
-        <a class="icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 2v7a3 3 0 0 0 3 3h1V2"/><path d="M5 2v10"/><path d="M7 2v10"/><path d="M6 12v10"/><path d="M19 2v20"/><path d="M15 2c0 5 1.5 8 4 8"/></svg>
-        </a>
+        <a class="icon-button active" href="/meal-plan.html" aria-label="Meal planner" title="Meal planner"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg></a>
+        <a class="icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 2v7a3 3 0 0 0 3 3h1V2"/><path d="M5 2v10"/><path d="M7 2v10"/><path d="M6 12v10"/><path d="M19 2v20"/><path d="M15 2c0 5 1.5 8 4 8"/></svg></a>
       </div>
     </header>
 
     <section class="intro-card card">
-      <div>
-        <span class="eyebrow">REST OF TODAY</span>
-        <h2>Build a meal plan around what is left.</h2>
-        <p>Fuel combines today’s logged intake, your targets, saved preferences, and your current location. Your location is sent to Gemini for this request and is not stored by Fuel.</p>
-      </div>
-      <button id="generate-button" class="primary-button" type="button" disabled>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg>
-        <span>Use location and generate</span>
-      </button>
+      <span class="eyebrow">REST OF TODAY</span>
+      <h2>A plan that updates when your food log changes.</h2>
+      <p>Fuel uses the current time, today’s remaining targets, your saved preferences, and your location. Opening this page generates a new plan only after new food has been logged.</p>
     </section>
 
-    <section id="status-card" class="status-card card">
-      <div class="status-spinner" aria-hidden="true"></div>
-      <p>Loading your Fuel data…</p>
-    </section>
+    <section id="status-card" class="status-card card"><div class="status-spinner" aria-hidden="true"></div><p>Checking today’s Fuel data…</p></section>
 
     <section id="budget-section" class="budget-section" hidden>
       <div class="section-head"><div><span class="eyebrow">AVAILABLE TODAY</span><h2>Remaining targets</h2></div><span id="budget-date"></span></div>
@@ -53,13 +38,14 @@
       </div>
     </section>
 
-    <section id="plan-section" class="plan-section card" hidden>
-      <div class="section-head"><div><span class="eyebrow">GEMINI MEAL PLAN</span><h2>Your plan</h2></div><span id="generated-time"></span></div>
-      <div id="plan-output" class="plan-output"></div>
-      <div id="maps-sources" class="maps-sources" hidden>
-        <h3><span translate="no">Google Maps</span> sources</h3>
-        <div id="source-list"></div>
-      </div>
+    <section id="chat-section" class="chat-section card" hidden>
+      <div class="section-head chat-heading"><div><span class="eyebrow">GEMINI MEAL PLAN</span><h2>Your plan</h2></div><span id="generated-time"></span></div>
+      <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
+      <div id="maps-sources" class="maps-sources" hidden><h3><span translate="no">Google Maps</span> sources</h3><div id="source-list"></div></div>
+      <form id="chat-form" class="chat-composer">
+        <textarea id="chat-input" rows="1" maxlength="3000" placeholder="Ask for a substitution, different portions, or another option…" aria-label="Message Fuel AI"></textarea>
+        <button id="send-button" type="submit" aria-label="Send message" title="Send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
+      </form>
       <p class="disclaimer">Nutrition and restaurant details are estimates. Verify ingredients, allergies, cross-contact, prices, and availability before ordering or eating.</p>
     </section>
   </main>
