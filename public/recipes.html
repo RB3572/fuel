@@ -10,13 +10,14 @@
 <body>
   <main class="recipe-shell">
     <header class="recipe-header">
-      <a class="back-link" href="/" aria-label="Back to Fuel">←</a>
-      <div>
-        <h1>Recipes</h1>
-        <p>Your saved recipe index</p>
-      </div>
-      <label class="search-wrap"><span>Search</span><input id="recipe-search" type="search" placeholder="Search recipes or ingredients" /></label>
+      <div class="page-title"><span class="eyebrow">FUEL</span><h1>Recipes</h1></div>
+      <nav class="top-actions" aria-label="Fuel navigation">
+        <a class="icon-button" href="/" aria-label="Dashboard" title="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></a>
+        <a class="icon-button" href="/meal-plan.html" aria-label="Meal planner" title="Meal planner"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg></a>
+        <a class="icon-button active" href="/recipes.html" aria-current="page" aria-label="Recipes" title="Recipes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></a>
+      </nav>
     </header>
+    <label class="search-wrap"><span>Search</span><input id="recipe-search" type="search" placeholder="Search recipes or ingredients" /></label>
     <section id="recipe-status" class="status-card">Loading recipes…</section>
     <section id="recipe-groups" class="recipe-groups" hidden></section>
   </main>

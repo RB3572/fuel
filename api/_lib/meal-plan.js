@@ -14,6 +14,7 @@ const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models
 const DEFAULT_MODEL = 'gemini-2.5-flash'
 const TIME_ZONE = 'America/Los_Angeles'
 const MAX_MESSAGES = 18
+const CHAT_RETENTION_MS = 2 * 24 * 60 * 60 * 1000 // Keep chat history for two days.
 
 export async function handleMealPlan(req, res) {
   if (!['GET', 'POST'].includes(req.method)) {
@@ -85,10 +86,13 @@ export async function handleMealPlan(req, res) {
     const localTime = limitedText(body.localTime, 100) || new Date().toString()
     const timeZone = limitedText(body.timeZone, 100) || TIME_ZONE
     const generated = await generateMealPlan({ session, state, location, localTime, timeZone })
+    // Regenerating the plan (new food logged, or a new day) must NOT wipe the
+    // conversation. Carry the prior chat forward, dropping only entries older
+    // than the two-day retention window.
     const saved = await saveCachedPlan(userId, {
       foodFingerprint: state.foodFingerprint,
       plan: generated.text,
-      messages: [],
+      messages: keepRecentMessages(cache?.messages),
       sources: generated.sources,
       model: generated.model,
       generatedAt: new Date(),
@@ -138,7 +142,7 @@ function responseBase(state, cache) {
     foodCount: state.foodCount,
     needsGeneration: !cache,
     plan: cache?.plan || null,
-    messages: normalizeMessages(cache?.messages),
+    messages: keepRecentMessages(cache?.messages),
     sources: normalizeSources(cache?.sources),
     model: cache?.model || null,
     generatedAt: cache?.generated_at || cache?.generatedAt || null,
@@ -419,7 +423,18 @@ function groundingSources(candidate) {
 }
 
 function appendMessages(existing, additions) {
-  return [...normalizeMessages(existing), ...additions].slice(-MAX_MESSAGES)
+  return keepRecentMessages([...normalizeMessages(existing), ...additions])
+}
+
+// Normalize, then drop messages older than the two-day retention window and cap
+// the total. Entries without a timestamp are always kept.
+function keepRecentMessages(value) {
+  const cutoff = Date.now() - CHAT_RETENTION_MS
+  return normalizeMessages(value).filter((item) => {
+    if (!item.at) return true
+    const at = new Date(item.at).getTime()
+    return Number.isNaN(at) || at >= cutoff
+  }).slice(-MAX_MESSAGES)
 }
 
 function normalizeMessages(value) {
