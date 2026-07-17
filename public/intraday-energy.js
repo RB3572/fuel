@@ -254,9 +254,14 @@ async function refreshIntradayEnergy() {
   }
 }
 
+// The observer must NOT refresh on every mutation: renderChart rewrites innerHTML,
+// which is itself a mutation, so an unconditional refresh here forms an infinite
+// fetch/render loop that freezes the main thread. Only refresh from the observer
+// until the chart has been injected (i.e. once the authenticated dashboard mounts).
+// Ongoing updates come from the interval, focus, and DOMContentLoaded handlers below.
 new MutationObserver(() => {
   restartFitnessRingAnimation()
-  void refreshIntradayEnergy()
+  if (!document.querySelector('[data-intraday-energy]')) void refreshIntradayEnergy()
 }).observe(document.documentElement, { childList: true, subtree: true })
 addEventListener('DOMContentLoaded', () => void refreshIntradayEnergy())
 addEventListener('focus', () => void refreshIntradayEnergy())

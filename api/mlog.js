@@ -147,8 +147,19 @@ async function handleUserContext(req, res) {
 }
 
 async function getIntradayEnergy(userId) {
-  const db = sql()
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date())
+  try {
+    return await readIntradayEnergy(userId, today)
+  } catch (error) {
+    // Intraday energy is an optional overlay. A missing table or query error must
+    // never take down the whole dashboard GET, so degrade to empty series.
+    console.error('Intraday energy unavailable', error)
+    return { date: today, expenditure: [], consumed: [] }
+  }
+}
+
+async function readIntradayEnergy(userId, today) {
+  const db = sql()
   const [snapshots, foods] = await Promise.all([
     db`
       SELECT collected_at, active_energy_kcal, resting_energy_kcal, total_expenditure_kcal
