@@ -1,11 +1,5 @@
 import { ensureUserFromSession, sql } from './db.js'
-import {
-  appUrl,
-  authenticatedSession,
-  geminiGoogleScope,
-  googleQuotaProject,
-  hasGoogleScope,
-} from './google.js'
+import { appUrl, authenticatedSession } from './google.js'
 import { methodNotAllowed, sendJson } from './http.js'
 import { getNeonDashboard } from './neon-dashboard.js'
 import { getUserContext } from './user-context.js'
@@ -15,6 +9,8 @@ const DEFAULT_MODEL = 'gemini-2.5-flash'
 const TIME_ZONE = 'America/Los_Angeles'
 const MAX_MESSAGES = 18
 const CHAT_RETENTION_MS = 2 * 24 * 60 * 60 * 1000 // Keep chat history for two days.
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
 
 export async function handleMealPlan(req, res) {
   if (!['GET', 'POST'].includes(req.method)) {
@@ -48,18 +44,24 @@ export async function handleMealPlan(req, res) {
     const body = parseBody(req.body)
     const action = String(body.action || 'plan')
     if (action === 'chat') {
+      const image = validatedImage(body.image)
       const message = limitedText(body.message, 3000)
-      if (!message) {
-        sendJson(res, 422, { error: 'A message is required.' })
+      if (!message && !image) {
+        sendJson(res, 422, { error: 'A message or a photo is required.' })
         return
       }
       if (!validCache) {
         sendJson(res, 409, { ...base, code: 'plan_stale', error: 'Food has changed since this plan was created. Fuel needs to refresh the plan first.' })
         return
       }
-      const answer = await answerChat({ session, state, cache, message })
+      const answer = await answerChat({ state, cache, message, image })
+      // Writing the diary changes the food fingerprint, so the cached plan is
+      // deliberately left on the OLD fingerprint: the next load sees it as stale
+      // and regenerates against the newly logged food.
+      if (answer.foods.length) await logFoods(userId, answer.foods)
+      const nextState = answer.foods.length ? await currentState(userId) : state
       const messages = appendMessages(cache.messages, [
-        { role: 'user', text: message, at: new Date().toISOString() },
+        { role: 'user', text: message || 'Sent a photo to log.', at: new Date().toISOString() },
         { role: 'assistant', text: answer.text, at: new Date().toISOString() },
       ])
       const saved = await saveCachedPlan(userId, {
@@ -71,8 +73,9 @@ export async function handleMealPlan(req, res) {
         generatedAt: cache.generated_at || new Date(),
       })
       sendJson(res, 200, {
-        ...responseBase(state, saved),
+        ...responseBase(nextState, saved),
         reply: answer.text,
+        loggedFoods: answer.foods,
       }, cookie ? [cookie] : [])
       return
     }
@@ -85,7 +88,7 @@ export async function handleMealPlan(req, res) {
     const location = validatedLocation(body)
     const localTime = limitedText(body.localTime, 100) || new Date().toString()
     const timeZone = limitedText(body.timeZone, 100) || TIME_ZONE
-    const generated = await generateMealPlan({ session, state, location, localTime, timeZone })
+    const generated = await generateMealPlan({ state, location, localTime, timeZone })
     // Regenerating the plan (new food logged, or a new day) must NOT wipe the
     // conversation. Carry the prior chat forward, dropping only entries older
     // than the two-day retention window.
@@ -255,7 +258,7 @@ function mealBudget(dashboard) {
   }
 }
 
-async function generateMealPlan({ session, state, location, localTime, timeZone }) {
+async function generateMealPlan({ state, location, localTime, timeZone }) {
   const model = process.env.GEMINI_MEAL_PLAN_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL
   const prompt = buildPlanPrompt({ ...state, location, localTime, timeZone })
   const requestBody = {
@@ -266,43 +269,122 @@ async function generateMealPlan({ session, state, location, localTime, timeZone 
     requestBody.tools = [{ googleMaps: {} }]
     requestBody.toolConfig = { retrievalConfig: { latLng: { latitude: location.latitude, longitude: location.longitude } } }
   }
-  const payload = await callGemini(session, model, requestBody, Boolean(location))
+  const payload = await callGemini(model, requestBody, Boolean(location))
   const candidate = payload?.candidates?.[0]
   const text = candidate?.content?.parts?.map((part) => part?.text || '').join('\n').trim()
   if (!text) throw geminiError(payload?.promptFeedback?.blockReason ? `Gemini blocked the request: ${payload.promptFeedback.blockReason}.` : 'Gemini returned an empty meal plan.', 502, 'gemini_empty_response')
   return { text, sources: groundingSources(candidate), model }
 }
 
-async function answerChat({ session, state, cache, message }) {
+// Chat answers are structured so one call can both reply conversationally and hand
+// back food to write into the diary. `foods` stays empty for ordinary questions.
+const CHAT_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    reply: { type: 'string' },
+    foods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          description: { type: 'string' },
+          meal: { type: 'string' },
+          portion: { type: 'string' },
+          calories: { type: 'number' },
+          protein: { type: 'number' },
+          carbs: { type: 'number' },
+          fat: { type: 'number' },
+          fiber: { type: 'number' },
+        },
+        required: ['description', 'calories'],
+      },
+    },
+  },
+  required: ['reply'],
+}
+
+async function answerChat({ state, cache, message, image }) {
   const model = process.env.GEMINI_MEAL_PLAN_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL
   const prior = normalizeMessages(cache.messages).slice(-MAX_MESSAGES)
+  const parts = []
+  if (image) parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } })
+  parts.push({ text: message || 'Log the food in this photo.' })
   const contents = [
     { role: 'user', parts: [{ text: buildChatContext(state) }] },
     { role: 'model', parts: [{ text: cache.plan }] },
     ...prior.map((item) => ({ role: item.role === 'assistant' ? 'model' : 'user', parts: [{ text: item.text }] })),
-    { role: 'user', parts: [{ text: message }] },
+    { role: 'user', parts },
   ]
-  const payload = await callGemini(session, model, {
+  const payload = await callGemini(model, {
     contents,
-    generationConfig: { temperature: 0.35, topP: 0.9, maxOutputTokens: 900 },
+    generationConfig: {
+      temperature: 0.3,
+      topP: 0.9,
+      maxOutputTokens: 1400,
+      responseMimeType: 'application/json',
+      responseSchema: CHAT_RESPONSE_SCHEMA,
+    },
   })
-  const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part?.text || '').join('\n').trim()
+  const raw = payload?.candidates?.[0]?.content?.parts?.map((part) => part?.text || '').join('').trim()
+  if (!raw) {
+    throw geminiError(
+      payload?.promptFeedback?.blockReason
+        ? `Gemini blocked the request: ${payload.promptFeedback.blockReason}.`
+        : 'Gemini returned an empty response.',
+      502,
+      'gemini_empty_response',
+    )
+  }
+  let parsed
+  try { parsed = JSON.parse(raw) } catch { parsed = { reply: raw } }
+  const text = limitedText(parsed?.reply, 5000)
   if (!text) throw geminiError('Gemini returned an empty response.', 502, 'gemini_empty_response')
-  return { text, model }
+  return { text, foods: normalizeFoods(parsed?.foods), model }
 }
 
-async function callGemini(session, model, requestBody, allowMapsFallback = false) {
+function normalizeFoods(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => ({
+    description: limitedText(item?.description, 300),
+    meal: limitedText(item?.meal, 60) || null,
+    portion: limitedText(item?.portion, 120) || null,
+    calories: nonNegative(item?.calories),
+    protein: nonNegative(item?.protein),
+    carbs: nonNegative(item?.carbs),
+    fat: nonNegative(item?.fat),
+    fiber: nonNegative(item?.fiber),
+  })).filter((item) => item.description).slice(0, 12)
+}
+
+function nonNegative(value) {
+  const parsed = finite(value)
+  return parsed != null && parsed >= 0 ? parsed : null
+}
+
+async function logFoods(userId, foods) {
+  const db = sql()
+  const occurredAt = new Date().toISOString()
+  for (const food of foods) {
+    await db`
+      INSERT INTO food_entries (
+        user_id, occurred_at, meal, description, portion,
+        calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
+        confidence, notes, source, updated_at
+      ) VALUES (
+        ${userId}, ${occurredAt}, ${food.meal}, ${food.description}, ${food.portion},
+        ${food.calories}, ${food.protein}, ${food.carbs}, ${food.fat}, ${food.fiber},
+        'estimated', null, 'Fuel AI chat', now()
+      )
+    `
+  }
+}
+
+async function callGemini(model, requestBody, allowMapsFallback = false) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''
-  if (!apiKey && !hasGoogleScope(session, geminiGoogleScope)) {
-    throw geminiError('Your existing Fuel Google session needs to be refreshed once so it includes Gemini access.', 403, 'gemini_scope_missing')
+  if (!apiKey) {
+    throw geminiError('Fuel AI is not configured. Set GEMINI_API_KEY in the deployment environment.', 503, 'gemini_not_configured')
   }
-  const headers = { 'Content-Type': 'application/json' }
-  if (apiKey) {
-    headers['x-goog-api-key'] = apiKey
-  } else {
-    headers.Authorization = `Bearer ${session.tokens.accessToken}`
-    headers['x-goog-user-project'] = googleQuotaProject()
-  }
+  const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 
   const invoke = async (body) => {
     const response = await fetch(`${GEMINI_ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
@@ -387,7 +469,23 @@ Under PLAN, number each remaining eating occasion and provide an appropriate loc
 }
 
 function buildChatContext(state) {
-  return `Continue as Fuel's meal-planning assistant. Answer changes and questions about the current plan concisely. Preserve hard allergy and dietary constraints. Current remaining budget is ${numberLabel(state.budget.caloriesRemaining)} kcal, ${numberLabel(state.budget.proteinRemaining)} g protein, ${numberLabel(state.budget.carbsRemaining)} g carbs, ${numberLabel(state.budget.fatRemaining)} g fat, and ${numberLabel(state.budget.fiberRemaining)} g fiber. Saved context:\n${limitedText(state.context, 10000)}`
+  return `Continue as Fuel's meal-planning assistant. Answer changes and questions about the current plan concisely. Preserve hard allergy and dietary constraints as absolute limits.
+
+REMAINING TODAY
+${numberLabel(state.budget.caloriesRemaining)} kcal, ${numberLabel(state.budget.proteinRemaining)} g protein, ${numberLabel(state.budget.carbsRemaining)} g carbs, ${numberLabel(state.budget.fatRemaining)} g fat, ${numberLabel(state.budget.fiberRemaining)} g fiber.
+
+FOOD LOGGING
+You can write entries into the user's food diary by returning them in "foods".
+1. Populate "foods" ONLY when the user asks to log something, or sends a photo of food to log. Leave it empty for questions, substitutions, and plan edits.
+2. Every image the user sends is food. Identify each distinct item, infer the portion from the photo, and estimate calories, protein, carbs, fat, and fiber.
+3. When details are vague, estimate from a typical serving rather than refusing. Give your best numbers and say they are estimates.
+4. Set "meal" to the stated or most likely eating occasion: Breakfast, Lunch, Dinner, or Snack.
+5. Use one entry per distinct food, not one per plate.
+
+In "reply", answer conversationally in plain text. If you logged food, list each item with its calories and state what remains of today's budget.
+
+SAVED USER CONTEXT
+${limitedText(state.context, 10000) || 'No saved context.'}`
 }
 
 function scheduleGuidance(localTime, entries) {
@@ -449,6 +547,21 @@ function normalizeMessages(value) {
 function normalizeSources(value) {
   if (!Array.isArray(value)) return []
   return value.map((item) => ({ title: limitedText(item?.title, 300), url: limitedText(item?.url, 1500), placeId: limitedText(item?.placeId, 300) || null })).filter((item) => item.url)
+}
+
+function validatedImage(value) {
+  if (!value || typeof value !== 'object') return null
+  const mimeType = limitedText(value.mimeType, 60).toLowerCase()
+  const data = typeof value.data === 'string' ? value.data.replace(/^data:[^;]+;base64,/, '').trim() : ''
+  if (!data) return null
+  if (!ALLOWED_IMAGE_TYPES.has(mimeType)) {
+    throw geminiError('That image type is not supported. Use a JPEG, PNG, or WebP photo.', 415, 'image_unsupported')
+  }
+  // base64 inflates by ~4/3, so decode the approximate byte count before accepting.
+  if (data.length * 0.75 > MAX_IMAGE_BYTES) {
+    throw geminiError('That photo is too large. Please send one under 4 MB.', 413, 'image_too_large')
+  }
+  return { mimeType, data }
 }
 
 function validatedLocation(body) {

@@ -3,9 +3,36 @@
 /* Rendering fixes: charts remain visible regardless of observer timing. */
 .energy-viz .bar{height:var(--bar-height)!important;animation:bar-grow .7s cubic-bezier(.2,.8,.2,1) both;transform-origin:bottom}.interactive-line .trend-line{stroke-dasharray:none!important;stroke-dashoffset:0!important;opacity:1!important}.interactive-line .area{opacity:1!important}.interactive-line circle{opacity:1!important;position:relative;z-index:3}.animated-chart:not(.is-visible) .bar{height:var(--bar-height)!important}.interactive-line:not(.is-visible) circle{opacity:1!important}@keyframes bar-grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
 
-/* Activity rings: remove clipping and animate directly from empty to current progress once. */
-.activity-rings{overflow:visible!important}.rings-graphic{padding:20px;box-sizing:border-box;overflow:visible!important;transform:none!important;opacity:1!important}.rings-graphic svg{overflow:visible!important}.fitness-progress{filter:none!important;transition:none!important;animation:ring-fill .85s cubic-bezier(.2,.8,.2,1) both}.activity-rings:not(.is-visible) .fitness-progress{stroke-dashoffset:revert!important}.activity-rings:not(.is-visible) .rings-graphic{transform:none!important;opacity:1!important}@keyframes ring-fill{from{stroke-dashoffset:1000}}
+/* Activity rings: remove clipping only. The fill is driven by React (ActivityRings
+   sets stroke-dashoffset from empty to target once the rings scroll into view) and
+   animated by the stroke-dashoffset transition in App.css. Do not set a transition,
+   animation, or stroke-dashoffset here: an !important override or a mount-time
+   keyframe animation makes the rings snap to size before the user ever sees them. */
+.activity-rings{overflow:visible!important}.rings-graphic{padding:20px;box-sizing:border-box;overflow:visible!important}.rings-graphic svg{overflow:visible!important}
 
 @media(max-width:720px){.chart-header-row{align-items:stretch;flex-direction:column}.chart-legend{justify-content:flex-start}.chart-axis-note{line-height:1.4}.chart-stage{margin:2px 0;padding-left:50px;padding-right:12px}.y-axis-label{left:2px}.y-max-label,.y-min-label{left:52px}.line-axis-footer{margin-left:50px;margin-right:12px}.point-label{font-size:9px;padding:6px 7px}.energy-point-label{max-width:94px;white-space:normal}.rings-graphic{padding:24px}}
 
-@media(prefers-reduced-motion:reduce){.fitness-progress,.energy-viz .bar{animation:none!important}}
+/* Daily deficit / surplus: bars grow up (surplus) or down (deficit) from a zero line. */
+.net-balance{position:relative;margin-top:18px;padding:16px 8px 4px}
+.net-bars{position:relative;display:flex;align-items:stretch;gap:7px;height:196px;padding:6px 4px 24px}
+.net-bars:before{content:"";position:absolute;left:4px;right:4px;top:calc(50% - 12px);height:1px;background:var(--border-soft,#e4e4e4);z-index:0}
+.net-day{position:relative;flex:1;display:flex;flex-direction:column;padding:0 0 22px;border:0;background:transparent;opacity:.75;cursor:pointer;transition:opacity .2s,transform .2s}
+.net-day:hover,.net-day.selected{opacity:1;transform:translateY(-2px)}
+.net-half{flex:1;display:flex;justify-content:center;z-index:1}
+.net-top{align-items:flex-end}
+.net-bottom{align-items:flex-start}
+/* Height is unconditional so a missed observer can never hide the bars; the grow is a
+   mount animation, matching the energy bars above. */
+.net-bar{display:block;width:62%;min-width:4px;height:var(--net-height);animation:net-grow .65s cubic-bezier(.2,.8,.2,1) both}
+.net-top .net-bar{transform-origin:bottom}
+.net-bottom .net-bar{transform-origin:top}
+@keyframes net-grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.net-bar.surplus{background:#ef6f61;border-radius:5px 5px 2px 2px}
+.net-bar.deficit{background:#0b6f75;border-radius:2px 2px 5px 5px}
+.net-day small{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:9px;color:var(--muted,#777)}
+.legend-surplus{background:#ef6f61}
+.legend-deficit{background:#0b6f75}
+.net-point-label{left:50%;top:-2px;transform:translate(-50%,-100%)}
+@media(max-width:560px){.net-bars{gap:3px;height:168px}.net-day small{display:none}}
+
+@media(prefers-reduced-motion:reduce){.fitness-progress{transition:none!important}.energy-viz .bar,.net-bar{animation:none!important}}

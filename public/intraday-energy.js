@@ -213,31 +213,7 @@ function renderChart(payload) {
   return true
 }
 
-function restartFitnessRingAnimation() {
-  const container = document.querySelector('.activity-rings')
-  if (!container || container.dataset.ringAnimationBound === 'true') return
-  container.dataset.ringAnimationBound = 'true'
-  const rings = [...container.querySelectorAll('.fitness-progress')]
-  for (const ring of rings) {
-    const radius = Number(ring.getAttribute('r')) || 0
-    const circumference = 2 * Math.PI * radius
-    const target = ring.getAttribute('stroke-dashoffset') || '0'
-    ring.style.setProperty('--ring-start', String(circumference))
-    ring.style.setProperty('--ring-target', target)
-  }
-
-  const observer = new IntersectionObserver(([entry]) => {
-    if (!entry.isIntersecting) return
-    container.classList.remove('ring-animation-ready')
-    void container.getBoundingClientRect()
-    requestAnimationFrame(() => requestAnimationFrame(() => container.classList.add('ring-animation-ready')))
-    observer.disconnect()
-  }, { threshold: .2 })
-  observer.observe(container)
-}
-
 async function refreshIntradayEnergy() {
-  restartFitnessRingAnimation()
   if (energyRequestRunning || (location.pathname !== '/' && location.pathname !== '/index.html')) return
   const hero = document.querySelector('.hero.panel')
   if (!hero) return
@@ -246,7 +222,6 @@ async function refreshIntradayEnergy() {
     const response = await fetch('/api/mlog', { cache: 'no-store', headers: { Accept: 'application/json' } })
     if (!response.ok) return
     renderChart(await response.json())
-    restartFitnessRingAnimation()
   } catch {
     // The authenticated dashboard handles its own connection errors.
   } finally {
@@ -254,13 +229,13 @@ async function refreshIntradayEnergy() {
   }
 }
 
-// The observer must NOT refresh on every mutation: renderChart rewrites innerHTML,
-// which is itself a mutation, so an unconditional refresh here forms an infinite
-// fetch/render loop that freezes the main thread. Only refresh from the observer
-// until the chart has been injected (i.e. once the authenticated dashboard mounts).
-// Ongoing updates come from the interval, focus, and DOMContentLoaded handlers below.
+// The fitness-ring reveal animation is owned entirely by React (ActivityRings in
+// App.tsx). This script only injects the intraday energy chart. The observer must
+// NOT refresh on every mutation: renderChart rewrites innerHTML, which is itself a
+// mutation, so an unconditional refresh here forms an infinite fetch/render loop
+// that freezes the main thread. Only refresh from the observer until the chart has
+// been injected. Ongoing updates come from the interval/focus/DOMContentLoaded below.
 new MutationObserver(() => {
-  restartFitnessRingAnimation()
   if (!document.querySelector('[data-intraday-energy]')) void refreshIntradayEnergy()
 }).observe(document.documentElement, { childList: true, subtree: true })
 addEventListener('DOMContentLoaded', () => void refreshIntradayEnergy())

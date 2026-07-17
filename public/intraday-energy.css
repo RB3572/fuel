@@ -320,15 +320,10 @@
   border-radius: 14px;
 }
 
-.activity-rings:not(.ring-animation-ready) .fitness-progress {
-  stroke-dashoffset: var(--ring-start) !important;
-  transition: none !important;
-}
-
-.activity-rings.ring-animation-ready .fitness-progress {
-  stroke-dashoffset: var(--ring-target) !important;
-  transition: stroke-dashoffset 1.05s cubic-bezier(.2, .8, .2, 1) !important;
-}
+/* The fitness rings are owned by React (ActivityRings in App.tsx) and animated by
+   the stroke-dashoffset transition in App.css. Ring rules previously lived here and
+   keyed off a JS-set class and JS-set custom properties; with those gone the rules
+   resolved to an invalid value and forced the rings to their final size instantly. */
 
 @media (max-width: 700px) {
   .energy-summary-bars {

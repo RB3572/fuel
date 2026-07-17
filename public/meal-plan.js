@@ -1,4 +1,4 @@
-const state={payload:null,busy:false,location:null}
+const state={payload:null,busy:false,location:null,image:null}
 const els={
   status:document.getElementById('status-card'),
   budget:document.getElementById('budget-section'),
@@ -10,6 +10,59 @@ const els={
   form:document.getElementById('chat-form'),
   input:document.getElementById('chat-input'),
   send:document.getElementById('send-button'),
+  attach:document.getElementById('attach-button'),
+  imageInput:document.getElementById('image-input'),
+  preview:document.getElementById('image-preview'),
+  previewImg:document.getElementById('preview-img'),
+  removeImage:document.getElementById('remove-image'),
+}
+
+// Photos are downscaled in the browser: full-resolution phone images blow past the
+// serverless body limit and slow Gemini down for no accuracy gain.
+const MAX_IMAGE_DIMENSION=1280
+const JPEG_QUALITY=.82
+
+function loadImage(dataUrl){
+  return new Promise((resolve,reject)=>{
+    const image=new Image()
+    image.onload=()=>resolve(image)
+    image.onerror=()=>reject(new Error('That photo could not be read. Try a JPEG or PNG.'))
+    image.src=dataUrl
+  })
+}
+
+function readAsDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader()
+    reader.onerror=()=>reject(new Error('That photo could not be read.'))
+    reader.onload=()=>resolve(String(reader.result||''))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function prepareImage(file){
+  const image=await loadImage(await readAsDataUrl(file))
+  const scale=Math.min(1,MAX_IMAGE_DIMENSION/Math.max(image.width,image.height))
+  const width=Math.max(1,Math.round(image.width*scale))
+  const height=Math.max(1,Math.round(image.height*scale))
+  const canvas=document.createElement('canvas')
+  canvas.width=width
+  canvas.height=height
+  canvas.getContext('2d').drawImage(image,0,0,width,height)
+  const jpeg=canvas.toDataURL('image/jpeg',JPEG_QUALITY)
+  return {previewUrl:jpeg,mimeType:'image/jpeg',data:jpeg.split(',')[1]||''}
+}
+
+function setImage(image){
+  state.image=image
+  if(image){
+    els.previewImg.src=image.previewUrl
+    els.preview.hidden=false
+  }else{
+    els.previewImg.removeAttribute('src')
+    els.preview.hidden=true
+    els.imageInput.value=''
+  }
 }
 
 function number(value,digits=0){
@@ -140,16 +193,26 @@ function renderConversation(payload){
   requestAnimationFrame(()=>{els.thread.scrollTop=els.thread.scrollHeight})
 }
 
-function appendBubble(role,text,isPlan=false){
+function appendBubble(role,text,isPlan=false,imageUrl=null){
   const article=document.createElement('article')
   article.className=`chat-bubble ${role==='user'?'user-bubble':'assistant-bubble'}${isPlan?' plan-bubble':''}`
   const label=document.createElement('span')
   label.className='bubble-label'
   label.textContent=role==='user'?'You':'Fuel AI'
-  const content=document.createElement('div')
-  content.className='bubble-content'
-  content.textContent=String(text||'')
-  article.append(label,content)
+  article.append(label)
+  if(imageUrl){
+    const image=document.createElement('img')
+    image.className='bubble-image'
+    image.src=imageUrl
+    image.alt='Food photo'
+    article.append(image)
+  }
+  if(text){
+    const content=document.createElement('div')
+    content.className='bubble-content'
+    content.textContent=String(text)
+    article.append(content)
+  }
   els.thread.append(article)
 }
 
@@ -163,37 +226,40 @@ function renderSources(sources){
   }
 }
 
-async function sendMessage(message,{retried=false}={}){
+async function sendMessage(message,{retried=false,image=null}={}){
   const text=String(message||'').trim()
-  if(!text||state.busy)return
+  if((!text&&!image)||state.busy)return
   state.busy=true
   setComposerBusy(true)
-  appendBubble('user',text)
+  appendBubble('user',text,false,image?.previewUrl||null)
   appendTypingBubble()
   els.thread.scrollTop=els.thread.scrollHeight
   try{
     const response=await fetch('/api/meal-plan',{
       method:'POST',
       headers:{'Content-Type':'application/json',Accept:'application/json'},
-      body:JSON.stringify({action:'chat',message:text}),
+      body:JSON.stringify({
+        action:'chat',
+        message:text,
+        ...(image?{image:{mimeType:image.mimeType,data:image.data}}:{}),
+      }),
     })
     const payload=await response.json()
     removeTypingBubble()
     if(response.status===409&&payload.code==='plan_stale'&&!retried){
       state.busy=false
       await generatePlan()
-      await sendMessage(text,{retried:true})
-      return
-    }
-    if(payload.code==='gemini_scope_missing'&&payload.reauthorizeUrl){
-      sessionStorage.setItem('fuelGeminiReauthAttempted','1')
-      location.replace(payload.reauthorizeUrl)
+      await sendMessage(text,{retried:true,image})
       return
     }
     if(!response.ok)throw new Error(payload.error||'Unable to answer that message.')
     state.payload=payload
     renderBudget(payload.budget)
-    renderConversation(payload)
+    // Append rather than re-render the thread: a full re-render rebuilds from the
+    // server's text-only history and would drop the photo the user just sent.
+    appendBubble('assistant',payload.reply)
+    renderSources(payload.sources||[])
+    els.thread.scrollTop=els.thread.scrollHeight
   }catch(error){
     removeTypingBubble()
     appendBubble('assistant',error instanceof Error?error.message:'Unable to answer that message.')
@@ -216,6 +282,7 @@ function removeTypingBubble(){document.getElementById('typing-bubble')?.remove()
 function setComposerBusy(busy){
   els.input.disabled=busy
   els.send.disabled=busy
+  els.attach.disabled=busy
 }
 
 function resizeInput(){
@@ -229,10 +296,25 @@ function escapeAttribute(value){return escapeHtml(value)}
 els.form.addEventListener('submit',event=>{
   event.preventDefault()
   const message=els.input.value.trim()
-  if(!message)return
+  const image=state.image
+  if(!message&&!image)return
   els.input.value=''
+  setImage(null)
   resizeInput()
-  void sendMessage(message)
+  void sendMessage(message,{image})
+})
+els.attach.addEventListener('click',()=>els.imageInput.click())
+els.removeImage.addEventListener('click',()=>setImage(null))
+els.imageInput.addEventListener('change',async()=>{
+  const file=els.imageInput.files?.[0]
+  if(!file)return
+  try{
+    setImage(await prepareImage(file))
+    els.input.focus()
+  }catch(error){
+    setImage(null)
+    setStatus(error instanceof Error?error.message:'That photo could not be read.',{error:true})
+  }
 })
 els.input.addEventListener('input',resizeInput)
 els.input.addEventListener('keydown',event=>{

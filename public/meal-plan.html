@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f7f7f5">
   <title>AI meal plan · Fuel</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="stylesheet" href="/meal-plan.css?v=20260717-4">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
+  <link rel="stylesheet" href="/meal-plan.css?v=20260717-6">
 </head>
 <body>
   <main class="meal-shell">
@@ -43,12 +43,18 @@
       <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
       <div id="maps-sources" class="maps-sources" hidden><h3><span translate="no">Google Maps</span> sources</h3><div id="source-list"></div></div>
       <form id="chat-form" class="chat-composer">
-        <textarea id="chat-input" rows="1" maxlength="3000" placeholder="Ask for a substitution, different portions, or another option…" aria-label="Message Fuel AI"></textarea>
+        <div id="image-preview" class="image-preview" hidden>
+          <img id="preview-img" alt="Food photo ready to log">
+          <button id="remove-image" type="button" aria-label="Remove photo">&times;</button>
+        </div>
+        <textarea id="chat-input" rows="1" maxlength="3000" placeholder="Ask a question, or tell Fuel what you ate to log it…" aria-label="Message Fuel AI"></textarea>
+        <input id="image-input" type="file" accept="image/*" hidden>
+        <button id="attach-button" type="button" aria-label="Attach a food photo" title="Attach a food photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.2"/></svg></button>
         <button id="send-button" type="submit" aria-label="Send message" title="Send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
       </form>
-      <p class="disclaimer">Nutrition and restaurant details are estimates. Verify ingredients, allergies, cross-contact, prices, and availability before ordering or eating.</p>
+      <p class="disclaimer">Send a photo of your food and Fuel will estimate the calories and macros, then log them. Nutrition and restaurant details are estimates. Verify ingredients, allergies, cross-contact, prices, and availability before ordering or eating.</p>
     </section>
   </main>
-  <script src="/meal-plan.js?v=20260717-2" defer></script>
+  <script src="/meal-plan.js?v=20260717-6" defer></script>
 </body>
 </html>
