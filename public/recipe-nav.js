@@ -6,8 +6,14 @@ function ensureToolbarLayout(){
   if(!topbar||!userActions)return
 
   const brand=topbar.querySelector('.brand')
-  const brandCopy=brand?.querySelector(':scope > div:last-child')
+  const profileShell=brand?.querySelector(':scope > .profile-shell')
+  const brandCopy=brand?[...brand.children].find((child)=>child!==profileShell&&(child.querySelector('h1')||child.querySelector('p'))):null
   const dateText=brandCopy?.querySelector('p')?.textContent?.trim()||''
+
+  if(profileShell){
+    profileShell.hidden=false
+    profileShell.classList.add('navbar-profile-shell')
+  }
 
   if(dateText){
     const heroCopy=document.querySelector('.hero .hero-head > div:first-child')
@@ -22,7 +28,7 @@ function ensureToolbarLayout(){
       dateNode.textContent=dateText
     }
   }
-  if(brandCopy)brandCopy.remove()
+  brandCopy?.remove()
 
   const workoutButton=userActions.querySelector('button.lift-nav-button')
   if(workoutButton){
@@ -43,9 +49,6 @@ function ensureToolbarLayout(){
   }else{
     recipeLink.classList.add('icon-only-nav-button')
     recipeLink.querySelectorAll('span').forEach((span)=>span.remove())
-    if(!recipeLink.querySelector('svg')){
-      recipeLink.innerHTML=`<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 2v7a3 3 0 0 0 3 3h1V2"/><path d="M5 2v10"/><path d="M7 2v10"/><path d="M6 12v10"/><path d="M19 2v20"/><path d="M15 2c0 5 1.5 8 4 8"/></svg>`
-    }
   }
   recipeLink.setAttribute('aria-label','Open recipes')
   recipeLink.setAttribute('title','Recipes')
@@ -59,8 +62,8 @@ function ensureToolbarLayout(){
     mealPlanLink.innerHTML=`<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg>`
     userActions.insertBefore(mealPlanLink,recipeLink)
   }
-  mealPlanLink.setAttribute('aria-label','Open meal planner')
-  mealPlanLink.setAttribute('title','Meal planner')
+  mealPlanLink.setAttribute('aria-label','Open AI meal planner')
+  mealPlanLink.setAttribute('title','AI meal planner')
 }
 
 new MutationObserver(ensureToolbarLayout).observe(document.documentElement,{childList:true,subtree:true})
