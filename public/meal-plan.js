@@ -1,14 +1,15 @@
-// Fuel location-aware Gemini meal planner.
-const state={status:null,busy:false}
+const state={payload:null,busy:false,location:null}
 const els={
-  generate:document.getElementById('generate-button'),
   status:document.getElementById('status-card'),
   budget:document.getElementById('budget-section'),
-  plan:document.getElementById('plan-section'),
-  output:document.getElementById('plan-output'),
+  chat:document.getElementById('chat-section'),
+  thread:document.getElementById('chat-thread'),
   sources:document.getElementById('maps-sources'),
   sourceList:document.getElementById('source-list'),
   generatedTime:document.getElementById('generated-time'),
+  form:document.getElementById('chat-form'),
+  input:document.getElementById('chat-input'),
+  send:document.getElementById('send-button'),
 }
 
 function number(value,digits=0){
@@ -16,11 +17,13 @@ function number(value,digits=0){
   return Number.isFinite(parsed)?new Intl.NumberFormat('en-US',{maximumFractionDigits:digits}).format(parsed):'—'
 }
 
-function setStatus(message,{error=false,html=false}={}){
+function setStatus(message,{error=false,loading=false}={}){
   els.status.className=`status-card card${error?' error':''}`
-  els.status.innerHTML=html?message:`<p>${escapeHtml(message)}</p>`
+  els.status.innerHTML=`${loading?'<div class="status-spinner" aria-hidden="true"></div>':''}<p>${escapeHtml(message)}</p>`
   els.status.hidden=false
 }
+
+function hideStatus(){els.status.hidden=true}
 
 function renderBudget(budget){
   if(!budget)return
@@ -34,24 +37,25 @@ function renderBudget(budget){
   document.getElementById('remaining-fiber').textContent=`${number(budget.fiberRemaining,1)} g`
 }
 
-async function loadStatus(){
+async function loadPlanner(){
+  setStatus('Checking today’s Fuel data…',{loading:true})
   try{
     const response=await fetch('/api/meal-plan',{cache:'no-store',headers:{Accept:'application/json'}})
     const payload=await response.json()
     if(response.status===401){
-      setStatus(`<div><strong>Sign in to Fuel</strong><p class="location-note">The planner needs your private Fuel goals, food log, and saved context.</p></div><div class="status-actions"><a href="/api/auth/google/start?return_to=%2Fmeal-plan.html">Sign in with Google</a></div>`,{html:true})
+      location.replace(payload.signInUrl||'/api/auth/google/start?return_to=%2Fmeal-plan.html')
       return
     }
     if(!response.ok)throw new Error(payload.error||'Unable to load the meal planner.')
-    state.status=payload
+    state.payload=payload
     renderBudget(payload.budget)
-    if(!payload.connected){
-      setStatus(`<div><strong>Connect Gemini</strong><p class="location-note">Authorize the Google Cloud scope used to call Gemini as your Google account. Gemini API usage still belongs to the Google Cloud project, not a Gemini Advanced subscription.</p></div><div class="status-actions"><a href="${escapeAttribute(payload.connectUrl)}">Connect Google for Gemini</a></div>`,{html:true})
-      els.generate.disabled=true
+    if(payload.plan&&!payload.needsGeneration){
+      sessionStorage.removeItem('fuelGeminiReauthAttempted')
+      renderConversation(payload)
+      hideStatus()
       return
     }
-    els.status.hidden=true
-    els.generate.disabled=false
+    await generatePlan()
   }catch(error){
     setStatus(error instanceof Error?error.message:'Unable to load the meal planner.',{error:true})
   }
@@ -59,105 +63,98 @@ async function loadStatus(){
 
 function getLocation(){
   return new Promise((resolve,reject)=>{
-    if(!navigator.geolocation){
-      reject(new Error('This browser does not support location access.'))
-      return
-    }
+    if(!navigator.geolocation){reject(new Error('This browser does not support location access.'));return}
     navigator.geolocation.getCurrentPosition(
-      (position)=>resolve({
-        latitude:position.coords.latitude,
-        longitude:position.coords.longitude,
-        accuracy:position.coords.accuracy,
-      }),
-      (error)=>reject(new Error(locationError(error))),
+      position=>resolve({latitude:position.coords.latitude,longitude:position.coords.longitude,accuracy:position.coords.accuracy}),
+      error=>reject(new Error(locationError(error))),
       {enableHighAccuracy:true,timeout:12000,maximumAge:5*60*1000},
     )
   })
 }
 
 function locationError(error){
-  if(error?.code===1)return 'Location permission was denied. Allow location access in your browser settings and try again.'
-  if(error?.code===2)return 'Your current location could not be determined.'
-  if(error?.code===3)return 'Location access timed out. Try again.'
-  return 'Unable to access your current location.'
+  if(error?.code===1)return 'Location permission was denied. Fuel will create the plan without nearby recommendations.'
+  if(error?.code===2)return 'Your current location could not be determined. Fuel will create the plan without nearby recommendations.'
+  if(error?.code===3)return 'Location access timed out. Fuel will create the plan without nearby recommendations.'
+  return 'Location was unavailable. Fuel will create the plan without nearby recommendations.'
 }
 
-async function generatePlan({withoutLocation=false}={}){
+async function generatePlan(){
   if(state.busy)return
   state.busy=true
-  els.generate.disabled=true
-  els.generate.querySelector('span').textContent=withoutLocation?'Generating without location…':'Requesting location…'
-  els.plan.hidden=true
+  setComposerBusy(true)
+  els.chat.hidden=true
+  setStatus('Requesting your current location…',{loading:true})
+  let locationData={}
   try{
-    let location={}
-    if(!withoutLocation){
-      try{
-        location=await getLocation()
-      }catch(error){
-        setStatus(`<div><strong>Location is unavailable</strong><p class="location-note">${escapeHtml(error instanceof Error?error.message:'Unable to access location.')}</p></div><div class="status-actions"><button id="without-location" class="secondary-button" type="button">Generate without location</button></div>`,{error:true,html:true})
-        document.getElementById('without-location')?.addEventListener('click',()=>void generatePlan({withoutLocation:true}))
-        return
-      }
+    try{
+      state.location=await getLocation()
+      locationData=state.location
+      setStatus('Building a plan from today’s Fuel data and current location…',{loading:true})
+    }catch(error){
+      state.location=null
+      setStatus(error instanceof Error?error.message:'Location was unavailable. Generating without it.',{loading:true})
     }
 
-    els.generate.querySelector('span').textContent='Generating with Gemini…'
-    setStatus(`<div class="status-spinner" aria-hidden="true"></div><p>Gemini is building a plan from today’s Fuel data${withoutLocation?'':' and nearby options'}…</p>`,{html:true})
     const response=await fetch('/api/meal-plan',{
       method:'POST',
       headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({
-        ...location,
+        action:'plan',
+        ...locationData,
         localTime:new Date().toString(),
         timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',
       }),
     })
     const payload=await response.json()
-    if(response.status===409&&payload.connectUrl){
-      setStatus(`<div><strong>Gemini authorization is required</strong><p class="location-note">Reconnect Google to grant the required Gemini scope.</p></div><div class="status-actions"><a href="${escapeAttribute(payload.connectUrl)}">Connect Google for Gemini</a></div>`,{html:true})
+    if(payload.code==='gemini_scope_missing'&&payload.reauthorizeUrl){
+      if(sessionStorage.getItem('fuelGeminiReauthAttempted')==='1')throw new Error('Fuel could not add Gemini access to the current Google session. Sign out of Fuel once, then sign back in.')
+      sessionStorage.setItem('fuelGeminiReauthAttempted','1')
+      location.replace(payload.reauthorizeUrl)
       return
     }
     if(!response.ok)throw new Error(payload.error||'Unable to generate a meal plan.')
-
-    state.status=payload
+    sessionStorage.removeItem('fuelGeminiReauthAttempted')
+    state.payload=payload
     renderBudget(payload.budget)
-    renderPlan(payload.plan||'',payload.sources||[])
-    els.generatedTime.textContent=`Generated ${new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit'}).format(new Date(payload.generatedAt||Date.now()))}`
-    els.plan.hidden=false
-    els.status.hidden=true
-    els.plan.scrollIntoView({behavior:'smooth',block:'start'})
+    renderConversation(payload)
+    hideStatus()
   }catch(error){
     setStatus(error instanceof Error?error.message:'Unable to generate a meal plan.',{error:true})
   }finally{
     state.busy=false
-    els.generate.disabled=!state.status?.connected
-    els.generate.querySelector('span').textContent='Use location and generate'
+    setComposerBusy(false)
   }
 }
 
-function renderPlan(text,sources){
-  const headings=new Set(['MEAL PLAN FOR THE REST OF TODAY','BUDGET','PLAN','OPTIONAL LOCAL ALTERNATIVES','ESTIMATED PLAN TOTAL','WHY THIS FITS'])
-  const lines=String(text).replace(/\r/g,'').split('\n')
-  const blocks=[]
-  let current={heading:'MEAL PLAN FOR THE REST OF TODAY',lines:[]}
-  for(const raw of lines){
-    const cleaned=raw.replace(/^#{1,6}\s*/,'').replace(/\*\*/g,'').trim()
-    if(headings.has(cleaned.toUpperCase())){
-      if(current.lines.length||blocks.length)blocks.push(current)
-      current={heading:cleaned.toUpperCase(),lines:[]}
-    }else if(cleaned){
-      current.lines.push(cleaned)
-    }
-  }
-  if(current.lines.length||!blocks.length)blocks.push(current)
-  els.output.innerHTML=blocks.map(block=>{
-    const listLike=block.lines.filter(line=>/^[-•*]|^\d+[.)]/.test(line)).length>=Math.max(1,Math.ceil(block.lines.length/2))
-    const content=listLike
-      ?`<ul>${block.lines.map(line=>`<li>${escapeHtml(line.replace(/^[-•*]\s*|^\d+[.)]\s*/,''))}</li>`).join('')}</ul>`
-      :`<p>${block.lines.map(escapeHtml).join('\n')}</p>`
-    return `<section class="plan-block"><h3>${escapeHtml(titleCase(block.heading))}</h3>${content}</section>`
-  }).join('')
+function renderConversation(payload){
+  if(!payload?.plan)return
+  els.chat.hidden=false
+  const messages=Array.isArray(payload.messages)?payload.messages:[]
+  els.thread.innerHTML=''
+  appendBubble('assistant',payload.plan,true)
+  for(const message of messages)appendBubble(message.role,message.text,false)
+  renderSources(payload.sources||[])
+  const generated=new Date(payload.generatedAt||Date.now())
+  els.generatedTime.textContent=`Generated ${new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit'}).format(generated)}`
+  requestAnimationFrame(()=>{els.thread.scrollTop=els.thread.scrollHeight})
+}
 
-  if(sources.length){
+function appendBubble(role,text,isPlan=false){
+  const article=document.createElement('article')
+  article.className=`chat-bubble ${role==='user'?'user-bubble':'assistant-bubble'}${isPlan?' plan-bubble':''}`
+  const label=document.createElement('span')
+  label.className='bubble-label'
+  label.textContent=role==='user'?'You':'Fuel AI'
+  const content=document.createElement('div')
+  content.className='bubble-content'
+  content.textContent=String(text||'')
+  article.append(label,content)
+  els.thread.append(article)
+}
+
+function renderSources(sources){
+  if(Array.isArray(sources)&&sources.length){
     els.sources.hidden=false
     els.sourceList.innerHTML=sources.map(source=>`<a href="${escapeAttribute(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title||'Google Maps place')}</a>`).join('')
   }else{
@@ -166,17 +163,80 @@ function renderPlan(text,sources){
   }
 }
 
-function titleCase(value){
-  return value.toLowerCase().replace(/(^|\s)\S/g,match=>match.toUpperCase())
+async function sendMessage(message,{retried=false}={}){
+  const text=String(message||'').trim()
+  if(!text||state.busy)return
+  state.busy=true
+  setComposerBusy(true)
+  appendBubble('user',text)
+  appendTypingBubble()
+  els.thread.scrollTop=els.thread.scrollHeight
+  try{
+    const response=await fetch('/api/meal-plan',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({action:'chat',message:text}),
+    })
+    const payload=await response.json()
+    removeTypingBubble()
+    if(response.status===409&&payload.code==='plan_stale'&&!retried){
+      state.busy=false
+      await generatePlan()
+      await sendMessage(text,{retried:true})
+      return
+    }
+    if(payload.code==='gemini_scope_missing'&&payload.reauthorizeUrl){
+      sessionStorage.setItem('fuelGeminiReauthAttempted','1')
+      location.replace(payload.reauthorizeUrl)
+      return
+    }
+    if(!response.ok)throw new Error(payload.error||'Unable to answer that message.')
+    state.payload=payload
+    renderBudget(payload.budget)
+    renderConversation(payload)
+  }catch(error){
+    removeTypingBubble()
+    appendBubble('assistant',error instanceof Error?error.message:'Unable to answer that message.')
+  }finally{
+    state.busy=false
+    setComposerBusy(false)
+    els.input.focus()
+  }
 }
 
-function escapeHtml(value){
-  return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]))
+function appendTypingBubble(){
+  const article=document.createElement('article')
+  article.id='typing-bubble'
+  article.className='chat-bubble assistant-bubble typing-bubble'
+  article.innerHTML='<span class="bubble-label">Fuel AI</span><div class="typing-dots"><i></i><i></i><i></i></div>'
+  els.thread.append(article)
+}
+function removeTypingBubble(){document.getElementById('typing-bubble')?.remove()}
+
+function setComposerBusy(busy){
+  els.input.disabled=busy
+  els.send.disabled=busy
 }
 
-function escapeAttribute(value){
-  return escapeHtml(value)
+function resizeInput(){
+  els.input.style.height='auto'
+  els.input.style.height=`${Math.min(150,Math.max(44,els.input.scrollHeight))}px`
 }
 
-els.generate.addEventListener('click',()=>void generatePlan())
-void loadStatus()
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]))}
+function escapeAttribute(value){return escapeHtml(value)}
+
+els.form.addEventListener('submit',event=>{
+  event.preventDefault()
+  const message=els.input.value.trim()
+  if(!message)return
+  els.input.value=''
+  resizeInput()
+  void sendMessage(message)
+})
+els.input.addEventListener('input',resizeInput)
+els.input.addEventListener('keydown',event=>{
+  if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();els.form.requestSubmit()}
+})
+resizeInput()
+void loadPlanner()
