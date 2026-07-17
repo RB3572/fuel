@@ -1,1 +1,387 @@
-.energy-summary-bars{display:grid;gap:18px;margin-top:24px}.energy-summary-row{display:grid;gap:8px}.energy-summary-label{display:flex;align-items:baseline;justify-content:space-between;gap:16px}.energy-summary-label span{color:#666;font-size:12px}.energy-summary-label strong{color:#111;font-size:15px}.energy-summary-track{height:18px;background:#ededed;border-radius:999px;overflow:hidden}.energy-summary-fill{display:block;height:100%;border-radius:inherit;transition:width .7s cubic-bezier(.2,.8,.2,1)}.total-burned-fill{display:flex;overflow:hidden;background:transparent}.resting-segment{display:block;height:100%;background:#929292}.active-segment{display:block;height:100%;background:#e06b2d}.consumed-fill{background:#2563eb}.active-fill{background:#e06b2d}.energy-summary-key{display:flex;flex-wrap:wrap;gap:10px 16px;color:#666;font-size:11px}.energy-summary-key span{display:inline-flex;align-items:center;gap:6px}.energy-summary-key i{display:inline-block;width:18px;height:4px;border-radius:999px}.resting-dot{background:#929292}.active-dot{background:#e06b2d}.consumed-dot{background:#2563eb}.intraday-energy{margin-top:14px;padding:22px 24px 18px;min-width:0}.intraday-energy-head{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:12px}.intraday-energy h3{font-size:24px;letter-spacing:-.025em;margin:3px 0 4px}.intraday-energy p{margin:0;color:#707070;font-size:12px;max-width:690px;line-height:1.45}.intraday-legend{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px 15px;color:#555;font-size:11px}.intraday-legend span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.intraday-legend i{width:18px;height:4px;border-radius:999px;display:inline-block}.total-dot{background:#111}.intraday-chart{width:100%;max-width:100%;min-width:0;overflow:hidden;background:#fafafa;border:1px solid #ececec;border-radius:14px}.intraday-chart svg{display:block;width:100%;max-width:100%;height:auto;overflow:hidden}.intraday-grid line{stroke:#e3e3e3;stroke-width:1}.intraday-grid text,.intraday-x text,.intraday-y-label{fill:#777;font-size:10px;font-weight:600}.intraday-line{fill:none;stroke-width:3;stroke-linejoin:round;stroke-linecap:round}.total-line{stroke:#111}.active-line{stroke:#e06b2d}.resting-line{stroke:#929292}.consumed-line{stroke:#2563eb}.intraday-point{fill:#fff;stroke-width:2.5}.total-point{stroke:#111}.active-point{stroke:#e06b2d}.resting-point{stroke:#929292}.consumed-point{stroke:#2563eb}.intraday-empty{padding:44px 20px;color:#777;text-align:center;background:#fafafa;border:1px solid #ececec;border-radius:14px}.activity-rings:not(.ring-animation-ready) .fitness-progress{stroke-dashoffset:var(--ring-start)!important;transition:none!important}.activity-rings.ring-animation-ready .fitness-progress{stroke-dashoffset:var(--ring-target)!important;transition:stroke-dashoffset 1.05s cubic-bezier(.2,.8,.2,1)!important}@media(max-width:700px){.energy-summary-bars{gap:15px;margin-top:20px}.energy-summary-track{height:15px}.energy-summary-label strong{font-size:14px}.intraday-energy{padding:18px 12px 14px}.intraday-energy-head{display:block}.intraday-legend{justify-content:flex-start;margin-top:12px}.intraday-energy h3{font-size:21px}.intraday-chart{min-height:0}.intraday-chart svg{width:100%;height:auto}.intraday-grid text,.intraday-x text,.intraday-y-label{font-size:9px}}
+:root {
+  --energy-reef-deep: #0b6f75;
+  --energy-reef: #14919b;
+  --energy-reef-light: #62c6c1;
+  --energy-sunset-coral: #ef6f61;
+  --energy-sunset-gold: #f2a65a;
+  --energy-sunset-rose: #d85f7a;
+  --energy-track: #eaf3f2;
+}
+
+.energy-summary-bars {
+  display: grid;
+  gap: 11px;
+  margin-top: 24px;
+}
+
+.energy-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.energy-summary-metrics > div {
+  min-width: 0;
+  padding: 8px 10px;
+  background: #f7faf9;
+  border: 1px solid #e4eeec;
+  border-radius: 10px;
+}
+
+.energy-summary-metrics span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #66706f;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.energy-summary-metrics strong {
+  display: block;
+  margin-top: 3px;
+  color: #122526;
+  font-size: 13px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.energy-summary-metrics i,
+.energy-summary-key i,
+.intraday-legend i {
+  display: inline-block;
+  width: 18px;
+  height: 4px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.energy-balance-metric.deficit {
+  background: linear-gradient(135deg, rgba(242, 166, 90, .1), rgba(216, 95, 122, .1));
+  border-color: rgba(216, 95, 122, .22);
+}
+
+.energy-balance-metric.surplus {
+  background: linear-gradient(135deg, rgba(239, 111, 97, .1), rgba(242, 166, 90, .12));
+  border-color: rgba(239, 111, 97, .24);
+}
+
+.energy-summary-plot {
+  display: grid;
+  gap: 5px;
+}
+
+.energy-summary-track {
+  position: relative;
+  height: 17px;
+  background: var(--energy-track);
+  border-radius: 999px;
+}
+
+.energy-summary-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width .7s cubic-bezier(.2, .8, .2, 1);
+}
+
+.total-burned-fill {
+  display: flex;
+  overflow: hidden;
+  background: transparent;
+}
+
+.resting-segment {
+  display: block;
+  height: 100%;
+  background: var(--energy-reef-light);
+}
+
+.active-segment,
+.active-fill {
+  display: block;
+  height: 100%;
+  background: var(--energy-sunset-coral);
+}
+
+.consumed-fill {
+  background: var(--energy-sunset-gold);
+}
+
+.energy-balance-gap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  border-radius: 999px;
+}
+
+.energy-balance-gap.deficit-gap {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(216, 95, 122, .16) 0,
+    rgba(216, 95, 122, .16) 5px,
+    rgba(242, 166, 90, .3) 5px,
+    rgba(242, 166, 90, .3) 10px
+  );
+  border: 1px dashed rgba(216, 95, 122, .7);
+}
+
+.energy-balance-gap.surplus-gap {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(239, 111, 97, .22) 0,
+    rgba(239, 111, 97, .22) 5px,
+    rgba(242, 166, 90, .38) 5px,
+    rgba(242, 166, 90, .38) 10px
+  );
+  border: 1px dashed rgba(239, 111, 97, .76);
+}
+
+.energy-balance-gap b {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, .94);
+  border: 1px solid rgba(11, 111, 117, .14);
+  border-radius: 999px;
+  box-shadow: 0 1px 5px rgba(20, 66, 68, .12);
+  color: #7d4258;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.energy-balance-gap.narrow-gap b {
+  left: 100%;
+  transform: translate(-100%, -50%);
+}
+
+.energy-summary-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 15px;
+  color: #687170;
+  font-size: 10px;
+}
+
+.energy-summary-key span,
+.intraday-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.total-dot {
+  background: var(--energy-reef-deep);
+}
+
+.resting-dot {
+  background: var(--energy-reef-light);
+}
+
+.active-dot {
+  background: var(--energy-sunset-coral);
+}
+
+.consumed-dot {
+  background: var(--energy-sunset-gold);
+}
+
+.balance-dot {
+  background: linear-gradient(90deg, var(--energy-sunset-gold), var(--energy-sunset-rose));
+}
+
+.intraday-energy {
+  margin-top: 14px;
+  padding: 22px 24px 18px;
+  min-width: 0;
+}
+
+.intraday-energy-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 12px;
+}
+
+.intraday-energy h3 {
+  margin: 3px 0 4px;
+  font-size: 24px;
+  letter-spacing: -.025em;
+}
+
+.intraday-energy p {
+  max-width: 690px;
+  margin: 0;
+  color: #707877;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.intraday-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px 15px;
+  color: #53615f;
+  font-size: 11px;
+}
+
+.intraday-chart {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, #fbfdfd, #f7fbfa);
+  border: 1px solid #e2edeb;
+  border-radius: 14px;
+}
+
+.intraday-chart svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  overflow: hidden;
+}
+
+.intraday-grid line {
+  stroke: #dce9e7;
+  stroke-width: 1;
+}
+
+.intraday-grid text,
+.intraday-x text,
+.intraday-y-label {
+  fill: #6f7b79;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.intraday-line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.total-line {
+  stroke: var(--energy-reef-deep);
+}
+
+.resting-line {
+  stroke: var(--energy-reef-light);
+}
+
+.active-line {
+  stroke: var(--energy-sunset-coral);
+}
+
+.consumed-line {
+  stroke: var(--energy-sunset-gold);
+}
+
+.intraday-point {
+  fill: #fff;
+  stroke-width: 2.5;
+}
+
+.total-point {
+  stroke: var(--energy-reef-deep);
+}
+
+.resting-point {
+  stroke: var(--energy-reef-light);
+}
+
+.active-point {
+  stroke: var(--energy-sunset-coral);
+}
+
+.consumed-point {
+  stroke: var(--energy-sunset-gold);
+}
+
+.intraday-empty {
+  padding: 44px 20px;
+  color: #707877;
+  text-align: center;
+  background: #f8fbfa;
+  border: 1px solid #e2edeb;
+  border-radius: 14px;
+}
+
+.activity-rings:not(.ring-animation-ready) .fitness-progress {
+  stroke-dashoffset: var(--ring-start) !important;
+  transition: none !important;
+}
+
+.activity-rings.ring-animation-ready .fitness-progress {
+  stroke-dashoffset: var(--ring-target) !important;
+  transition: stroke-dashoffset 1.05s cubic-bezier(.2, .8, .2, 1) !important;
+}
+
+@media (max-width: 700px) {
+  .energy-summary-bars {
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .energy-summary-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .energy-summary-metrics > div {
+    padding: 7px 9px;
+  }
+
+  .energy-summary-track {
+    height: 15px;
+  }
+
+  .energy-balance-gap b {
+    font-size: 8px;
+  }
+
+  .intraday-energy {
+    padding: 18px 12px 14px;
+  }
+
+  .intraday-energy-head {
+    display: block;
+  }
+
+  .intraday-legend {
+    justify-content: flex-start;
+    margin-top: 12px;
+  }
+
+  .intraday-energy h3 {
+    font-size: 21px;
+  }
+
+  .intraday-chart {
+    min-height: 0;
+  }
+
+  .intraday-chart svg {
+    width: 100%;
+    height: auto;
+  }
+
+  .intraday-grid text,
+  .intraday-x text,
+  .intraday-y-label {
+    font-size: 9px;
+  }
+}
