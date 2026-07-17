@@ -150,31 +150,43 @@ function summaryBarsMarkup(payload) {
   const active = Number(summary.activeEnergy) || 0
   const total = Number(summary.totalExpenditure) || resting + active
   const consumed = Number(summary.caloriesConsumed) || 0
+  const balance = total - consumed
+  const balanceLabel = balance >= 0 ? 'Deficit' : 'Surplus'
+  const balanceClass = balance >= 0 ? 'deficit' : 'surplus'
+  const balanceAmount = Math.abs(balance)
   const max = Math.max(total, consumed, active, 1)
-  const pct = (value) => `${Math.max(0, value / max * 100)}%`
+  const pctNumber = (value) => Math.max(0, value / max * 100)
+  const pct = (value) => `${pctNumber(value)}%`
   const restingShare = total > 0 ? resting / total * 100 : 0
   const activeShare = total > 0 ? active / total * 100 : 0
+  const gapStart = Math.min(pctNumber(total), pctNumber(consumed))
+  const gapWidth = Math.abs(pctNumber(total) - pctNumber(consumed))
+  const gapNarrowClass = gapWidth < 18 ? ' narrow-gap' : ''
 
   return `
     <div class="energy-summary-bars" data-energy-summary-bars>
-      <div class="energy-summary-row">
-        <div class="energy-summary-label"><span>Total burned</span><strong>${Math.round(total).toLocaleString()} kcal</strong></div>
-        <div class="energy-summary-track" aria-label="Total burned ${Math.round(total)} kilocalories">
+      <div class="energy-summary-metrics" aria-label="Current energy totals">
+        <div><span><i class="total-dot"></i>Total burned</span><strong>${Math.round(total).toLocaleString()} kcal</strong></div>
+        <div><span><i class="consumed-dot"></i>Consumed</span><strong>${Math.round(consumed).toLocaleString()} kcal</strong></div>
+        <div><span><i class="active-dot"></i>Active</span><strong>${Math.round(active).toLocaleString()} kcal</strong></div>
+        <div class="energy-balance-metric ${balanceClass}"><span><i class="balance-dot"></i>${balanceLabel}</span><strong>${Math.round(balanceAmount).toLocaleString()} kcal</strong></div>
+      </div>
+      <div class="energy-summary-plot">
+        <div class="energy-summary-track" aria-label="Total burned ${Math.round(total)} kilocalories, consisting of ${Math.round(resting)} resting and ${Math.round(active)} active kilocalories">
           <div class="energy-summary-fill total-burned-fill" style="width:${pct(total)}">
             <span class="resting-segment" style="width:${restingShare}%"></span>
             <span class="active-segment" style="width:${activeShare}%"></span>
           </div>
         </div>
+        <div class="energy-summary-track consumed-track" aria-label="Consumed ${Math.round(consumed)} kilocalories. ${balanceLabel} is ${Math.round(balanceAmount)} kilocalories, represented by the distance between consumed and total burned.">
+          <span class="energy-summary-fill consumed-fill" style="width:${pct(consumed)}"></span>
+          ${balanceAmount > 0 ? `<span class="energy-balance-gap ${balanceClass}-gap${gapNarrowClass}" style="left:${gapStart}%;width:${gapWidth}%"><b>${Math.round(balanceAmount).toLocaleString()} kcal ${balanceLabel.toLowerCase()}</b></span>` : ''}
+        </div>
+        <div class="energy-summary-track" aria-label="Active calories ${Math.round(active)} kilocalories">
+          <span class="energy-summary-fill active-fill" style="width:${pct(active)}"></span>
+        </div>
       </div>
-      <div class="energy-summary-row">
-        <div class="energy-summary-label"><span>Consumed</span><strong>${Math.round(consumed).toLocaleString()} kcal</strong></div>
-        <div class="energy-summary-track" aria-label="Consumed ${Math.round(consumed)} kilocalories"><span class="energy-summary-fill consumed-fill" style="width:${pct(consumed)}"></span></div>
-      </div>
-      <div class="energy-summary-row">
-        <div class="energy-summary-label"><span>Active calories</span><strong>${Math.round(active).toLocaleString()} kcal</strong></div>
-        <div class="energy-summary-track" aria-label="Active ${Math.round(active)} kilocalories"><span class="energy-summary-fill active-fill" style="width:${pct(active)}"></span></div>
-      </div>
-      <div class="energy-summary-key"><span><i class="resting-dot"></i>Resting</span><span><i class="active-dot"></i>Active</span><span><i class="consumed-dot"></i>Consumed</span></div>
+      <div class="energy-summary-key"><span><i class="resting-dot"></i>Resting</span><span><i class="active-dot"></i>Active</span><span><i class="consumed-dot"></i>Consumed</span><span><i class="balance-dot"></i>${balanceLabel} gap</span></div>
     </div>`
 }
 
