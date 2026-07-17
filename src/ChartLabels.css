@@ -12,27 +12,27 @@
 
 @media(max-width:720px){.chart-header-row{align-items:stretch;flex-direction:column}.chart-legend{justify-content:flex-start}.chart-axis-note{line-height:1.4}.chart-stage{margin:2px 0;padding-left:50px;padding-right:12px}.y-axis-label{left:2px}.y-max-label,.y-min-label{left:52px}.line-axis-footer{margin-left:50px;margin-right:12px}.point-label{font-size:9px;padding:6px 7px}.energy-point-label{max-width:94px;white-space:normal}.rings-graphic{padding:24px}}
 
-/* Daily deficit / surplus: bars grow up (surplus) or down (deficit) from a zero line. */
-.net-balance{position:relative;margin-top:18px;padding:16px 8px 4px}
-.net-bars{position:relative;display:flex;align-items:stretch;gap:7px;height:196px;padding:6px 4px 24px}
-.net-bars:before{content:"";position:absolute;left:4px;right:4px;top:calc(50% - 12px);height:1px;background:var(--border-soft,#e4e4e4);z-index:0}
-.net-day{position:relative;flex:1;display:flex;flex-direction:column;padding:0 0 22px;border:0;background:transparent;opacity:.75;cursor:pointer;transition:opacity .2s,transform .2s}
+/* Daily deficit / surplus: each day is a column split by a centre zero line. Surplus
+   bars grow up from the line, deficit bars grow down. Heights are unconditional (a
+   missed observer can never hide them); the grow is a one-shot mount animation. */
+.net-balance{position:relative;margin-top:18px;padding:14px 6px 4px}
+.net-bars{position:relative;display:flex;align-items:stretch;gap:6px;height:184px;padding:0 2px}
+.net-zero{position:absolute;left:2px;right:2px;top:50%;height:2px;background:#dcdcdc;transform:translateY(-1px);z-index:0}
+.net-day{position:relative;flex:1;min-width:0;display:flex;flex-direction:column;padding:0;border:0;background:transparent;opacity:.82;cursor:pointer;transition:opacity .2s,transform .2s}
 .net-day:hover,.net-day.selected{opacity:1;transform:translateY(-2px)}
-.net-half{flex:1;display:flex;justify-content:center;z-index:1}
-.net-top{align-items:flex-end}
-.net-bottom{align-items:flex-start}
-/* Height is unconditional so a missed observer can never hide the bars; the grow is a
-   mount animation, matching the energy bars above. */
-.net-bar{display:block;width:62%;min-width:4px;height:var(--net-height);animation:net-grow .65s cubic-bezier(.2,.8,.2,1) both}
-.net-top .net-bar{transform-origin:bottom}
-.net-bottom .net-bar{transform-origin:top}
+.net-up{flex:1;display:flex;align-items:flex-end;justify-content:center;z-index:1}
+.net-down{flex:1;display:flex;align-items:flex-start;justify-content:center;z-index:1}
+.net-bar{display:block;width:64%;min-width:3px;height:var(--net-height);animation:net-grow .6s cubic-bezier(.2,.8,.2,1) both}
+.net-up .net-bar{transform-origin:bottom;border-radius:4px 4px 1px 1px}
+.net-down .net-bar{transform-origin:top;border-radius:1px 1px 4px 4px}
 @keyframes net-grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
-.net-bar.surplus{background:#ef6f61;border-radius:5px 5px 2px 2px}
-.net-bar.deficit{background:#0b6f75;border-radius:2px 2px 5px 5px}
-.net-day small{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:9px;color:var(--muted,#777)}
+.net-bar.surplus{background:#ef6f61}
+.net-bar.deficit{background:#0b6f75}
 .legend-surplus{background:#ef6f61}
 .legend-deficit{background:#0b6f75}
+.net-axis{display:flex;gap:6px;margin-top:7px;padding:0 2px}
+.net-axis span{flex:1;min-width:0;text-align:center;font-size:9px;color:var(--muted,#777);white-space:nowrap;overflow:hidden}
 .net-point-label{left:50%;top:-2px;transform:translate(-50%,-100%)}
-@media(max-width:560px){.net-bars{gap:3px;height:168px}.net-day small{display:none}}
+@media(max-width:560px){.net-bars{gap:3px;height:158px}}
 
 @media(prefers-reduced-motion:reduce){.fitness-progress{transition:none!important}.energy-viz .bar,.net-bar{animation:none!important}}

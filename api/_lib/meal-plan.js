@@ -5,7 +5,10 @@ import { getNeonDashboard } from './neon-dashboard.js'
 import { getUserContext } from './user-context.js'
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
-const DEFAULT_MODEL = 'gemini-2.5-flash'
+// Rolling alias for the current Gemini Flash model. Pinned versions like
+// gemini-2.5-flash get retired for new API keys; this alias tracks the latest and
+// stays multimodal (needed for photo food logging). Override with GEMINI_MODEL.
+const DEFAULT_MODEL = 'gemini-flash-latest'
 const TIME_ZONE = 'America/Los_Angeles'
 const MAX_MESSAGES = 18
 const CHAT_RETENTION_MS = 2 * 24 * 60 * 60 * 1000 // Keep chat history for two days.
