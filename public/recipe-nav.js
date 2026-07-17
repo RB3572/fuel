@@ -66,6 +66,24 @@ function ensureToolbarLayout(){
   mealPlanLink.setAttribute('title','AI meal planner')
 }
 
-new MutationObserver(ensureToolbarLayout).observe(document.documentElement,{childList:true,subtree:true})
-addEventListener('DOMContentLoaded',ensureToolbarLayout)
-ensureToolbarLayout()
+function syncFitnessRingTargets(){
+  const container=document.querySelector('.activity-rings')
+  if(!container)return
+  for(const ring of container.querySelectorAll('.fitness-progress')){
+    const radius=Number(ring.getAttribute('r'))||0
+    const circumference=2*Math.PI*radius
+    const target=ring.getAttribute('stroke-dashoffset')||String(circumference)
+    ring.style.setProperty('--ring-start',String(circumference))
+    ring.style.setProperty('--ring-target',target)
+  }
+}
+
+function enhanceDashboard(){
+  ensureToolbarLayout()
+  syncFitnessRingTargets()
+}
+
+new MutationObserver(enhanceDashboard).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['stroke-dashoffset','class']})
+addEventListener('DOMContentLoaded',enhanceDashboard)
+addEventListener('focus',enhanceDashboard)
+enhanceDashboard()
