@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "mock",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["/private/tmp/claude-501/-Users-rishib-Desktop-fuel/ba28475c-4275-4973-925e-07540c5138f0/scratchpad/mock-server.mjs"],
+      "port": 5199
+    }
+  ]
+}
