@@ -65,10 +65,40 @@ jobs:
           node --check public/meal-plan.js
 
       - name: Run tests
-        run: npm test
+        id: tests
+        continue-on-error: true
+        run: npm test > /tmp/energy-goals-tests.log 2>&1
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: energy-goals-test-diagnostics
+          path: /tmp/energy-goals-tests.log
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Stop after test failure
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
 
       - name: Build frontend
-        run: npm run build
+        id: build
+        continue-on-error: true
+        run: npm run build > /tmp/energy-goals-build.log 2>&1
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: energy-goals-build-diagnostics
+          path: /tmp/energy-goals-build.log
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Stop after build failure
+        if: steps.build.outcome == 'failure'
+        run: exit 1
 
       - name: Commit verified source changes
         run: |
