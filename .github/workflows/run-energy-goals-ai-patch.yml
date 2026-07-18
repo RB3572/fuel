@@ -1,0 +1,67 @@
+name: Run energy goals AI patch
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-build:
+    if: github.head_ref == 'feature/energy-goals-gemini-ai'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/energy-goals-gemini-ai
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Extract and run branch patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          lines = Path('.github/workflows/apply-energy-goals-ai.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(lines) if line.strip() == '- name: Apply source changes')
+          run = next(i for i in range(start, len(lines)) if lines[i].strip() == 'run: |')
+          end = next(i for i in range(run + 1, len(lines)) if lines[i].startswith('      - name: Install dependencies'))
+          body = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[run + 1:end]) + '\n'
+          Path('/tmp/apply-energy-goals-ai.sh').write_text(body)
+          PY
+          bash /tmp/apply-energy-goals-ai.sh
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify backend syntax
+        run: |
+          node --check api/_lib/energy-reference.js
+          node --check api/_lib/goals.js
+          node --check api/_lib/neon-dashboard.js
+          node --check api/_lib/meal-plan.js
+          node --check api/mcp.js
+          node --check public/meal-plan.js
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Commit verified source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add api/_lib/energy-reference.js api/_lib/goals.js api/_lib/neon-dashboard.js api/_lib/meal-plan.js api/mcp.js src/App.tsx src/App.css src/ChartLabels.css public/meal-plan.js public/meal-plan.html package.json test/energy-goals-ai.test.js
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+            exit 0
+          fi
+          git commit -m "Improve energy goals and Fuel AI integration"
+          git push origin HEAD
