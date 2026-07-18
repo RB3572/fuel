@@ -71,8 +71,8 @@ export default async function handler(req, res) {
     return
   }
 
-  if (!['GET', 'POST'].includes(req.method)) {
-    methodNotAllowed(res, ['GET', 'POST'])
+  if (!['GET', 'POST', 'DELETE'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'DELETE'])
     return
   }
 
@@ -91,6 +91,25 @@ export default async function handler(req, res) {
     }
 
     const body = unwrap(req.body)
+    if (req.method === 'DELETE') {
+      const entryId = text(body.entryId ?? body.entry_id ?? body.id)
+      if (!entryId) {
+        sendJson(res, 422, { error: 'A food entry ID is required.' })
+        return
+      }
+      const db = sql()
+      const rows = await db`
+        DELETE FROM food_entries
+        WHERE user_id = ${auth.id} AND id::text = ${entryId}
+        RETURNING id, occurred_at, meal, description, portion, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, confidence, notes, source
+      `
+      if (!rows.length) {
+        sendJson(res, 404, { error: 'Food entry not found.' }, auth.cookie ? [auth.cookie] : [])
+        return
+      }
+      sendJson(res, 200, { ok: true, deleted: true, entry: rows[0] }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
     const description = text(body.description ?? body.food ?? body.name)
     if (!description) {
       sendJson(res, 422, { error: 'A food description is required.' })
@@ -120,8 +139,10 @@ export default async function handler(req, res) {
 
     sendJson(res, 201, { ok: true, entry: rows[0] }, auth.cookie ? [auth.cookie] : [])
   } catch (error) {
-    console.error(req.method === 'POST' ? 'Food logging failed' : 'Unable to load Fuel data from Neon', error)
-    sendJson(res, 500, { error: req.method === 'POST' ? 'Food could not be logged.' : 'Unable to load Fuel data.' })
+    const operation = req.method === 'POST' ? 'Food logging' : req.method === 'DELETE' ? 'Food deletion' : 'Dashboard loading'
+    console.error(`${operation} failed`, error)
+    const message = req.method === 'POST' ? 'Food could not be logged.' : req.method === 'DELETE' ? 'Food entry could not be deleted.' : 'Unable to load Fuel data.'
+    sendJson(res, 500, { error: message })
   }
 }
 
