@@ -77,7 +77,10 @@ export async function handleMealPlan(req, res) {
       if (Object.keys(answer.goalUpdates).length) goalsResult = await saveUserGoals(userId, { goals: answer.goalUpdates })
       const changed = Boolean(answer.foods.length || contextResult || goalsResult)
       const nextState = changed ? await currentState(userId) : state
-      const messages = appendMessages(cache.messages, [
+      // A regenerated plan starts a fresh thread: when this message triggers a new
+      // plan (food logged, goals/context changed), clear all history so only the new
+      // plan remains. Pure questions keep the conversation flowing.
+      const messages = changed ? [] : appendMessages(cache.messages, [
         { role: 'user', text: message || 'Sent a photo to log.', at: new Date().toISOString() },
         { role: 'assistant', text: answer.text, at: new Date().toISOString() },
       ])
@@ -123,13 +126,12 @@ export async function handleMealPlan(req, res) {
     const localTime = limitedText(body.localTime, 100) || new Date().toString()
     const timeZone = limitedText(body.timeZone, 100) || TIME_ZONE
     const generated = await generateMealPlan({ state, location, localTime, timeZone })
-    // Regenerating the plan (new food logged, or a new day) must NOT wipe the
-    // conversation. Carry the prior chat forward, dropping only entries older
-    // than the two-day retention window.
+    // A newly generated plan starts a fresh thread: clear all prior chat so the new
+    // plan is the only message shown.
     const saved = await saveCachedPlan(userId, {
       foodFingerprint: state.foodFingerprint,
       plan: generated.text,
-      messages: keepRecentMessages(cache?.messages),
+      messages: [],
       sources: generated.sources,
       model: generated.model,
       generatedAt: new Date(),

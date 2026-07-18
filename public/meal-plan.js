@@ -228,12 +228,17 @@ async function sendMessage(message,{retried=false,image=null}={}){
     }
     if(!response.ok)throw new Error(payload.error||'Unable to answer that message.')
     state.payload=payload
-    // Append rather than re-render the thread: a full re-render rebuilds from the
-    // server's text-only history and would drop the photo the user just sent.
-    appendBubble('assistant',payload.reply)
-    if(payload.updatedPlan)appendBubble('assistant',payload.updatedPlan,true)
-    renderSources(payload.sources||[])
-    els.thread.scrollTop=els.thread.scrollHeight
+    if(payload.planUpdated&&payload.plan){
+      // This message created a new plan (e.g. food logged). Start fresh: reset the
+      // thread so only the new plan remains, matching plan generation.
+      renderConversation(payload)
+    }else{
+      // Append rather than re-render the thread: a full re-render rebuilds from the
+      // server's text-only history and would drop the photo the user just sent.
+      appendBubble('assistant',payload.reply)
+      renderSources(payload.sources||[])
+      els.thread.scrollTop=els.thread.scrollHeight
+    }
   }catch(error){
     removeTypingBubble()
     appendBubble('assistant',friendlyClientError(error instanceof Error?error.message:'Unable to answer that message.'))
