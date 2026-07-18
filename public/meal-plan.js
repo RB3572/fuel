@@ -187,7 +187,8 @@ function appendBubble(role,text,isPlan=false,imageUrl=null){
   if(text){
     const content=document.createElement('div')
     content.className='bubble-content'
-    content.textContent=role==='user'?String(text):cleanAssistantText(text)
+    if(role==='user')content.textContent=String(text)
+    else renderAssistantContent(content,text,isPlan)
     article.append(content)
   }
   els.thread.append(article)
@@ -242,11 +243,11 @@ async function sendMessage(message,{retried=false,image=null}={}){
     els.thread.scrollTop=els.thread.scrollHeight
   }catch(error){
     removeTypingBubble()
-    appendBubble('assistant',error instanceof Error?error.message:'Unable to answer that message.')
+    appendBubble('assistant',friendlyClientError(error instanceof Error?error.message:'Unable to answer that message.'))
   }finally{
     state.busy=false
     setComposerBusy(false)
-    els.input.focus()
+    focusComposerOnDesktop()
   }
 }
 
@@ -270,7 +271,30 @@ function resizeInput(){
   els.input.style.height=`${Math.min(150,Math.max(44,els.input.scrollHeight))}px`
 }
 
-function cleanAssistantText(value){let text=String(value??'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');for(let i=0;i<3;i++){try{const parsed=JSON.parse(text);if(typeof parsed==='string'){text=parsed.trim();continue}if(parsed&&typeof parsed.reply==='string'){text=parsed.reply.trim();continue}}catch{}break}const match=text.match(/[\"']reply[\"']\s*:\s*[\"']([\s\S]*)/);if(/^\s*\{/.test(text)&&match)text=match[1].replace(/[\"']?\s*[}]+\s*$/,'');return text.replace(/^\s*[\[{]+\s*/,'').replace(/\s*[\]}]+\s*$/,'').trim()}
+function cleanAssistantText(value){let text=String(value??'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');for(let i=0;i<3;i++){try{const parsed=JSON.parse(text);if(typeof parsed==='string'){text=parsed.trim();continue}if(parsed&&typeof parsed.reply==='string'){text=parsed.reply.trim();continue}if(parsed&&typeof parsed.plan==='string'){text=parsed.plan.trim();continue}}catch{}break}const match=text.match(/[\"'](?:reply|plan)[\"']\s*:\s*[\"']([\s\S]*)/);if(/^\s*\{/.test(text)&&match)text=match[1].replace(/[\"']?\s*[}]+\s*$/,'');return text.replace(/^\s*[\[{]+\s*/,'').replace(/\s*[\]}]+\s*$/,'').trim()}
+function stripInlineMarkdown(value){return String(value||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/__([^_]+)__/g,'$1').replace(/`([^`]+)`/g,'$1').trim()}
+function renderAssistantContent(container,value,isPlan){
+  const text=cleanAssistantText(value).replace(/\r\n?/g,'\n')
+  if(!isPlan){container.textContent=text;return}
+  container.classList.add('is-structured')
+  const lines=text.split('\n')
+  let paragraph=[]
+  const flushParagraph=()=>{if(!paragraph.length)return;const p=document.createElement('p');p.textContent=stripInlineMarkdown(paragraph.join(' '));container.append(p);paragraph=[]}
+  for(const rawLine of lines){
+    const line=rawLine.trim()
+    if(!line){flushParagraph();continue}
+    const bullet=line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/)
+    const heading=line.replace(/^#{1,4}\s*/,'').replace(/:$/,'').trim()
+    const isHeading=/^(MEAL PLAN FOR THE REST OF TODAY|TARGET|PLAN|ESTIMATED PLAN TOTAL|WHY THIS FITS|BREAKFAST|LUNCH|DINNER|MORNING SNACK|AFTERNOON SNACK|EVENING SNACK|SNACK|DESSERT)$/i.test(heading)
+    if(isHeading){flushParagraph();const h=document.createElement('h3');h.textContent=stripInlineMarkdown(heading);container.append(h);continue}
+    if(bullet){flushParagraph();const item=document.createElement('div');item.className='bubble-list-item';const marker=document.createElement('i');marker.textContent='•';const copy=document.createElement('span');copy.textContent=stripInlineMarkdown(bullet[1]);item.append(marker,copy);container.append(item);continue}
+    paragraph.push(line)
+  }
+  flushParagraph()
+}
+function friendlyClientError(value){const text=String(value||'');return /Invalid JSON payload|generation_config\.response_schema|Unknown name \"additionalProperties\"|Cannot find field/i.test(text)?'Fuel AI hit a response-format issue. Please try that message again.':text}
+function focusComposerOnDesktop(){if(window.matchMedia('(hover: hover) and (pointer: fine)').matches)els.input.focus({preventScroll:true})}
+function syncViewportHeight(){const height=window.visualViewport?.height||window.innerHeight;document.documentElement.style.setProperty('--app-height',`${Math.round(height)}px`)}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]))}
 function escapeAttribute(value){return escapeHtml(value)}
 
@@ -291,7 +315,7 @@ els.imageInput.addEventListener('change',async()=>{
   if(!file)return
   try{
     setImage(await prepareImage(file))
-    els.input.focus()
+    focusComposerOnDesktop()
   }catch(error){
     setImage(null)
     setStatus(error instanceof Error?error.message:'That photo could not be read.',{error:true})
@@ -301,5 +325,9 @@ els.input.addEventListener('input',resizeInput)
 els.input.addEventListener('keydown',event=>{
   if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();els.form.requestSubmit()}
 })
+syncViewportHeight()
+window.addEventListener('resize',syncViewportHeight,{passive:true})
+window.visualViewport?.addEventListener('resize',syncViewportHeight,{passive:true})
+window.visualViewport?.addEventListener('scroll',syncViewportHeight,{passive:true})
 resizeInput()
 void loadPlanner()

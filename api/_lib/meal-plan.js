@@ -38,7 +38,7 @@ export async function handleMealPlan(req, res) {
     await Promise.all([ensureMealPlanTable(), ensureNutrientSchema()])
     const state = await currentState(userId)
     const cache = await getCachedPlan(userId)
-    const validCache = Boolean(cache?.plan && cache.food_fingerprint === state.foodFingerprint)
+    const validCache = Boolean(cache?.plan && cache.food_fingerprint === state.foodFingerprint && planLooksComplete(cache.plan))
     const base = responseBase(state, validCache ? cache : null)
 
     if (req.method === 'GET') {
@@ -291,22 +291,67 @@ function mealBudget(dashboard) {
   }
 }
 
+const PLAN_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: { plan: { type: 'string' } },
+  required: ['plan'],
+}
+
 async function generateMealPlan({ state, location, localTime, timeZone }) {
   const model = process.env.GEMINI_MEAL_PLAN_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL
   const prompt = buildPlanPrompt({ ...state, location, localTime, timeZone })
-  const requestBody = {
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.35, topP: 0.9, maxOutputTokens: 2200 },
+  const buildRequest = (instruction = '') => {
+    const requestBody = {
+      contents: [{ role: 'user', parts: [{ text: `${prompt}${instruction}` }] }],
+      generationConfig: {
+        temperature: 0.3,
+        topP: 0.9,
+        maxOutputTokens: 3200,
+        responseMimeType: 'application/json',
+        responseSchema: PLAN_RESPONSE_SCHEMA,
+      },
+    }
+    if (location) {
+      requestBody.tools = [{ googleMaps: {} }]
+      requestBody.toolConfig = { retrievalConfig: { latLng: { latitude: location.latitude, longitude: location.longitude } } }
+    }
+    return requestBody
   }
-  if (location) {
-    requestBody.tools = [{ googleMaps: {} }]
-    requestBody.toolConfig = { retrievalConfig: { latLng: { latitude: location.latitude, longitude: location.longitude } } }
+
+  let payload = await callGemini(model, buildRequest(), Boolean(location))
+  let parsed = parsePlanPayload(payload)
+  if (parsed.candidate?.finishReason === 'MAX_TOKENS' || !planLooksComplete(parsed.text)) {
+    payload = await callGemini(model, buildRequest('\n\nRETRY REQUIREMENTS: Return one complete plan under 1,200 words. Start with MEAL PLAN FOR THE REST OF TODAY, include every requested heading exactly once, and finish the WHY THIS FITS section with a complete sentence. Do not continue a prior fragment.'), Boolean(location))
+    parsed = parsePlanPayload(payload)
   }
-  const payload = await callGemini(model, requestBody, Boolean(location))
+  if (!planLooksComplete(parsed.text)) {
+    throw geminiError('Fuel AI could not produce a complete meal plan. Please try again.', 502, 'gemini_incomplete_plan')
+  }
+  return { text: parsed.text, sources: groundingSources(parsed.candidate), model }
+}
+
+function parsePlanPayload(payload) {
   const candidate = payload?.candidates?.[0]
-  const text = candidate?.content?.parts?.map((part) => part?.text || '').join('\n').trim()
-  if (!text) throw geminiError(payload?.promptFeedback?.blockReason ? `Gemini blocked the request: ${payload.promptFeedback.blockReason}.` : 'Gemini returned an empty meal plan.', 502, 'gemini_empty_response')
-  return { text, sources: groundingSources(candidate), model }
+  const raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
+  if (!raw) return { text: '', candidate }
+  try {
+    const parsed = JSON.parse(raw)
+    const text = typeof parsed === 'string' ? parsed : parsed?.plan
+    return { text: cleanReplyText(text || ''), candidate }
+  } catch {
+    return { text: cleanReplyText(raw), candidate }
+  }
+}
+
+export function planLooksComplete(value) {
+  const text = cleanReplyText(value)
+  if (text.length < 180) return false
+  const required = ['MEAL PLAN FOR THE REST OF TODAY', 'TARGET', 'PLAN', 'ESTIMATED PLAN TOTAL', 'WHY THIS FITS']
+  if (!required.every((heading) => text.toUpperCase().includes(heading))) return false
+  if (!/[.!?)]$/.test(text)) return false
+  const opening = (text.match(/\(/g) || []).length
+  const closing = (text.match(/\)/g) || []).length
+  return opening === closing
 }
 
 // Chat answers are structured so one call can both reply conversationally and hand
@@ -322,7 +367,7 @@ const CHAT_RESPONSE_SCHEMA = {
         properties: {
 description: { type: 'string' }, meal: { type: 'string' }, portion: { type: 'string' },
 calories: { type: 'number' }, protein: { type: 'number' }, carbs: { type: 'number' }, fat: { type: 'number' }, fiber: { type: 'number' },
-          nutrients: { type: 'object', properties: NUTRIENT_JSON_SCHEMA_PROPERTIES, additionalProperties: false },
+          nutrients: { type: 'object', properties: NUTRIENT_JSON_SCHEMA_PROPERTIES },
         },
         required: ['description', 'calories'],
       },
@@ -512,9 +557,14 @@ async function callGemini(model, requestBody, allowMapsFallback = false) {
     result = await invoke(fallback)
   }
   if (!result.response.ok) {
-    const message = result.payload?.error?.message || result.payload?.error || `Gemini request failed with status ${result.response.status}.`
+    const providerMessage = String(result.payload?.error?.message || result.payload?.error || `Gemini request failed with status ${result.response.status}.`)
+    console.error('Gemini provider error', providerMessage)
+    if (/Invalid JSON payload|response_schema|Unknown name \"additionalProperties\"|Cannot find field/i.test(providerMessage)) {
+      throw geminiError('Fuel AI response formatting was rejected. Please try again.', 502, 'gemini_schema_rejected')
+    }
     const code = result.response.status === 403 ? 'gemini_permission_denied' : 'gemini_request_failed'
-    throw geminiError(String(message), result.response.status >= 400 && result.response.status < 500 ? result.response.status : 502, code)
+    const publicMessage = result.response.status >= 400 && result.response.status < 500 ? 'Fuel AI could not process that request. Please try again.' : 'Fuel AI is temporarily unavailable. Please try again.'
+    throw geminiError(publicMessage, result.response.status >= 400 && result.response.status < 500 ? result.response.status : 502, code)
   }
   return result.payload
 }

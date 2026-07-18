@@ -21,7 +21,8 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { width: 100%; height: 100%; overflow: hidden; }
+html, body { width: 100%; height: 100%; overflow: hidden; touch-action: pan-x pan-y; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0;
   min-width: 320px;
@@ -39,6 +40,7 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
   width: min(100%, 1080px);
   height: 100vh;
   height: 100dvh;
+  height: var(--app-height, 100dvh);
   min-height: 0;
   margin: 0 auto;
   padding: calc(18px + var(--safe-top)) calc(22px + var(--safe-right)) calc(18px + var(--safe-bottom)) calc(22px + var(--safe-left));
@@ -208,6 +210,26 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.bubble-content.is-structured { white-space: normal; }
+.bubble-content.is-structured p { margin: 0 0 10px; }
+.bubble-content.is-structured p:last-child { margin-bottom: 0; }
+.bubble-content.is-structured h3 {
+  margin: 16px 0 7px;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  letter-spacing: .075em;
+  text-transform: uppercase;
+}
+.bubble-content.is-structured h3:first-child { margin-top: 0; }
+.bubble-list-item {
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr);
+  gap: 6px;
+  margin: 6px 0;
+}
+.bubble-list-item > i { color: #91b9ff; font-style: normal; font-weight: 800; }
+.plan-bubble .bubble-content { line-height: 1.5; }
 .bubble-image {
   display: block;
   width: auto;
@@ -288,8 +310,12 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
   outline: 0;
   background: transparent;
   color: var(--black);
-  font-size: 16px;
+  font-size: 16px !important;
   line-height: 1.4;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
   padding: 11px 6px;
   caret-color: var(--blue);
 }
@@ -423,7 +449,7 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
     min-height: 44px;
     max-height: min(132px, 24dvh);
     padding: 10px 4px;
-    font-size: 16px;
+    font-size: 16px !important;
   }
   .chat-composer button { width: 44px; height: 44px; border-radius: 13px; }
   .disclaimer { margin-top: 7px; padding: 0 5px; font-size: 9px; }
