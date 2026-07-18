@@ -1,0 +1,42 @@
+name: Apply Fuel AI mobile resilience fixes
+
+on:
+  push:
+    branches:
+      - feature/fuel-ai-mobile-resilience
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/fuel-ai-mobile-resilience
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Apply fixes
+        run: python3 scripts/apply-fuel-ai-mobile-fixes.py
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify backend syntax
+        run: |
+          node --check api/_lib/meal-plan.js
+          node --check public/meal-plan.js
+      - name: Run tests
+        run: npm test
+      - name: Build frontend
+        run: npm run build
+      - name: Commit verified changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add api/_lib/meal-plan.js public/meal-plan.html public/meal-plan.css public/meal-plan.js test/fuel-ai-mobile-resilience.test.js
+          git commit -m "Fix Fuel AI mobile zoom and response truncation"
+          git push origin HEAD:feature/fuel-ai-mobile-resilience
