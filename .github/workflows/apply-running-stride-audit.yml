@@ -1,0 +1,202 @@
+name: Apply running stride health audit
+
+on:
+  push:
+    branches:
+      - feature/running-stride-health-audit
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-build:
+    if: github.event.head_commit.message != 'Support running stride length and audit health parsing'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/running-stride-health-audit
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Patch health importer, dashboard, and UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected one match in {path}, found {count}: {old!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          path = 'api/health/import.js'
+          replace_once(path, 'const PARSER_VERSION = 12', 'const PARSER_VERSION = 13')
+          replace_once(path,
+              '        ADD COLUMN IF NOT EXISTS swimming_strokes double precision,\n        ADD COLUMN IF NOT EXISTS wrist_temperature double precision,\n        ADD COLUMN IF NOT EXISTS cardio_recovery_bpm double precision',
+              '        ADD COLUMN IF NOT EXISTS swimming_strokes double precision,\n        ADD COLUMN IF NOT EXISTS running_stride_length_m double precision,\n        ADD COLUMN IF NOT EXISTS cardio_recovery_bpm double precision')
+          replace_once(path,
+              '        wrist_temperature, cardio_recovery_bpm,',
+              '        running_stride_length_m, cardio_recovery_bpm,')
+          replace_once(path,
+              '        ${record.wristTemperature}, ${record.cardioRecovery},',
+              '        ${record.runningStrideLength}, ${record.cardioRecovery},')
+          replace_once(path,
+              '        wrist_temperature = COALESCE(EXCLUDED.wrist_temperature, health_daily.wrist_temperature),',
+              '        running_stride_length_m = COALESCE(EXCLUDED.running_stride_length_m, health_daily.running_stride_length_m),')
+          replace_once(path,
+              '        wrist_temperature, cardio_recovery_bpm, partial_day',
+              '        running_stride_length_m, cardio_recovery_bpm, partial_day')
+          replace_once(path, 'function parseTextPayload(text) {', 'export function parseTextPayload(text) {')
+          replace_once(path,
+              "    'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'wristTemp', 'wristTemperature',\n    'cardioRec', 'cardioRecovery', 'walkingHr'",
+              "    'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'runningStrideLength', 'strideLength',\n    'cardioRec', 'cardioRecovery', 'walkingHr'")
+          replace_once(path, 'function normalize(payload) {', 'export function normalize(payload) {')
+          replace_once(path,
+              "    wristTemperature: number(value(payload, ['wristTemp', 'wristTemperature'])),",
+              "    runningStrideLength: number(value(payload, ['runningStrideLength', 'strideLength', 'runningStride'])),")
+          replace_once(path,
+              "function value(object, aliases) {\n  const wanted = new Set(aliases.map(normalizeKey))\n  for (const [key, current] of Object.entries(object || {})) if (wanted.has(normalizeKey(key))) return current\n  return null\n}",
+              "function value(object, aliases) {\n  const wanted = new Set(aliases.map(normalizeKey))\n  let blankMatch = null\n  for (const [key, current] of Object.entries(object || {})) {\n    if (!wanted.has(normalizeKey(key))) continue\n    if (current != null && (typeof current !== 'string' || current.trim() !== '')) return current\n    if (blankMatch == null) blankMatch = current\n  }\n  return blankMatch\n}")
+          replace_once(path,
+              "function dateValue(input) {\n  if (!input) return ''\n  const direct = String(input).match(/\\b(20\\d{2}-\\d{2}-\\d{2})\\b/)\n  if (direct) return direct[1]\n  const parsed = new Date(String(input))\n  return Number.isNaN(parsed.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(parsed)\n}",
+              "function dateValue(input) {\n  if (!input) return ''\n  const text = String(input).replace(/[\\u00A0\\u202F]/g, ' ')\n  const direct = text.match(/\\b(20\\d{2}-\\d{2}-\\d{2})\\b/)\n  if (direct) return direct[1]\n  const appleDate = text.match(/\\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+(\\d{1,2}),\\s*(20\\d{2})\\b/i)\n  if (appleDate) {\n    const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }\n    const month = months[appleDate[1].slice(0, 3).toLowerCase()]\n    return `${appleDate[3]}-${String(month).padStart(2, '0')}-${String(Number(appleDate[2])).padStart(2, '0')}`\n  }\n  const parsed = new Date(text)\n  return Number.isNaN(parsed.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(parsed)\n}")
+
+          path = 'api/_lib/neon-dashboard.js'
+          replace_once(path,
+              '      wristTemperature: number(health?.wrist_temperature),',
+              '      runningStrideLength: number(health?.running_stride_length_m),')
+          replace_once(path,
+              '    wristTemperature: number(todayHealth?.wrist_temperature),',
+              '    runningStrideLength: number(todayHealth?.running_stride_length_m),')
+
+          path = 'src/App.tsx'
+          replace_once(path, 'swimmingStrokes:N; wristTemperature:N; cardioRecovery:N;', 'swimmingStrokes:N; runningStrideLength:N; cardioRecovery:N;')
+          replace_once(path,
+              '<Metric icon={<Route/>} label="Walking + running" value={s?.distanceMiles} unit="mi" decimals={2}/><Metric icon={<Footprints/>}',
+              '<Metric icon={<Route/>} label="Walking + running" value={s?.distanceMiles} unit="mi" decimals={2}/>{positive(s?.runningStrideLength)&&<Metric icon={<Route/>} label="Running stride length" value={s?.runningStrideLength} unit="m" decimals={2}/>}<Metric icon={<Footprints/>}')
+          replace_once(path,
+              'detail="Cardiovascular, oxygen, temperature, and respiratory measures"',
+              'detail="Cardiovascular, oxygen, and respiratory measures"')
+          replace_once(path,
+              '} {s?.wristTemperature!=null&&<Metric icon={<Activity/>} label="Wrist temperature" value={s?.wristTemperature} unit="°" decimals={1}/>}</section>',
+              '}</section>')
+
+          package = Path('package.json')
+          data = json.loads(package.read_text())
+          data['scripts']['test'] = 'node --test test/health-import.test.js'
+          package.write_text(json.dumps(data, indent=2) + '\n')
+
+          tests = Path('test/health-import.test.js')
+          tests.parent.mkdir(exist_ok=True)
+          tests.write_text(r'''import test from 'node:test'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          import { normalize, parseTextPayload } from '../api/health/import.js'
+
+          const completeDictionary = {
+            hrv: '72.83255626740842',
+            restingHeartRate: '47',
+            walkingrunDistance: '3.07742573133531',
+            flightsClimb: '11',
+            excersiseMinutes: '43',
+            swmStrokes: '281',
+            cardioRec: '32',
+            runningStrideLength: '1.24',
+            restingEnergy: '1837.115000000009',
+            bloodOx: '98.66666666666667',
+            standMins: '121',
+            cardioFitness: '54.84',
+            date: 'Jul 18, 2026 at 12:20\u202fAM',
+            BikeDist: '5.2',
+            swimDistance: 1150.000030704476,
+            wlkHRAvg: '',
+            sleep: 'Core\nREM\nDeep28800',
+            walkingHr: '80',
+            activeEnergy: '612.7870000000049',
+            steps: '6615',
+            respRate: '14.70588235294118',
+          }
+
+          test('normalizes every current Apple Shortcut dictionary key', () => {
+            const record = normalize(parseTextPayload(JSON.stringify(completeDictionary)))
+            assert.equal(record.date, '2026-07-18')
+            assert.equal(record.hrv, 72.83255626740842)
+            assert.equal(record.restingHeartRate, 47)
+            assert.equal(record.walkingRunningDistance, 3.07742573133531)
+            assert.equal(record.flightsClimbed, 11)
+            assert.equal(record.exerciseMinutes, 43)
+            assert.equal(record.swimmingStrokes, 281)
+            assert.equal(record.cardioRecovery, 32)
+            assert.equal(record.runningStrideLength, 1.24)
+            assert.equal(record.restingEnergy, 1837.115000000009)
+            assert.equal(record.bloodOxygen, 98.66666666666667)
+            assert.equal(record.standMinutes, 121)
+            assert.equal(record.vo2Max, 54.84)
+            assert.equal(record.cyclingDistance, 5.2)
+            assert.equal(record.swimmingDistance, 1150.000030704476)
+            assert.equal(record.walkingHeartRateAverage, 80)
+            assert.equal(record.sleepHours, 8)
+            assert.equal(record.activeEnergy, 612.7870000000049)
+            assert.equal(record.steps, 6615)
+            assert.equal(record.respiratoryRate, 14.70588235294118)
+            assert.equal(record.totalExpenditure, 2449.902000000014)
+          })
+
+          test('preserves zero values and treats empty Shortcut values as missing', () => {
+            const payload = {"hrv":"","restingHeartRate":"","walkingrunDistance":"","flightsClimb":"","excersiseMinutes":"","swmStrokes":"","cardioRec":"","runningStrideLength":"","restingEnergy":"","bloodOx":"97","standMins":"","cardioFitness":"","date":"Jul 18, 2026 at 12:20\u202fAM","BikeDist":"","swimDistance":0,"wlkHRAvg":"","sleep":"","walkingHr":"","activeEnergy":"3.042999999999999","steps":"","respRate":""}
+            const record = normalize(payload)
+            assert.equal(record.date, '2026-07-18')
+            assert.equal(record.bloodOxygen, 97)
+            assert.equal(record.swimmingDistance, 0)
+            assert.equal(record.activeEnergy, 3.042999999999999)
+            assert.equal(record.runningStrideLength, null)
+            assert.equal(record.hrv, null)
+            assert.equal(record.totalExpenditure, null)
+          })
+
+          test('blank aliases do not mask populated aliases', () => {
+            assert.equal(normalize({ wlkHRAvg: '', walkingHr: '82' }).walkingHeartRateAverage, 82)
+          })
+
+          test('dashboard API and UI expose every current metric in an appropriate section', () => {
+            const dashboard = readFileSync(new URL('../api/_lib/neon-dashboard.js', import.meta.url), 'utf8')
+            const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+            const importer = readFileSync(new URL('../api/health/import.js', import.meta.url), 'utf8')
+            for (const token of ['running_stride_length_m', 'cardio_recovery_bpm', 'blood_oxygen_percent', 'walking_heart_rate_avg_bpm', 'swimming_strokes']) assert.match(importer, new RegExp(token))
+            for (const token of ['runningStrideLength', 'cardioRecovery', 'bloodOxygen', 'walkingHeartRateAverage', 'swimmingStrokes']) assert.match(dashboard, new RegExp(token))
+            for (const label of ['Resting', 'Active', 'Exercise', 'Walking + running', 'Running stride length', 'Steps', 'Stand time', 'Flights climbed', 'Cycling distance', 'Resting heart rate', 'HRV', 'Respiratory rate', 'VO₂ max', 'Blood oxygen', 'Walking heart rate', 'Cardio recovery', 'Sleep']) assert.match(app, new RegExp(label.replace(/[+]/g, '\\+')))
+            assert.match(app, /swimmingDistanceYards/)
+            assert.match(app, /strokeCount/)
+          })
+          '''.replace(/^          /gm, ''))
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify backend syntax
+        run: |
+          node --check api/health/import.js
+          node --check api/_lib/neon-dashboard.js
+
+      - name: Run health parsing audit
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Commit verified source changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add api/health/import.js api/_lib/neon-dashboard.js src/App.tsx package.json test/health-import.test.js
+          git commit -m "Support running stride length and audit health parsing"
+          git push origin HEAD
