@@ -75,12 +75,15 @@ export async function handleMealPlan(req, res) {
       }
       let goalsResult = null
       if (Object.keys(answer.goalUpdates).length) goalsResult = await saveUserGoals(userId, { goals: answer.goalUpdates })
-      const changed = Boolean(answer.foods.length || contextResult || goalsResult)
-      const nextState = changed ? await currentState(userId) : state
-      // A regenerated plan starts a fresh thread: when this message triggers a new
-      // plan (food logged, goals/context changed), clear all history so only the new
+      const dataChanged = Boolean(answer.foods.length || contextResult || goalsResult)
+      // Regenerate the plan when the diary/goals changed, or when the user asked for a
+      // new plan (the model flags it, plus a keyword fallback for reliability).
+      const wantsNewPlan = /\b(regenerate|new plan|another plan|different plan|fresh plan|re-?do (the |my )?plan|remake (the |my )?plan|make (me )?(a |another )?(new )?plan)\b/i.test(message)
+      const regenerate = dataChanged || answer.regeneratePlan || wantsNewPlan
+      const nextState = dataChanged ? await currentState(userId) : state
+      // A regenerated plan starts a fresh thread: clear all history so only the new
       // plan remains. Pure questions keep the conversation flowing.
-      const messages = changed ? [] : appendMessages(cache.messages, [
+      const messages = regenerate ? [] : appendMessages(cache.messages, [
         { role: 'user', text: message || 'Sent a photo to log.', at: new Date().toISOString() },
         { role: 'assistant', text: answer.text, at: new Date().toISOString() },
       ])
@@ -88,14 +91,13 @@ export async function handleMealPlan(req, res) {
       let sources = cache.sources
       let model = answer.model
       let plan = cache.plan
-      let foodFingerprint = state.foodFingerprint
-      if (changed) {
+      let foodFingerprint = regenerate ? nextState.foodFingerprint : state.foodFingerprint
+      if (regenerate) {
         const generated = await generateMealPlan({ state: nextState, location, localTime, timeZone })
         updatedPlan = generated.text
         plan = generated.text
         sources = generated.sources
         model = generated.model
-        foodFingerprint = nextState.foodFingerprint
       }
       const saved = await saveCachedPlan(userId, {
         foodFingerprint,
@@ -103,7 +105,7 @@ export async function handleMealPlan(req, res) {
         messages,
         sources,
         model,
-        generatedAt: changed ? new Date() : cache.generated_at || new Date(),
+        generatedAt: regenerate ? new Date() : cache.generated_at || new Date(),
       })
       sendJson(res, 200, {
         ...responseBase(nextState, saved),
@@ -117,7 +119,9 @@ export async function handleMealPlan(req, res) {
       return
     }
 
-    if (validCache) {
+    // The "New plan" button sends force:true to regenerate even when the cached plan
+    // still matches today's food.
+    if (validCache && !body.force) {
       sendJson(res, 200, { ...base, cached: true }, cookie ? [cookie] : [])
       return
     }
@@ -402,6 +406,7 @@ calories: { type: 'number' }, protein: { type: 'number' }, carbs: { type: 'numbe
         move: { type: 'number' }, exercise: { type: 'number' }, stand: { type: 'number' }, steps: { type: 'number' }, sleepHours: { type: 'number' },
       },
     },
+    regeneratePlan: { type: 'boolean' },
   },
   required: ['reply'],
 }
@@ -446,6 +451,7 @@ async function answerChat({ state, cache, message, image }) {
     foods: normalizeFoods(parsed.foods),
     contextUpdate: normalizeContextUpdate(parsed.contextUpdate),
     goalUpdates: normalizeGoalUpdates(parsed.goalUpdates),
+    regeneratePlan: Boolean(parsed.regeneratePlan),
     model,
   }
 }
@@ -457,10 +463,10 @@ export function parseStructuredChatResponse(value) {
     let parsed = JSON.parse(raw)
     for (let index = 0; index < 2 && typeof parsed === 'string'; index += 1) parsed = JSON.parse(parsed)
     if (parsed && typeof parsed === 'object') {
-      return { valid: typeof parsed.reply === 'string', reply: parsed.reply || '', foods: parsed.foods || [], contextUpdate: parsed.contextUpdate || null, goalUpdates: parsed.goalUpdates || {} }
+      return { valid: typeof parsed.reply === 'string', reply: parsed.reply || '', foods: parsed.foods || [], contextUpdate: parsed.contextUpdate || null, goalUpdates: parsed.goalUpdates || {}, regeneratePlan: Boolean(parsed.regeneratePlan) }
     }
   } catch { /* extract a safe reply below */ }
-  return { valid: false, reply: extractJsonStringField(raw, 'reply') || raw.replace(/^\s*[\[{]+/, '').replace(/[\]}]+\s*$/, ''), foods: [], contextUpdate: null, goalUpdates: {} }
+  return { valid: false, reply: extractJsonStringField(raw, 'reply') || raw.replace(/^\s*[\[{]+/, '').replace(/[\]}]+\s*$/, ''), foods: [], contextUpdate: null, goalUpdates: {}, regeneratePlan: false }
 }
 
 export function cleanReplyText(value) {
@@ -686,6 +692,10 @@ FOOD LOGGING AND AUTOMATIC PLANNING
 - For every logged food, estimate sodium, caffeine, total sugar, added sugar, fat composition, cholesterol, minerals, vitamins, omega fats, water, and alcohol when reasonably inferable. Leave unknown nutrients absent rather than guessing.
 - Briefly mention sodium, caffeine, and sugars in the confirmation when they are available.
 - After food is logged, Fuel automatically generates a fresh plan for the rest of the day. Keep the confirmation concise because the updated plan will be shown separately.
+
+REGENERATING THE PLAN
+- Set regeneratePlan to true when the user asks for a new, fresh, different, or updated meal plan (for example "make me a new plan", "regenerate", "give me a different plan", "redo my plan"). Fuel then generates and shows the new plan separately, so keep reply to a short confirmation.
+- Leave regeneratePlan false for ordinary questions and small tweaks that do not warrant a whole new plan.
 
 CONTEXT AND GOALS
 - You may read the saved context below.

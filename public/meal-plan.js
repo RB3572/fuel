@@ -9,6 +9,7 @@ const els={
   input:document.getElementById('chat-input'),
   send:document.getElementById('send-button'),
   attach:document.getElementById('attach-button'),
+  newPlan:document.getElementById('new-plan-button'),
   imageInput:document.getElementById('image-input'),
   preview:document.getElementById('image-preview'),
   previewImg:document.getElementById('preview-img'),
@@ -116,18 +117,19 @@ function locationError(error){
   return 'Location was unavailable. Fuel will create the plan without nearby recommendations.'
 }
 
-async function generatePlan(){
+async function generatePlan(force=false){
   if(state.busy)return
   state.busy=true
   setComposerBusy(true)
   state.location=null
-  setStatus('Building a plan from today’s Fuel data…',{loading:true})
+  setStatus(force?'Building a fresh plan from today’s Fuel data…':'Building a plan from today’s Fuel data…',{loading:true})
   try{
     const response=await timedFetch('/api/meal-plan',{
       method:'POST',
       headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({
         action:'plan',
+        force,
         localTime:new Date().toString(),
         timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',
       }),
@@ -181,7 +183,7 @@ function appendBubble(role,text,isPlan=false,imageUrl=null){
     const content=document.createElement('div')
     content.className='bubble-content'
     if(role==='user')content.textContent=String(text)
-    else renderAssistantContent(content,text,isPlan)
+    else renderAssistantContent(content,text)
     article.append(content)
   }
   els.thread.append(article)
@@ -262,6 +264,7 @@ function setComposerBusy(busy){
   els.input.disabled=busy
   els.send.disabled=busy
   els.attach.disabled=busy
+  if(els.newPlan)els.newPlan.disabled=busy
 }
 
 function resizeInput(){
@@ -270,22 +273,37 @@ function resizeInput(){
 }
 
 function cleanAssistantText(value){let text=String(value??'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');for(let i=0;i<3;i++){try{const parsed=JSON.parse(text);if(typeof parsed==='string'){text=parsed.trim();continue}if(parsed&&typeof parsed.reply==='string'){text=parsed.reply.trim();continue}if(parsed&&typeof parsed.plan==='string'){text=parsed.plan.trim();continue}}catch{}break}const match=text.match(/[\"'](?:reply|plan)[\"']\s*:\s*[\"']([\s\S]*)/);if(/^\s*\{/.test(text)&&match)text=match[1].replace(/[\"']?\s*[}]+\s*$/,'');return text.replace(/^\s*[\[{]+\s*/,'').replace(/\s*[\]}]+\s*$/,'').trim()}
-function stripInlineMarkdown(value){return String(value||'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/__([^_]+)__/g,'$1').replace(/`([^`]+)`/g,'$1').trim()}
-function renderAssistantContent(container,value,isPlan){
+// Render inline markdown (**bold**, __bold__, *italic*, `code`) as real DOM nodes.
+// Text is added via textContent, so it is always escaped — no HTML injection.
+function appendInlineMarkdown(parent,value){
+  const text=String(value||'')
+  const rx=/(\*\*|__)(.+?)\1|`([^`]+)`|\*(\S(?:[^*]*\S)?)\*/g
+  let last=0,m
+  while((m=rx.exec(text))){
+    if(m.index>last)parent.append(document.createTextNode(text.slice(last,m.index)))
+    let el
+    if(m[2]!=null){el=document.createElement('strong');el.textContent=m[2]}
+    else if(m[3]!=null){el=document.createElement('code');el.textContent=m[3]}
+    else{el=document.createElement('em');el.textContent=m[4]}
+    parent.append(el)
+    last=rx.lastIndex
+  }
+  if(last<text.length)parent.append(document.createTextNode(text.slice(last)))
+}
+function renderAssistantContent(container,value){
   const text=cleanAssistantText(value).replace(/\r\n?/g,'\n')
-  if(!isPlan){container.textContent=text;return}
   container.classList.add('is-structured')
   const lines=text.split('\n')
   let paragraph=[]
-  const flushParagraph=()=>{if(!paragraph.length)return;const p=document.createElement('p');p.textContent=stripInlineMarkdown(paragraph.join(' '));container.append(p);paragraph=[]}
+  const flushParagraph=()=>{if(!paragraph.length)return;const p=document.createElement('p');appendInlineMarkdown(p,paragraph.join(' '));container.append(p);paragraph=[]}
   for(const rawLine of lines){
     const line=rawLine.trim()
     if(!line){flushParagraph();continue}
-    const bullet=line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/)
-    const heading=line.replace(/^#{1,4}\s*/,'').replace(/:$/,'').trim()
-    const isHeading=/^(MEAL PLAN FOR THE REST OF TODAY|TARGET|PLAN|ESTIMATED PLAN TOTAL|WHY THIS FITS|BREAKFAST|LUNCH|DINNER|MORNING SNACK|AFTERNOON SNACK|EVENING SNACK|SNACK|DESSERT)$/i.test(heading)
-    if(isHeading){flushParagraph();const h=document.createElement('h3');h.textContent=stripInlineMarkdown(heading);container.append(h);continue}
-    if(bullet){flushParagraph();const item=document.createElement('div');item.className='bubble-list-item';const marker=document.createElement('i');marker.textContent='•';const copy=document.createElement('span');copy.textContent=stripInlineMarkdown(bullet[1]);item.append(marker,copy);container.append(item);continue}
+    const mdHeading=line.match(/^#{1,4}\s+(.+)$/)
+    const planHeading=/^(MEAL PLAN FOR THE REST OF TODAY|TARGET|PLAN|ESTIMATED PLAN TOTAL|WHY THIS FITS|BREAKFAST|LUNCH|DINNER|MORNING SNACK|AFTERNOON SNACK|EVENING SNACK|SNACK|DESSERT)$/i.test(line.replace(/:$/,'').trim())
+    const bullet=line.match(/^(?:[-•]|\*(?=\s)|\d+[.)])\s+(.+)$/)
+    if(mdHeading||planHeading){flushParagraph();const h=document.createElement('h3');appendInlineMarkdown(h,(mdHeading?mdHeading[1]:line).replace(/:$/,'').trim());container.append(h);continue}
+    if(bullet){flushParagraph();const item=document.createElement('div');item.className='bubble-list-item';const marker=document.createElement('i');marker.textContent='•';const copy=document.createElement('span');appendInlineMarkdown(copy,bullet[1]);item.append(marker,copy);container.append(item);continue}
     paragraph.push(line)
   }
   flushParagraph()
@@ -310,6 +328,7 @@ els.form.addEventListener('submit',event=>{
   resizeInput()
   void sendMessage(message,{image})
 })
+els.newPlan?.addEventListener('click',()=>{if(!state.busy)void generatePlan(true)})
 els.attach.addEventListener('click',()=>els.imageInput.click())
 els.removeImage.addEventListener('click',()=>setImage(null))
 els.imageInput.addEventListener('change',async()=>{

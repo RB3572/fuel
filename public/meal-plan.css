@@ -92,6 +92,13 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
   background: var(--black);
   color: var(--white);
 }
+.new-plan-button {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: var(--white);
+  cursor: pointer;
+}
+.new-plan-button:disabled { opacity: .5; cursor: wait; }
 .icon-button svg, .chat-composer button svg {
   width: 19px;
   height: 19px;
@@ -229,6 +236,16 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
   margin: 6px 0;
 }
 .bubble-list-item > i { color: #91b9ff; font-style: normal; font-weight: 800; }
+.bubble-content strong { font-weight: 800; }
+.bubble-content em { font-style: italic; }
+.bubble-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .88em;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(16, 17, 20, .07);
+}
+.plan-bubble .bubble-content code, .user-bubble .bubble-content code { background: rgba(255, 255, 255, .18); }
 .plan-bubble .bubble-content { line-height: 1.5; }
 .bubble-image {
   display: block;
