@@ -22,6 +22,8 @@ jobs:
           ref: feature/fuel-ai-mobile-resilience
           fetch-depth: 1
           show-progress: false
+      - name: Prepare patch strings
+        run: python3 scripts/prepare-fuel-ai-patch.py
       - name: Apply fixes
         id: patch
         continue-on-error: true
