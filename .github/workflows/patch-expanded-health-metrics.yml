@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - feature/apple-health-expanded-metrics
+  pull_request:
+    branches:
+      - master
 
 permissions:
   contents: write
 
 jobs:
   patch-and-verify:
-    if: github.event.head_commit.message != 'Support wrist temperature and cardio recovery'
+    if: github.event_name == 'pull_request' || github.event.head_commit.message != 'Support wrist temperature and cardio recovery'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
