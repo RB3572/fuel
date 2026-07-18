@@ -71,8 +71,8 @@ export default async function handler(req, res) {
     return
   }
 
-  if (!['GET', 'POST', 'DELETE'].includes(req.method)) {
-    methodNotAllowed(res, ['GET', 'POST', 'DELETE'])
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'PUT', 'DELETE'])
     return
   }
 
@@ -110,6 +110,39 @@ export default async function handler(req, res) {
       sendJson(res, 200, { ok: true, deleted: true, entry: rows[0] }, auth.cookie ? [auth.cookie] : [])
       return
     }
+    if (req.method === 'PUT') {
+      const entryId = text(body.entryId ?? body.entry_id ?? body.id)
+      if (!entryId) {
+        sendJson(res, 422, { error: 'A food entry ID is required.' })
+        return
+      }
+      const editedDescription = text(body.description ?? body.food ?? body.name)
+      if (!editedDescription) {
+        sendJson(res, 422, { error: 'A food description is required.' })
+        return
+      }
+      const db = sql()
+      const rows = await db`
+        UPDATE food_entries SET
+          meal = ${text(body.meal)},
+          description = ${editedDescription},
+          portion = ${text(body.portion)},
+          calories_kcal = ${number(body.calories ?? body.caloriesKcal ?? body.calories_kcal)},
+          protein_g = ${number(body.protein ?? body.proteinG ?? body.protein_g)},
+          carbs_g = ${number(body.carbs ?? body.carbsG ?? body.carbs_g)},
+          fat_g = ${number(body.fat ?? body.fatG ?? body.fat_g)},
+          fiber_g = ${number(body.fiber ?? body.fiberG ?? body.fiber_g)},
+          updated_at = now()
+        WHERE user_id = ${auth.id} AND id::text = ${entryId}
+        RETURNING id, occurred_at, meal, description, portion, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, confidence, notes, source
+      `
+      if (!rows.length) {
+        sendJson(res, 404, { error: 'Food entry not found.' }, auth.cookie ? [auth.cookie] : [])
+        return
+      }
+      sendJson(res, 200, { ok: true, updated: true, entry: rows[0] }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
     const description = text(body.description ?? body.food ?? body.name)
     if (!description) {
       sendJson(res, 422, { error: 'A food description is required.' })
@@ -139,9 +172,9 @@ export default async function handler(req, res) {
 
     sendJson(res, 201, { ok: true, entry: rows[0] }, auth.cookie ? [auth.cookie] : [])
   } catch (error) {
-    const operation = req.method === 'POST' ? 'Food logging' : req.method === 'DELETE' ? 'Food deletion' : 'Dashboard loading'
+    const operation = req.method === 'POST' ? 'Food logging' : req.method === 'PUT' ? 'Food update' : req.method === 'DELETE' ? 'Food deletion' : 'Dashboard loading'
     console.error(`${operation} failed`, error)
-    const message = req.method === 'POST' ? 'Food could not be logged.' : req.method === 'DELETE' ? 'Food entry could not be deleted.' : 'Unable to load Fuel data.'
+    const message = req.method === 'POST' ? 'Food could not be logged.' : req.method === 'PUT' ? 'Food entry could not be updated.' : req.method === 'DELETE' ? 'Food entry could not be deleted.' : 'Unable to load Fuel data.'
     sendJson(res, 500, { error: message })
   }
 }

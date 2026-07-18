@@ -287,7 +287,11 @@ function renderAssistantContent(container,value,isPlan){
 }
 function friendlyClientError(value){const text=String(value||'');return /Invalid JSON payload|generation_config\.response_schema|Unknown name \"additionalProperties\"|Cannot find field/i.test(text)?'Fuel AI hit a response-format issue. Please try that message again.':text}
 function focusComposerOnDesktop(){if(window.matchMedia('(hover: hover) and (pointer: fine)').matches)els.input.focus({preventScroll:true})}
-function syncViewportHeight(){const height=window.visualViewport?.height||window.innerHeight;document.documentElement.style.setProperty('--app-height',`${Math.round(height)}px`)}
+// The app shell is sized to the visual viewport, so the document itself must never
+// scroll. Mobile browsers still scroll the whole page when the composer is focused
+// (to lift the field above the keyboard); snap it back so the view never jumps.
+function pinViewport(){if(window.scrollX!==0||window.scrollY!==0)window.scrollTo(0,0);const scroller=document.scrollingElement;if(scroller&&scroller.scrollTop!==0)scroller.scrollTop=0}
+function syncViewportHeight(){const height=window.visualViewport?.height||window.innerHeight;document.documentElement.style.setProperty('--app-height',`${Math.round(height)}px`);pinViewport()}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]))}
 function escapeAttribute(value){return escapeHtml(value)}
 
@@ -317,6 +321,13 @@ els.imageInput.addEventListener('change',async()=>{
 els.input.addEventListener('input',resizeInput)
 els.input.addEventListener('keydown',event=>{
   if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();els.form.requestSubmit()}
+})
+// Focusing the input opens the keyboard; counteract the browser's scroll-into-view and,
+// once the viewport settles, keep the newest message and the composer in view.
+els.input.addEventListener('focus',()=>{
+  pinViewport()
+  requestAnimationFrame(pinViewport)
+  setTimeout(()=>{pinViewport();els.thread.scrollTop=els.thread.scrollHeight},300)
 })
 syncViewportHeight()
 window.addEventListener('resize',syncViewportHeight,{passive:true})

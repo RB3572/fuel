@@ -316,6 +316,11 @@ async function generateMealPlan({ state, location, localTime, timeZone }) {
       maxOutputTokens: 1800,
       responseMimeType: 'application/json',
       responseSchema: PLAN_RESPONSE_SCHEMA,
+      // gemini-flash-latest is a thinking model whose reasoning tokens count against
+      // maxOutputTokens. Left on, thinking consumes the entire budget and the JSON
+      // output is truncated (finishReason MAX_TOKENS) — every plan comes back
+      // incomplete. Disable thinking so the whole budget goes to the response.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   })
 
@@ -413,7 +418,9 @@ async function answerChat({ state, cache, message, image }) {
   ]
   const request = {
     contents,
-    generationConfig: { temperature: 0.3, topP: 0.9, maxOutputTokens: 2800, responseMimeType: 'application/json', responseSchema: CHAT_RESPONSE_SCHEMA },
+    // thinkingBudget: 0 — see generateMealPlan. Reasoning tokens would otherwise eat
+    // the output budget and truncate the structured chat reply.
+    generationConfig: { temperature: 0.3, topP: 0.9, maxOutputTokens: 2800, responseMimeType: 'application/json', responseSchema: CHAT_RESPONSE_SCHEMA, thinkingConfig: { thinkingBudget: 0 } },
   }
   let payload = await callGemini(model, request, false, GEMINI_CHAT_TIMEOUT_MS)
   let candidate = payload?.candidates?.[0]

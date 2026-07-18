@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { Activity, ArrowLeft, Bike, BookOpen, ChevronRight, Clock3, Copy, Database, Dumbbell, Footprints, HeartPulse, LogOut, Moon, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Timer, Trash2, X } from 'lucide-react'
+import { Activity, ArrowLeft, Bike, BookOpen, ChevronRight, Clock3, Copy, Database, Dumbbell, Footprints, HeartPulse, LogOut, Moon, Pencil, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Timer, Trash2, X } from 'lucide-react'
 import { workoutPlans } from './workouts'
 import type { LiftPlan } from './workouts'
 import './App.css'
@@ -53,6 +53,7 @@ export default function App(){
   const[data,setData]=useState<DashboardData|null>(null)
   const[loading,setLoading]=useState(false)
   const[deletingFoodId,setDeletingFoodId]=useState<string|null>(null)
+  const[editingFood,setEditingFood]=useState<FoodEntry|null>(null)
   const[error,setError]=useState('')
   const[range,setRange]=useState<RangeKey>('day')
   const[profileOpen,setProfileOpen]=useState(false)
@@ -77,7 +78,7 @@ export default function App(){
     <Section title="Nutrition" detail={`Calculated calorie target · ${balanceLabel(goalTarget(data?.goals,'calorieBalancePercent',0))} relative to average burn`}/>
     <section className="panel nutrition-panel"><GoalRing label="Calculated calories" value={s?.caloriesConsumed} target={goalTarget(data?.goals,'calories',2000)} unit="kcal"/><GoalBar label="Protein" value={s?.protein} target={goalTarget(data?.goals,'protein',112)} unit="g"/><GoalBar label="Carbohydrates" value={s?.carbs} target={goalTarget(data?.goals,'carbs',300)} unit="g"/><GoalBar label="Fat" value={s?.fat} target={goalTarget(data?.goals,'fat',60)} unit="g"/><GoalBar label="Fiber" value={s?.fiber} target={goalTarget(data?.goals,'fiber',30)} unit="g"/></section>
     <Section title="Detailed nutrition" detail="Totals from logged food; unavailable nutrients remain blank rather than being guessed"/><NutrientGrid nutrients={s?.nutrients}/>
-    <Section title="Food consumed" detail={`${data?.today.foodEntries.length||0} entries today`}/><section className="panel"><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={e.id||i} e={e} deleting={deletingFoodId===e.id} onDelete={()=>void deleteFood(e)}/>)}</EntryList></section>
+    <Section title="Food consumed" detail={`${data?.today.foodEntries.length||0} entries today`}/><section className="panel"><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={e.id||i} e={e} deleting={deletingFoodId===e.id} onDelete={()=>void deleteFood(e)} onEdit={()=>setEditingFood(e)}/>)}</EntryList></section>
     <Section title="Fitness" detail="Daily activity totals from Apple Health"/><ActivityRings summary={s} goals={data?.goals}/>
     <section className="metric-grid fitness-metrics"><Metric icon={<Activity/>} label="Active energy" value={s?.activeEnergy} unit="kcal"/><Metric icon={<Clock3/>} label="Exercise" value={s?.exerciseMinutes} unit="min"/><Metric icon={<Route/>} label="Walking + running" value={s?.distanceMiles} unit="mi" decimals={2}/>{positive(s?.runningStrideLength)&&<Metric icon={<Route/>} label="Running stride length" value={s?.runningStrideLength} unit="m" decimals={2}/>}<Metric icon={<Footprints/>} label="Steps" value={s?.stepCount} unit=""/>{positive(s?.standMinutes)&&<Metric icon={<Clock3/>} label="Stand time" value={s?.standMinutes} unit="min"/>}{positive(s?.flightsClimbed)&&<Metric icon={<Activity/>} label="Flights climbed" value={s?.flightsClimbed} unit="flights"/>}{positive(s?.cyclingDistanceMiles)&&<Metric icon={<Bike/>} label="Cycling distance" value={s?.cyclingDistanceMiles} unit="mi" decimals={2}/>}</section>
     <Section title="Workouts" detail={workoutDetail}/><section className="panel"><EntryList empty="No workout activity logged today.">{(data?.today.workouts||[]).map((e,i)=><WorkoutRow key={i} e={e}/>)}</EntryList></section>
@@ -86,8 +87,9 @@ export default function App(){
     <section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="restingHeartRate" unit="bpm" chartTitle="Resting heart rate trend" yLabel="Beats per minute"/></section>
     <Section title="Recovery" detail={`Sleep target ${fmt(goalTarget(data?.goals,'sleepHours',8),1)} hours`}/><section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1} chartTitle="Sleep duration" yLabel="Hours"/></section></section>
     <footer><Database size={15}/><span>{data?.coverage.days||0} days · {data?.coverage.workouts||0} active days · {data?.coverage.foodEntries||0} food entries · Neon Postgres</span></footer>
-    {syncOpen&&<SyncSetup onClose={()=>setSyncOpen(false)}/>} 
-    {goalsOpen&&<GoalsSetup initial={data} onClose={()=>setGoalsOpen(false)} onSaved={load}/>} 
+    {syncOpen&&<SyncSetup onClose={()=>setSyncOpen(false)}/>}
+    {goalsOpen&&<GoalsSetup initial={data} onClose={()=>setGoalsOpen(false)} onSaved={load}/>}
+    {editingFood&&<EditFoodModal entry={editingFood} onClose={()=>setEditingFood(null)} onSaved={load}/>}
   </main>
 }
 
@@ -153,7 +155,38 @@ function Metric({icon,label,value,unit,decimals=0,display}:{icon:ReactNode;label
 function Stat({label,value}:{label:string;value:N|undefined}){return <div><span>{label}</span><strong>{fmt(value)} kcal</strong></div>}
 function Section({title,detail}:{title:string;detail:string}){return <div className="section-title"><h2>{title}</h2><p>{detail}</p></div>}
 function EntryList({children,empty}:{children:ReactNode;empty:string}){const a=Array.isArray(children)?children:[children];return a.length?<div className="entry-list">{children}</div>:<div className="empty">{empty}</div>}
-function FoodRow({e,deleting,onDelete}:{e:FoodEntry;deleting:boolean;onDelete:()=>void}){const details=[e.nutrients?.sugarsG!=null?`${fmt(e.nutrients.sugarsG,1)}g sugar`:'',e.nutrients?.sodiumMg!=null?`${fmt(e.nutrients.sodiumMg)}mg sodium`:'',e.nutrients?.caffeineMg!=null?`${fmt(e.nutrients.caffeineMg)}mg caffeine`:''].filter(Boolean).join(' · ');return <article className="entry food-entry"><div><strong>{e.food||e.meal}</strong><span>{[e.time,e.meal,e.portion].filter(Boolean).join(' · ')}</span>{details&&<span className="food-micro">{details}</span>}</div><div className="entry-actions"><div className="entry-nutrition"><strong>{fmt(e.calories)} kcal</strong><span>{fmt(e.protein,1)}g protein · {fmt(e.carbs,1)}g carbs · {fmt(e.fat,1)}g fat · {fmt(e.fiber,1)}g fiber</span></div><button className="delete-entry-button" disabled={deleting} onClick={onDelete} aria-label={`Delete ${e.food||'food entry'}`} title="Delete food entry"><Trash2 size={15}/><span>{deleting?'Deleting…':'Delete'}</span></button></div></article>}
+function FoodRow({e,deleting,onDelete,onEdit}:{e:FoodEntry;deleting:boolean;onDelete:()=>void;onEdit:()=>void}){const details=[e.nutrients?.sugarsG!=null?`${fmt(e.nutrients.sugarsG,1)}g sugar`:'',e.nutrients?.sodiumMg!=null?`${fmt(e.nutrients.sodiumMg)}mg sodium`:'',e.nutrients?.caffeineMg!=null?`${fmt(e.nutrients.caffeineMg)}mg caffeine`:''].filter(Boolean).join(' · ');return <article className="entry food-entry"><div><strong>{e.food||e.meal}</strong><span>{[e.time,e.meal,e.portion].filter(Boolean).join(' · ')}</span>{details&&<span className="food-micro">{details}</span>}</div><div className="entry-actions"><div className="entry-nutrition"><strong>{fmt(e.calories)} kcal</strong><span>{fmt(e.protein,1)}g protein · {fmt(e.carbs,1)}g carbs · {fmt(e.fat,1)}g fat · {fmt(e.fiber,1)}g fiber</span></div><div className="entry-buttons"><button className="edit-entry-button" disabled={deleting||!e.id} onClick={onEdit} aria-label={`Edit ${e.food||'food entry'}`} title="Edit food entry"><Pencil size={15}/><span>Edit</span></button><button className="delete-entry-button" disabled={deleting} onClick={onDelete} aria-label={`Delete ${e.food||'food entry'}`} title="Delete food entry"><Trash2 size={15}/><span>{deleting?'Deleting…':'Delete'}</span></button></div></div></article>}
+
+function EditFoodModal({entry,onClose,onSaved}:{entry:FoodEntry;onClose:()=>void;onSaved:()=>Promise<void>|void}){
+  const[form,setForm]=useState({food:entry.food||'',meal:entry.meal||'',portion:entry.portion||'',calories:entry.calories??null as N,protein:entry.protein??null as N,carbs:entry.carbs??null as N,fat:entry.fat??null as N,fiber:entry.fiber??null as N})
+  const[busy,setBusy]=useState(false)
+  const[message,setMessage]=useState('')
+  const num=(v:N)=>v==null?'':String(v)
+  const setNum=(key:'calories'|'protein'|'carbs'|'fat'|'fiber')=>(value:string)=>setForm(f=>({...f,[key]:value===''?null:Number(value)}))
+  const save=async()=>{
+    if(!form.food.trim()){setMessage('A food name is required.');return}
+    setBusy(true);setMessage('')
+    try{
+      const r=await fetch('/api/mlog',{method:'PUT',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({entryId:entry.id,description:form.food.trim(),meal:form.meal.trim(),portion:form.portion.trim(),calories:form.calories,protein:form.protein,carbs:form.carbs,fat:form.fat,fiber:form.fiber})})
+      const p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to update this food entry.')
+      await onSaved();onClose()
+    }catch(e){setMessage(e instanceof Error?e.message:'Unable to update this food entry.')}finally{setBusy(false)}
+  }
+  return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="goals-modal panel" role="dialog" aria-modal="true"><div className="sync-modal-head"><div><h2>Edit food</h2><p>Update this diary entry.</p></div><button className="icon-button" onClick={onClose}><X size={20}/></button></div>
+    <label className="goal-field"><span>Food</span><input type="text" value={form.food} onChange={e=>setForm(f=>({...f,food:e.target.value}))} placeholder="e.g. Grilled chicken bowl"/></label>
+    <div className="goal-config-grid">
+      <label className="goal-field"><span>Meal</span><input type="text" value={form.meal} onChange={e=>setForm(f=>({...f,meal:e.target.value}))} placeholder="Breakfast, Lunch…"/></label>
+      <label className="goal-field"><span>Portion</span><input type="text" value={form.portion} onChange={e=>setForm(f=>({...f,portion:e.target.value}))} placeholder="1 bowl"/></label>
+      <label className="goal-field"><span>Calories<small>kcal</small></span><input type="number" min="0" step="1" value={num(form.calories)} onChange={e=>setNum('calories')(e.target.value)}/></label>
+      <label className="goal-field"><span>Protein<small>g</small></span><input type="number" min="0" step="0.1" value={num(form.protein)} onChange={e=>setNum('protein')(e.target.value)}/></label>
+      <label className="goal-field"><span>Carbs<small>g</small></span><input type="number" min="0" step="0.1" value={num(form.carbs)} onChange={e=>setNum('carbs')(e.target.value)}/></label>
+      <label className="goal-field"><span>Fat<small>g</small></span><input type="number" min="0" step="0.1" value={num(form.fat)} onChange={e=>setNum('fat')(e.target.value)}/></label>
+      <label className="goal-field"><span>Fiber<small>g</small></span><input type="number" min="0" step="0.1" value={num(form.fiber)} onChange={e=>setNum('fiber')(e.target.value)}/></label>
+    </div>
+    <button className="save-goals-button" disabled={busy} onClick={()=>void save()}><Save size={17}/>{busy?'Saving…':'Save changes'}</button>
+    {message&&<p className="sync-message">{message}</p>}
+  </section></div>
+}
 function WorkoutRow({e}:{e:WorkoutEntry}){const facts=[e.swimmingDistanceYards!=null?`${fmt(e.swimmingDistanceYards)} yd`:e.distanceMiles!=null?`${fmt(e.distanceMiles,2)} mi`:'',e.strokeCount!=null?`${fmt(e.strokeCount)} strokes`:'',e.stepCount!=null?`${fmt(e.stepCount)} steps`:''].filter(Boolean);return <article className="entry"><div><strong>{e.activity||'Activity'}</strong><span>{facts.join(' · ')||e.dataQuality}</span></div><div><span>{e.dataQuality}</span></div></article>}
 function Centered({title,text}:{title:string;text:string}){return <main className="center"><RefreshCw className="spin"/><h1>{title}</h1><p>{text}</p></main>}
 function SignIn(){return <main className="center"><div className="signin"><h1>Fuel</h1><p>Your private nutrition, activity, and recovery dashboard.</p><button onClick={()=>location.assign('/api/auth/google/start')}><ShieldCheck size={18}/>Sign in with Google</button></div></main>}
