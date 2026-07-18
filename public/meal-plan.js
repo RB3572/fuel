@@ -187,7 +187,7 @@ function appendBubble(role,text,isPlan=false,imageUrl=null){
   if(text){
     const content=document.createElement('div')
     content.className='bubble-content'
-    content.textContent=String(text)
+    content.textContent=role==='user'?String(text):cleanAssistantText(text)
     article.append(content)
   }
   els.thread.append(article)
@@ -219,6 +219,9 @@ async function sendMessage(message,{retried=false,image=null}={}){
         action:'chat',
         message:text,
         ...(image?{image:{mimeType:image.mimeType,data:image.data}}:{}),
+        ...(state.location||{}),
+        localTime:new Date().toString(),
+        timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',
       }),
     })
     const payload=await response.json()
@@ -234,6 +237,7 @@ async function sendMessage(message,{retried=false,image=null}={}){
     // Append rather than re-render the thread: a full re-render rebuilds from the
     // server's text-only history and would drop the photo the user just sent.
     appendBubble('assistant',payload.reply)
+    if(payload.updatedPlan)appendBubble('assistant',payload.updatedPlan,true)
     renderSources(payload.sources||[])
     els.thread.scrollTop=els.thread.scrollHeight
   }catch(error){
@@ -266,6 +270,7 @@ function resizeInput(){
   els.input.style.height=`${Math.min(150,Math.max(44,els.input.scrollHeight))}px`
 }
 
+function cleanAssistantText(value){let text=String(value??'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');for(let i=0;i<3;i++){try{const parsed=JSON.parse(text);if(typeof parsed==='string'){text=parsed.trim();continue}if(parsed&&typeof parsed.reply==='string'){text=parsed.reply.trim();continue}}catch{}break}const match=text.match(/[\"']reply[\"']\s*:\s*[\"']([\s\S]*)/);if(/^\s*\{/.test(text)&&match)text=match[1].replace(/[\"']?\s*[}]+\s*$/,'');return text.replace(/^\s*[\[{]+\s*/,'').replace(/\s*[\]}]+\s*$/,'').trim()}
 function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]))}
 function escapeAttribute(value){return escapeHtml(value)}
 
