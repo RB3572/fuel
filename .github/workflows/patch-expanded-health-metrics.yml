@@ -31,88 +31,72 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace(path, old, new):
+          def replace_once(path, old, new):
               file = Path(path)
               text = file.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"Expected one match in {path}, found {count}: {old[:80]!r}")
-              file.write_text(text.replace(old, new))
+              if old not in text:
+                  raise SystemExit(f"Missing expected text in {path}: {old!r}")
+              file.write_text(text.replace(old, new, 1))
 
           path = 'api/health/import.js'
-          replace(path, "const PARSER_VERSION = 11", "const PARSER_VERSION = 12")
-          replace(path,
-          """        ADD COLUMN IF NOT EXISTS cycling_distance_mi double precision,
-                  ADD COLUMN IF NOT EXISTS flights_climbed double precision,
-                  ADD COLUMN IF NOT EXISTS swimming_strokes double precision""",
-          """        ADD COLUMN IF NOT EXISTS cycling_distance_mi double precision,
-                  ADD COLUMN IF NOT EXISTS flights_climbed double precision,
-                  ADD COLUMN IF NOT EXISTS swimming_strokes double precision,
-                  ADD COLUMN IF NOT EXISTS wrist_temperature double precision,
-                  ADD COLUMN IF NOT EXISTS cardio_recovery_bpm double precision""")
-          replace(path,
-          """        cycling_distance_mi, flights_climbed, swimming_strokes,
-                  partial_day, source, raw_payload, updated_at""",
-          """        cycling_distance_mi, flights_climbed, swimming_strokes,
-                  wrist_temperature, cardio_recovery_bpm,
-                  partial_day, source, raw_payload, updated_at""")
-          replace(path,
-          """        ${record.cyclingDistance}, ${record.flightsClimbed}, ${record.swimmingStrokes},
-                  ${record.partialDay}, 'Apple Shortcuts', ${JSON.stringify(payload)}, now()""",
-          """        ${record.cyclingDistance}, ${record.flightsClimbed}, ${record.swimmingStrokes},
-                  ${record.wristTemperature}, ${record.cardioRecovery},
-                  ${record.partialDay}, 'Apple Shortcuts', ${JSON.stringify(payload)}, now()""")
-          replace(path,
-          """        swimming_strokes = COALESCE(EXCLUDED.swimming_strokes, health_daily.swimming_strokes),
-                  partial_day = EXCLUDED.partial_day,""",
-          """        swimming_strokes = COALESCE(EXCLUDED.swimming_strokes, health_daily.swimming_strokes),
-                  wrist_temperature = COALESCE(EXCLUDED.wrist_temperature, health_daily.wrist_temperature),
-                  cardio_recovery_bpm = COALESCE(EXCLUDED.cardio_recovery_bpm, health_daily.cardio_recovery_bpm),
-                  partial_day = EXCLUDED.partial_day,""")
-          replace(path,
-          """        cycling_distance_mi, flights_climbed, swimming_strokes, partial_day""",
-          """        cycling_distance_mi, flights_climbed, swimming_strokes,
-                  wrist_temperature, cardio_recovery_bpm, partial_day""")
-          replace(path,
-          """    'wlkHRAvg', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
-              'flightsClimbed', 'swmStrokes', 'swimmingStrokes'""",
-          """    'wlkHRAvg', 'walkingHr', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
-              'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'wristTemp', 'wristTemperature',
-              'cardioRec', 'cardioRecovery'""")
-          replace(path,
-          """    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHeartRateAverage', 'walkingHeartRate'])),""",
-          """    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHr', 'walkingHeartRateAverage', 'walkingHeartRate'])),""")
-          replace(path,
-          """    swimmingStrokes: number(value(payload, ['swmStrokes', 'swimmingStrokes', 'swimStrokes'])),
-              partialDay:""",
-          """    swimmingStrokes: number(value(payload, ['swmStrokes', 'swimmingStrokes', 'swimStrokes'])),
-              wristTemperature: number(value(payload, ['wristTemp', 'wristTemperature'])),
-              cardioRecovery: number(value(payload, ['cardioRec', 'cardioRecovery', 'heartRateRecovery'])),
-              partialDay:""")
+          replace_once(path, 'const PARSER_VERSION = 11', 'const PARSER_VERSION = 12')
+          replace_once(path,
+              '        ADD COLUMN IF NOT EXISTS swimming_strokes double precision',
+              '        ADD COLUMN IF NOT EXISTS swimming_strokes double precision,\n'
+              '        ADD COLUMN IF NOT EXISTS wrist_temperature double precision,\n'
+              '        ADD COLUMN IF NOT EXISTS cardio_recovery_bpm double precision')
+          replace_once(path,
+              '        partial_day, source, raw_payload, updated_at',
+              '        wrist_temperature, cardio_recovery_bpm,\n'
+              '        partial_day, source, raw_payload, updated_at')
+          replace_once(path,
+              "        ${record.partialDay}, 'Apple Shortcuts', ${JSON.stringify(payload)}, now()",
+              '        ${record.wristTemperature}, ${record.cardioRecovery},\n'
+              "        ${record.partialDay}, 'Apple Shortcuts', ${JSON.stringify(payload)}, now()")
+          replace_once(path,
+              '        partial_day = EXCLUDED.partial_day,',
+              '        wrist_temperature = COALESCE(EXCLUDED.wrist_temperature, health_daily.wrist_temperature),\n'
+              '        cardio_recovery_bpm = COALESCE(EXCLUDED.cardio_recovery_bpm, health_daily.cardio_recovery_bpm),\n'
+              '        partial_day = EXCLUDED.partial_day,')
+          replace_once(path,
+              '        cycling_distance_mi, flights_climbed, swimming_strokes, partial_day',
+              '        cycling_distance_mi, flights_climbed, swimming_strokes,\n'
+              '        wrist_temperature, cardio_recovery_bpm, partial_day')
+          replace_once(path,
+              "    'flightsClimbed', 'swmStrokes', 'swimmingStrokes'",
+              "    'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'wristTemp', 'wristTemperature',\n"
+              "    'cardioRec', 'cardioRecovery', 'walkingHr'")
+          replace_once(path,
+              "    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHeartRateAverage', 'walkingHeartRate'])),",
+              "    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHr', 'walkingHeartRateAverage', 'walkingHeartRate'])),")
+          replace_once(path,
+              "    partialDay: booleanValue(value(payload, ['partialDay'])) ?? true,",
+              "    wristTemperature: number(value(payload, ['wristTemp', 'wristTemperature'])),\n"
+              "    cardioRecovery: number(value(payload, ['cardioRec', 'cardioRecovery', 'heartRateRecovery'])),\n"
+              "    partialDay: booleanValue(value(payload, ['partialDay'])) ?? true,")
 
           path = 'api/_lib/neon-dashboard.js'
-          replace(path,
-          """      swimmingStrokes: number(health?.swimming_strokes),
-                  standMinutes:""",
-          """      swimmingStrokes: number(health?.swimming_strokes),
-                  wristTemperature: number(health?.wrist_temperature),
-                  cardioRecovery: number(health?.cardio_recovery_bpm),
-                  standMinutes:""")
-          replace(path,
-          """    swimmingStrokes: number(todayHealth?.swimming_strokes),
-              standMinutes:""",
-          """    swimmingStrokes: number(todayHealth?.swimming_strokes),
-              wristTemperature: number(todayHealth?.wrist_temperature),
-              cardioRecovery: number(todayHealth?.cardio_recovery_bpm),
-              standMinutes:""")
+          replace_once(path,
+              '      standMinutes: number(health?.stand_minutes),',
+              '      wristTemperature: number(health?.wrist_temperature),\n'
+              '      cardioRecovery: number(health?.cardio_recovery_bpm),\n'
+              '      standMinutes: number(health?.stand_minutes),')
+          replace_once(path,
+              '    standMinutes: number(todayHealth?.stand_minutes),',
+              '    wristTemperature: number(todayHealth?.wrist_temperature),\n'
+              '    cardioRecovery: number(todayHealth?.cardio_recovery_bpm),\n'
+              '    standMinutes: number(todayHealth?.stand_minutes),')
 
           path = 'src/App.tsx'
-          replace(path,
-          """swimmingDistanceYards:N; swimmingStrokes:N; standMinutes:N;""",
-          """swimmingDistanceYards:N; swimmingStrokes:N; wristTemperature:N; cardioRecovery:N; standMinutes:N;""")
-          replace(path,
-          """<Section title="Vitals" detail="Resting cardiovascular, oxygen, and respiratory measures"/><section className="metric-grid"><Metric icon={<HeartPulse/>} label="Resting heart rate" value={s?.restingHeartRate} unit="bpm"/><Metric icon={<Activity/>} label="HRV" value={s?.hrv} unit="ms"/><Metric icon={<Activity/>} label="Respiratory rate" value={s?.respiratoryRate} unit="/min" decimals={1}/><Metric icon={<Activity/>} label="VO₂ max" value={s?.vo2Max} unit="mL/kg/min" decimals={1}/>{positive(s?.bloodOxygen)&&<Metric icon={<Activity/>} label="Blood oxygen" value={s?.bloodOxygen} unit="%" decimals={1}/>}{positive(s?.walkingHeartRateAverage)&&<Metric icon={<HeartPulse/>} label="Walking heart rate" value={s?.walkingHeartRateAverage} unit="bpm avg"/>}</section>""",
-          """<Section title="Vitals" detail="Cardiovascular, oxygen, temperature, and respiratory measures"/><section className="metric-grid"><Metric icon={<HeartPulse/>} label="Resting heart rate" value={s?.restingHeartRate} unit="bpm"/><Metric icon={<Activity/>} label="HRV" value={s?.hrv} unit="ms"/><Metric icon={<Activity/>} label="Respiratory rate" value={s?.respiratoryRate} unit="/min" decimals={1}/><Metric icon={<Activity/>} label="VO₂ max" value={s?.vo2Max} unit="mL/kg/min" decimals={1}/>{positive(s?.bloodOxygen)&&<Metric icon={<Activity/>} label="Blood oxygen" value={s?.bloodOxygen} unit="%" decimals={1}/>}{positive(s?.walkingHeartRateAverage)&&<Metric icon={<HeartPulse/>} label="Walking heart rate" value={s?.walkingHeartRateAverage} unit="bpm avg"/>}{positive(s?.cardioRecovery)&&<Metric icon={<HeartPulse/>} label="Cardio recovery" value={s?.cardioRecovery} unit="bpm" decimals={1}/>} {s?.wristTemperature!=null&&<Metric icon={<Activity/>} label="Wrist temperature" value={s?.wristTemperature} unit="°" decimals={1}/>}</section>""")
+          replace_once(path,
+              'swimmingDistanceYards:N; swimmingStrokes:N; standMinutes:N;',
+              'swimmingDistanceYards:N; swimmingStrokes:N; wristTemperature:N; cardioRecovery:N; standMinutes:N;')
+          replace_once(path,
+              'detail="Resting cardiovascular, oxygen, and respiratory measures"',
+              'detail="Cardiovascular, oxygen, temperature, and respiratory measures"')
+          existing = '{positive(s?.walkingHeartRateAverage)&&<Metric icon={<HeartPulse/>} label="Walking heart rate" value={s?.walkingHeartRateAverage} unit="bpm avg"/>}</section>'
+          expanded = '{positive(s?.walkingHeartRateAverage)&&<Metric icon={<HeartPulse/>} label="Walking heart rate" value={s?.walkingHeartRateAverage} unit="bpm avg"/>}{positive(s?.cardioRecovery)&&<Metric icon={<HeartPulse/>} label="Cardio recovery" value={s?.cardioRecovery} unit="bpm" decimals={1}/>} {s?.wristTemperature!=null&&<Metric icon={<Activity/>} label="Wrist temperature" value={s?.wristTemperature} unit="°" decimals={1}/>}</section>'
+          replace_once(path, existing, expanded)
 
           Path('.github/workflows/patch-expanded-health-metrics.yml').unlink()
           PY
