@@ -4,6 +4,7 @@ import { methodNotAllowed, sendJson } from './http.js'
 import { getNeonDashboard } from './neon-dashboard.js'
 import { appendUserContext, getUserContext, saveUserContext } from './user-context.js'
 import { saveUserGoals } from './goals.js'
+import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientSummaryText } from './nutrients.js'
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
 // Rolling alias for the current Gemini Flash model. Pinned versions like
@@ -34,7 +35,7 @@ export async function handleMealPlan(req, res) {
     }
 
     const userId = await ensureUserFromSession(session)
-    await ensureMealPlanTable()
+    await Promise.all([ensureMealPlanTable(), ensureNutrientSchema()])
     const state = await currentState(userId)
     const cache = await getCachedPlan(userId)
     const validCache = Boolean(cache?.plan && cache.food_fingerprint === state.foodFingerprint)
@@ -321,6 +322,7 @@ const CHAT_RESPONSE_SCHEMA = {
         properties: {
 description: { type: 'string' }, meal: { type: 'string' }, portion: { type: 'string' },
 calories: { type: 'number' }, protein: { type: 'number' }, carbs: { type: 'number' }, fat: { type: 'number' }, fiber: { type: 'number' },
+          nutrients: { type: 'object', properties: NUTRIENT_JSON_SCHEMA_PROPERTIES, additionalProperties: false },
         },
         required: ['description', 'calories'],
       },
@@ -456,6 +458,7 @@ function normalizeFoods(value) {
     carbs: nonNegative(item?.carbs),
     fat: nonNegative(item?.fat),
     fiber: nonNegative(item?.fiber),
+    nutrients: normalizeNutrients(item?.nutrients),
   })).filter((item) => item.description).slice(0, 12)
 }
 
@@ -468,14 +471,18 @@ async function logFoods(userId, foods) {
   const db = sql()
   const occurredAt = new Date().toISOString()
   for (const food of foods) {
+    const nutrients = normalizeNutrients(food.nutrients)
+    const core = nutrientColumns(nutrients)
     await db`
       INSERT INTO food_entries (
         user_id, occurred_at, meal, description, portion,
         calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
+        sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients,
         confidence, notes, source, updated_at
       ) VALUES (
         ${userId}, ${occurredAt}, ${food.meal}, ${food.description}, ${food.portion},
         ${food.calories}, ${food.protein}, ${food.carbs}, ${food.fat}, ${food.fiber},
+        ${core.sugarsG}, ${core.addedSugarsG}, ${core.sodiumMg}, ${core.caffeineMg}, ${JSON.stringify(nutrients)}::jsonb,
         'estimated', null, 'Fuel AI chat', now()
       )
     `
@@ -514,7 +521,10 @@ async function callGemini(model, requestBody, allowMapsFallback = false) {
 
 function buildPlanPrompt({ dashboard, context, budget, location, localTime, timeZone }) {
   const entries = dashboard?.today?.foodEntries || []
-  const foods = entries.map((entry) => `- ${entry.time || 'Today'} | ${entry.meal || 'Uncategorized'} | ${entry.food || 'Food'}: ${numberLabel(entry.calories)} kcal, ${numberLabel(entry.protein)} g protein, ${numberLabel(entry.carbs)} g carbs, ${numberLabel(entry.fat)} g fat, ${numberLabel(entry.fiber)} g fiber`).join('\n') || '- No foods are logged today.'
+  const foods = entries.map((entry) => {
+    const details = nutrientSummaryText(entry.nutrients)
+    return `- ${entry.time || 'Today'} | ${entry.meal || 'Uncategorized'} | ${entry.food || 'Food'}: ${numberLabel(entry.calories)} kcal, ${numberLabel(entry.protein)} g protein, ${numberLabel(entry.carbs)} g carbs, ${numberLabel(entry.fat)} g fat, ${numberLabel(entry.fiber)} g fiber${details ? `; ${details}` : ''}`
+  }).join('\n') || '- No foods are logged today.'
   const recipes = (dashboard?.recipes || []).slice(0, 30).map((recipe) => `- ${recipe.name}: ${numberLabel(recipe.nutrition?.calories)} kcal and ${numberLabel(recipe.nutrition?.protein)} g protein per ${recipe.serving || 'saved serving'}`).join('\n') || '- No saved recipes.'
   const schedule = scheduleGuidance(localTime, entries)
   const locationText = location ? `Latitude ${location.latitude.toFixed(5)}, longitude ${location.longitude.toFixed(5)}, accuracy about ${Math.round(location.accuracy || 0)} meters. Use location only for genuinely useful nearby options.` : 'Location was unavailable. Do not invent nearby businesses.'
@@ -553,7 +563,7 @@ RULES
 2. Plan only eating occasions still relevant at the current local time.
 3. Keep the proposed total close to the calculated remaining calorie target without encouraging unsafe restriction.
 4. Prioritize remaining protein and fiber while preserving useful carbohydrates for training and recovery.
-5. Include portions and estimated calories, protein, carbs, fat, and fiber.
+5. Include portions and estimated calories, protein, carbs, fat, fiber, sodium, caffeine, total and added sugars, plus other useful micronutrients when reasonably inferable. Omit uncertain nutrient values rather than inventing them.
 6. If very few calories remain, provide a hunger-guided light option and state that modestly exceeding the target is preferable to unsafe restriction.
 7. Return complete plain text, never JSON or code fences.
 
@@ -580,7 +590,7 @@ ${JSON.stringify(history, null, 2)}`
 }
 
 function buildChatContext(state) {
-  return `You are Fuel AI, the user's private nutrition, fitness, and recovery assistant. You can read ALL health data below, including energy, activity, sleep, vitals, workouts, swimming, cycling, stride length, cardio recovery, and trends. Never say a listed metric is unavailable.
+  return `You are Fuel AI, the user's private nutrition, fitness, and recovery assistant. You can read ALL health and nutrition data below, including detailed food nutrients, sodium, caffeine, sugars, energy, activity, sleep, vitals, workouts, swimming, cycling, stride length, cardio recovery, and trends. Never say a listed metric is unavailable.
 
 ${buildHealthSummary(state.dashboard)}
 
@@ -590,6 +600,8 @@ ${numberLabel(state.budget.caloriesRemaining)} kcal remaining from a calculated 
 FOOD LOGGING AND AUTOMATIC PLANNING
 - Populate foods only when the user asks to log food or sends a food photo.
 - Estimate a typical serving when details are vague.
+- For every logged food, estimate sodium, caffeine, total sugar, added sugar, fat composition, cholesterol, minerals, vitamins, omega fats, water, and alcohol when reasonably inferable. Leave unknown nutrients absent rather than guessing.
+- Briefly mention sodium, caffeine, and sugars in the confirmation when they are available.
 - After food is logged, Fuel automatically generates a fresh plan for the rest of the day. Keep the confirmation concise because the updated plan will be shown separately.
 
 CONTEXT AND GOALS

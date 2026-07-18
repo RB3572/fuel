@@ -3,8 +3,9 @@ import { automaticallySetGoals, getUserGoals, saveUserGoals } from './_lib/goals
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { bearerToken, oauthChallenge, verifyAccessToken } from './_lib/mcp-auth.js'
 import { appendUserContext, getUserContext, saveUserContext } from './_lib/user-context.js'
+import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientsFromRow } from './_lib/nutrients.js'
 
-const SERVER_VERSION = '1.2.0'
+const SERVER_VERSION = '1.3.0'
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -47,7 +48,7 @@ const tools = [
   {
     name: 'list_food_entries',
     title: 'List food entries',
-    description: 'List the signed-in user’s logged food and drink entries for a date range with nutrition estimates.',
+    description: 'List logged food and drink entries with macros, sodium, caffeine, sugars, and the complete standardized nutrient profile.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -64,7 +65,7 @@ const tools = [
   {
     name: 'log_food',
     title: 'Log food',
-    description: 'Add a food or drink entry to the signed-in user’s Fuel log. Read the user context first, use nutrition values supplied by the user, and clearly mark estimates with confidence and notes.',
+    description: 'Add a food or drink entry with macros and detailed nutrients. Read user context first, use supplied values when available, estimate only when appropriate, and omit unknown nutrient values.',
     inputSchema: {
       type: 'object',
       required: ['description', 'idempotency_key'],
@@ -79,6 +80,11 @@ const tools = [
         carbs_g: { type: 'number', minimum: 0 },
         fat_g: { type: 'number', minimum: 0 },
         fiber_g: { type: 'number', minimum: 0 },
+        sugars_g: { type: 'number', minimum: 0 },
+        added_sugars_g: { type: 'number', minimum: 0 },
+        sodium_mg: { type: 'number', minimum: 0 },
+        caffeine_mg: { type: 'number', minimum: 0 },
+        nutrients: { type: 'object', properties: NUTRIENT_JSON_SCHEMA_PROPERTIES, additionalProperties: false, description: 'Optional detailed nutrient values using the units encoded in each property name.' },
         confidence: { type: 'string', enum: ['exact', 'high', 'medium', 'low', 'estimated'] },
         notes: { type: 'string', maxLength: 1500 },
       },
@@ -297,6 +303,7 @@ async function callTool(req, params) {
 }
 
 async function executeTool(name, userId, args) {
+  if (['get_fuel_dashboard', 'list_food_entries', 'log_food', 'list_recipes', 'get_recipe'].includes(name)) await ensureNutrientSchema()
   if (name === 'get_fuel_dashboard') {
     const [dashboard, userContext] = await Promise.all([
       getNeonDashboard(userId),
@@ -339,7 +346,7 @@ async function executeTool(name, userId, args) {
     const db = sql()
     const entries = await db`
       SELECT id, occurred_at, meal, description, portion, calories_kcal, protein_g,
-        carbs_g, fat_g, fiber_g, confidence, notes, source
+        carbs_g, fat_g, fiber_g, sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients, confidence, notes, source
       FROM food_entries
       WHERE user_id = ${userId}
         AND occurred_at >= ${startDate}::date
@@ -347,7 +354,7 @@ async function executeTool(name, userId, args) {
       ORDER BY occurred_at DESC
       LIMIT ${limit}
     `
-    return { startDate, endDate, count: entries.length, entries }
+    return { startDate, endDate, count: entries.length, entries: entries.map(normalizeFoodRow) }
   }
 
   if (name === 'log_food') {
@@ -358,27 +365,37 @@ async function executeTool(name, userId, args) {
     const db = sql()
     const existing = await db`
       SELECT id, occurred_at, meal, description, portion, calories_kcal, protein_g,
-        carbs_g, fat_g, fiber_g, confidence, notes, source
+        carbs_g, fat_g, fiber_g, sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients, confidence, notes, source
       FROM food_entries WHERE user_id = ${userId} AND source = ${source} LIMIT 1
     `
-    if (existing.length) return { ok: true, duplicatePrevented: true, entry: existing[0] }
+    if (existing.length) return { ok: true, duplicatePrevented: true, entry: normalizeFoodRow(existing[0]) }
 
+    const nutrients = normalizeNutrients({
+      ...(args.nutrients && typeof args.nutrients === 'object' ? args.nutrients : {}),
+      sugars_g: args.sugars_g,
+      added_sugars_g: args.added_sugars_g,
+      sodium_mg: args.sodium_mg,
+      caffeine_mg: args.caffeine_mg,
+    })
+    const core = nutrientColumns(nutrients)
     const occurredAt = validTimestamp(args.occurred_at) || new Date()
     const rows = await db`
       INSERT INTO food_entries (
         user_id, occurred_at, meal, description, portion,
         calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
+        sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients,
         confidence, notes, source, updated_at
       ) VALUES (
         ${userId}, ${occurredAt.toISOString()}, ${text(args.meal, 100)}, ${description}, ${text(args.portion, 300)},
         ${nonnegative(args.calories_kcal)}, ${nonnegative(args.protein_g)}, ${nonnegative(args.carbs_g)},
-        ${nonnegative(args.fat_g)}, ${nonnegative(args.fiber_g)}, ${text(args.confidence, 30) || 'estimated'},
-        ${text(args.notes, 1500)}, ${source}, now()
+        ${nonnegative(args.fat_g)}, ${nonnegative(args.fiber_g)},
+        ${core.sugarsG}, ${core.addedSugarsG}, ${core.sodiumMg}, ${core.caffeineMg}, ${JSON.stringify(nutrients)}::jsonb,
+        ${text(args.confidence, 30) || 'estimated'}, ${text(args.notes, 1500)}, ${source}, now()
       )
       RETURNING id, occurred_at, meal, description, portion, calories_kcal, protein_g,
-        carbs_g, fat_g, fiber_g, confidence, notes, source
+        carbs_g, fat_g, fiber_g, sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients, confidence, notes, source
     `
-    return { ok: true, duplicatePrevented: false, entry: rows[0] }
+    return { ok: true, duplicatePrevented: false, entry: normalizeFoodRow(rows[0]) }
   }
 
   if (name === 'get_goals') return getUserGoals(userId)
@@ -421,7 +438,7 @@ async function executeTool(name, userId, args) {
     const limit = integer(args.limit, 1, 100) || 100
     const db = sql()
     const recipes = await db`
-      SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, notes, source, updated_at
+      SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, updated_at
       FROM recipes
       WHERE user_id = ${userId}
         AND (${query} = '' OR name ILIKE ${pattern} ESCAPE '\\' OR ingredients ILIKE ${pattern} ESCAPE '\\')
@@ -437,7 +454,7 @@ async function executeTool(name, userId, args) {
     if (!recipeId && !recipeName) throw new Error('Provide recipe_id or name.')
     const db = sql()
     const rows = await db`
-      SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, notes, source, updated_at
+      SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, updated_at
       FROM recipes
       WHERE user_id = ${userId}
         AND (id::text = ${recipeId} OR (${recipeName} <> '' AND lower(name) = lower(${recipeName})))
@@ -448,6 +465,10 @@ async function executeTool(name, userId, args) {
   }
 
   throw new Error(`Tool is not implemented: ${name}`)
+}
+
+function normalizeFoodRow(row) {
+  return { ...row, nutrients: nutrientsFromRow(row) }
 }
 
 function normalizeRecipe(row) {
@@ -463,6 +484,7 @@ function normalizeRecipe(row) {
       carbs: nullableNumber(row.carbs_g),
       fat: nullableNumber(row.fat_g),
       fiber: nullableNumber(row.fiber_g),
+      nutrients: nutrientsFromRow(row),
     },
     source: row.source || '',
     updatedAt: row.updated_at || null,
