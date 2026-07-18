@@ -37,7 +37,7 @@ export const NUTRIENT_DEFINITIONS = [
   { key: 'folateMcg', label: 'Folate (B9)', unit: 'mcg', aliases: ['folate', 'folicAcid', 'vitaminB9', 'folate_mcg'] },
   { key: 'vitaminB12Mcg', label: 'Vitamin B12', unit: 'mcg', aliases: ['vitaminB12', 'cobalamin', 'vitamin_b12_mcg'] },
   { key: 'cholineMg', label: 'Choline', unit: 'mg', aliases: ['choline', 'choline_mg'] },
-  { key: 'caffeineMg', label: 'Caffeine', unit: 'mg', aliases: ['caffeine', 'caffeine_mg'] },
+  { key: 'caffeineMg', label: 'Caffeine', unit: 'mg', aliases: ['caffeine', 'caffein', 'caffeine_mg'] },
   { key: 'waterMl', label: 'Water', unit: 'mL', aliases: ['water', 'waterMl', 'water_ml'] },
   { key: 'alcoholG', label: 'Alcohol', unit: 'g', aliases: ['alcohol', 'alcohol_g'] },
 ]

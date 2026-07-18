@@ -1,17 +1,19 @@
 import { sql } from './db.js'
 import { getUserGoals } from './goals.js'
+import { ensureNutrientSchema, nutrientsFromRow, sumNutrients } from './nutrients.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
 export async function getNeonDashboard(userId) {
   if (!userId) throw new Error('Authenticated user ID is required')
+  await ensureNutrientSchema()
   const db = sql()
   const today = dateKey(new Date())
   const [healthRows, foodRows, supplementRows, recipeRows, userGoals] = await Promise.all([
     db`SELECT * FROM health_daily WHERE user_id = ${userId} AND date >= (${today}::date - interval '30 days') ORDER BY date ASC`,
     db`SELECT * FROM food_entries WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
     db`SELECT * FROM supplements WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
-    db`SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, notes, source, updated_at FROM recipes WHERE user_id = ${userId} ORDER BY name ASC`,
+    db`SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, updated_at FROM recipes WHERE user_id = ${userId} ORDER BY name ASC`,
     getUserGoals(userId),
   ])
 
@@ -44,6 +46,11 @@ export async function getNeonDashboard(userId) {
       carbs: totals.carbs || null,
       fat: totals.fat || null,
       fiber: totals.fiber || null,
+      sugars: totals.nutrients.sugarsG ?? null,
+      addedSugars: totals.nutrients.addedSugarsG ?? null,
+      sodium: totals.nutrients.sodiumMg ?? null,
+      caffeine: totals.nutrients.caffeineMg ?? null,
+      nutrients: totals.nutrients,
       sleepHours: number(health?.sleep_hours),
       restingHeartRate: number(health?.resting_heart_rate_bpm),
       hrv: number(health?.hrv_ms),
@@ -79,6 +86,11 @@ export async function getNeonDashboard(userId) {
     carbs: nutrition.carbs || null,
     fat: nutrition.fat || null,
     fiber: nutrition.fiber || null,
+    sugars: nutrition.nutrients.sugarsG ?? null,
+    addedSugars: nutrition.nutrients.addedSugarsG ?? null,
+    sodium: nutrition.nutrients.sodiumMg ?? null,
+    caffeine: nutrition.nutrients.caffeineMg ?? null,
+    nutrients: nutrition.nutrients,
     fuelScore: null,
     sleepHours: number(todayHealth?.sleep_hours),
     sleepQuality: null,
@@ -176,6 +188,7 @@ function normalizeRecipe(row) {
       carbs: number(row.carbs_g),
       fat: number(row.fat_g),
       fiber: number(row.fiber_g),
+      nutrients: nutrientsFromRow(row),
     },
     source: row.source || '',
     updatedAt: row.updated_at || null,
@@ -223,7 +236,9 @@ function normalizeFood(row) {
     time: new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(row.occurred_at)),
     meal: row.meal || '', food: row.description || '', portion: row.portion || '',
     calories: number(row.calories_kcal), protein: number(row.protein_g), carbs: number(row.carbs_g),
-    fat: number(row.fat_g), fiber: number(row.fiber_g), confidence: row.confidence || '', notes: row.notes || '', source: row.source || '',
+    fat: number(row.fat_g), fiber: number(row.fiber_g), sugars: number(row.sugars_g), addedSugars: number(row.added_sugars_g),
+    sodium: number(row.sodium_mg), caffeine: number(row.caffeine_mg), nutrients: nutrientsFromRow(row),
+    confidence: row.confidence || '', notes: row.notes || '', source: row.source || '',
   }
 }
 function normalizeSupplement(row) {
@@ -233,13 +248,14 @@ function normalizeSupplement(row) {
   }
 }
 function sumFoods(rows) {
-  return rows.reduce((totals, row) => ({
-    calories: totals.calories + (number(row.calories_kcal) || 0),
-    protein: totals.protein + (number(row.protein_g) || 0),
-    carbs: totals.carbs + (number(row.carbs_g) || 0),
-    fat: totals.fat + (number(row.fat_g) || 0),
-    fiber: totals.fiber + (number(row.fiber_g) || 0),
+  const totals = rows.reduce((result, row) => ({
+    calories: result.calories + (number(row.calories_kcal) || 0),
+    protein: result.protein + (number(row.protein_g) || 0),
+    carbs: result.carbs + (number(row.carbs_g) || 0),
+    fat: result.fat + (number(row.fat_g) || 0),
+    fiber: result.fiber + (number(row.fiber_g) || 0),
   }), { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 })
+  return { ...totals, nutrients: sumNutrients(rows) }
 }
 function groupByDate(rows, field) {
   const map = new Map()
