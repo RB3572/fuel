@@ -2,7 +2,7 @@ import { sql, userForSyncToken } from '../_lib/db.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
-const PARSER_VERSION = 13
+const PARSER_VERSION = 14
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -137,10 +137,11 @@ export function parseTextPayload(text) {
     'vo2Max', 'sleep', 'sleepTotal', 'sleepHours', 'bloodOx', 'bloodOxygen', 'standMins', 'standMinutes',
     'wlkHRAvg', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
     'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'runningStrideLength', 'strideLength',
-    'cardioRec', 'cardioRecovery', 'walkingHr'
+    'cardioRec', 'cardioRecovery'
   ]
   for (const key of keys) {
-    const match = trimmed.match(new RegExp(`(?:^|[\\n,{])\\s*["']?${key}["']?\\s*[:=]\\s*["']?([^,"'\\n}]+)`, 'i'))
+    const pattern = String.raw`(?:^|[\n,{])\s*["']?${key}["']?\s*[:=]\s*["']?([^,"'\n}]+)`
+    const match = trimmed.match(new RegExp(pattern, 'i'))
     if (match) output[key] = match[1].trim()
   }
   return output
@@ -166,7 +167,7 @@ export function normalize(payload) {
     sleepHours: sleepDurationHours(value(payload, ['sleep', 'sleepTotal', 'sleepHours'])),
     bloodOxygen: normalizeBloodOxygen(number(value(payload, ['bloodOx', 'bloodOxygen', 'oxygenSaturation']))),
     standMinutes: number(value(payload, ['standMins', 'standMinutes'])),
-    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHr', 'walkingHeartRateAverage', 'walkingHeartRate'])),
+    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHeartRateAverage', 'walkingHeartRate'])),
     cyclingDistance: number(value(payload, ['BikeDist', 'bikeDistance', 'cyclingDistance'])),
     flightsClimbed: number(value(payload, ['flightsClimb', 'flightsClimbed'])),
     swimmingStrokes: number(value(payload, ['swmStrokes', 'swimmingStrokes', 'swimStrokes'])),
