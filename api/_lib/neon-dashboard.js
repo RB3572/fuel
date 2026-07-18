@@ -108,6 +108,14 @@ export async function getNeonDashboard(userId) {
   return {
     spreadsheet: { id: 'neon', name: 'Fuel Database', webViewLink: null, modifiedTime: todayHealth?.updated_at || null },
     generatedAt: new Date().toISOString(),
+    energyAverages: {
+      totalExpenditure: userGoals.averageExpenditure,
+      restingEnergy: userGoals.averageRestingEnergy,
+      activeEnergy: userGoals.averageActiveEnergy,
+      energyBalance: userGoals.averageEnergyBalance,
+      expenditureDays: userGoals.averageExpenditureDays,
+      balanceDays: userGoals.averageBalanceDays,
+    },
     today: {
       summary,
       foodEntries: todayFoods.map(normalizeFood),
@@ -117,6 +125,7 @@ export async function getNeonDashboard(userId) {
     recipes: recipeRows.map(normalizeRecipe),
     goals: {
       calories: range(userGoals.calories),
+      calorieBalancePercent: range(userGoals.calorieBalancePercent),
       protein: range(userGoals.protein),
       carbs: range(userGoals.carbs),
       fat: range(userGoals.fat),

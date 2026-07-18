@@ -4,7 +4,7 @@ import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { bearerToken, oauthChallenge, verifyAccessToken } from './_lib/mcp-auth.js'
 import { appendUserContext, getUserContext, saveUserContext } from './_lib/user-context.js'
 
-const SERVER_VERSION = '1.1.0'
+const SERVER_VERSION = '1.2.0'
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -30,7 +30,7 @@ const tools = [
   {
     name: 'get_health_data',
     title: 'Get health data',
-    description: 'Read Apple Health daily metrics stored in Fuel for a date range, including energy, exercise, steps, distances, sleep, heart rate, HRV, respiratory rate, blood oxygen, and fitness metrics.',
+    description: 'Read every Apple Health daily metric stored in Fuel for a date range, including the normalized columns and original Shortcut payload.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -91,7 +91,7 @@ const tools = [
   {
     name: 'get_goals',
     title: 'Get goals',
-    description: 'Read the signed-in user’s Fuel calorie, macro, activity, steps, and sleep goals.',
+    description: 'Read the signed-in user’s percentage-based calorie balance target, calculated daily calorie target, average daily burn, macros, activity, steps, and sleep goals.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     outputSchema: { type: 'object', additionalProperties: true },
     securitySchemes: READ_SECURITY,
@@ -104,7 +104,7 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        calories: { type: 'number', minimum: 1000, maximum: 6000 },
+        calorie_balance_percent: { type: 'number', minimum: -50, maximum: 50, description: 'Negative is a deficit, positive is a surplus, and zero is maintenance relative to average daily calories burned.' },
         protein: { type: 'number', minimum: 20, maximum: 400 },
         carbs: { type: 'number', minimum: 20, maximum: 1000 },
         fat: { type: 'number', minimum: 15, maximum: 300 },
@@ -321,7 +321,8 @@ async function executeTool(name, userId, args) {
         exercise_minutes, step_count, walking_running_distance_mi, swimming_distance_yd,
         resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
         blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
-        cycling_distance_mi, flights_climbed, swimming_strokes, partial_day, source, updated_at
+        cycling_distance_mi, flights_climbed, swimming_strokes, running_stride_length_m,
+        cardio_recovery_bpm, partial_day, source, raw_payload, updated_at
       FROM health_daily
       WHERE user_id = ${userId} AND date BETWEEN ${startDate}::date AND ${endDate}::date
       ORDER BY date DESC
@@ -384,6 +385,10 @@ async function executeTool(name, userId, args) {
 
   if (name === 'set_goals') {
     const input = { ...args }
+    if (input.calorie_balance_percent !== undefined) {
+      input.calorieBalancePercent = input.calorie_balance_percent
+      delete input.calorie_balance_percent
+    }
     if (input.sleep_hours !== undefined) {
       input.sleepHours = input.sleep_hours
       delete input.sleep_hours

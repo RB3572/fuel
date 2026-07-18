@@ -2,7 +2,8 @@ import { ensureUserFromSession, sql } from './db.js'
 import { appUrl, authenticatedSession } from './google.js'
 import { methodNotAllowed, sendJson } from './http.js'
 import { getNeonDashboard } from './neon-dashboard.js'
-import { getUserContext } from './user-context.js'
+import { appendUserContext, getUserContext, saveUserContext } from './user-context.js'
+import { saveUserGoals } from './goals.js'
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
 // Rolling alias for the current Gemini Flash model. Pinned versions like
@@ -57,28 +58,54 @@ export async function handleMealPlan(req, res) {
         sendJson(res, 409, { ...base, code: 'plan_stale', error: 'Food has changed since this plan was created. Fuel needs to refresh the plan first.' })
         return
       }
+      const location = validatedLocation(body)
+      const localTime = limitedText(body.localTime, 100) || new Date().toString()
+      const timeZone = limitedText(body.timeZone, 100) || TIME_ZONE
       const answer = await answerChat({ state, cache, message, image })
-      // Writing the diary changes the food fingerprint, so the cached plan is
-      // deliberately left on the OLD fingerprint: the next load sees it as stale
-      // and regenerates against the newly logged food.
       if (answer.foods.length) await logFoods(userId, answer.foods)
-      const nextState = answer.foods.length ? await currentState(userId) : state
+      let contextResult = null
+      if (answer.contextUpdate) {
+        contextResult = answer.contextUpdate.mode === 'replace'
+? await saveUserContext(userId, answer.contextUpdate.context)
+: await appendUserContext(userId, answer.contextUpdate.context)
+      }
+      let goalsResult = null
+      if (Object.keys(answer.goalUpdates).length) goalsResult = await saveUserGoals(userId, { goals: answer.goalUpdates })
+      const changed = Boolean(answer.foods.length || contextResult || goalsResult)
+      const nextState = changed ? await currentState(userId) : state
       const messages = appendMessages(cache.messages, [
         { role: 'user', text: message || 'Sent a photo to log.', at: new Date().toISOString() },
         { role: 'assistant', text: answer.text, at: new Date().toISOString() },
       ])
+      let updatedPlan = null
+      let sources = cache.sources
+      let model = answer.model
+      let plan = cache.plan
+      let foodFingerprint = state.foodFingerprint
+      if (changed) {
+        const generated = await generateMealPlan({ state: nextState, location, localTime, timeZone })
+        updatedPlan = generated.text
+        plan = generated.text
+        sources = generated.sources
+        model = generated.model
+        foodFingerprint = nextState.foodFingerprint
+      }
       const saved = await saveCachedPlan(userId, {
-        foodFingerprint: state.foodFingerprint,
-        plan: cache.plan,
+        foodFingerprint,
+        plan,
         messages,
-        sources: cache.sources,
-        model: answer.model,
-        generatedAt: cache.generated_at || new Date(),
+        sources,
+        model,
+        generatedAt: changed ? new Date() : cache.generated_at || new Date(),
       })
       sendJson(res, 200, {
         ...responseBase(nextState, saved),
         reply: answer.text,
         loggedFoods: answer.foods,
+        contextUpdated: Boolean(contextResult),
+        goalsUpdated: Boolean(goalsResult),
+        updatedPlan,
+        planUpdated: Boolean(updatedPlan),
       }, cookie ? [cookie] : [])
       return
     }
@@ -242,6 +269,8 @@ function mealBudget(dashboard) {
   return {
     date: summary.date || null,
     caloriesGoal,
+    calorieBalancePercent: target('calorieBalancePercent'),
+    averageExpenditure: finite(dashboard?.energyAverages?.totalExpenditure),
     caloriesConsumed,
     caloriesRemaining: Math.max(0, caloriesGoal - caloriesConsumed),
     proteinGoal: target('protein'),
@@ -290,16 +319,22 @@ const CHAT_RESPONSE_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          description: { type: 'string' },
-          meal: { type: 'string' },
-          portion: { type: 'string' },
-          calories: { type: 'number' },
-          protein: { type: 'number' },
-          carbs: { type: 'number' },
-          fat: { type: 'number' },
-          fiber: { type: 'number' },
+description: { type: 'string' }, meal: { type: 'string' }, portion: { type: 'string' },
+calories: { type: 'number' }, protein: { type: 'number' }, carbs: { type: 'number' }, fat: { type: 'number' }, fiber: { type: 'number' },
         },
         required: ['description', 'calories'],
+      },
+    },
+    contextUpdate: {
+      type: 'object',
+      properties: { context: { type: 'string' }, mode: { type: 'string', enum: ['append', 'replace'] } },
+      required: ['context'],
+    },
+    goalUpdates: {
+      type: 'object',
+      properties: {
+        calorieBalancePercent: { type: 'number' }, protein: { type: 'number' }, carbs: { type: 'number' }, fat: { type: 'number' }, fiber: { type: 'number' },
+        move: { type: 'number' }, exercise: { type: 'number' }, stand: { type: 'number' }, steps: { type: 'number' }, sleepHours: { type: 'number' },
       },
     },
   },
@@ -318,31 +353,95 @@ async function answerChat({ state, cache, message, image }) {
     ...prior.map((item) => ({ role: item.role === 'assistant' ? 'model' : 'user', parts: [{ text: item.text }] })),
     { role: 'user', parts },
   ]
-  const payload = await callGemini(model, {
+  const request = {
     contents,
-    generationConfig: {
-      temperature: 0.3,
-      topP: 0.9,
-      maxOutputTokens: 1400,
-      responseMimeType: 'application/json',
-      responseSchema: CHAT_RESPONSE_SCHEMA,
-    },
-  })
-  const raw = payload?.candidates?.[0]?.content?.parts?.map((part) => part?.text || '').join('').trim()
-  if (!raw) {
-    throw geminiError(
-      payload?.promptFeedback?.blockReason
-        ? `Gemini blocked the request: ${payload.promptFeedback.blockReason}.`
-        : 'Gemini returned an empty response.',
-      502,
-      'gemini_empty_response',
-    )
+    generationConfig: { temperature: 0.3, topP: 0.9, maxOutputTokens: 2800, responseMimeType: 'application/json', responseSchema: CHAT_RESPONSE_SCHEMA },
   }
-  let parsed
-  try { parsed = JSON.parse(raw) } catch { parsed = { reply: raw } }
-  const text = limitedText(parsed?.reply, 5000)
+  let payload = await callGemini(model, request)
+  let candidate = payload?.candidates?.[0]
+  let raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
+  let parsed = parseStructuredChatResponse(raw)
+  if (!parsed.valid || candidate?.finishReason === 'MAX_TOKENS') {
+    payload = await callGemini(model, {
+      ...request,
+      contents: [...contents, { role: 'model', parts: [{ text: raw || '{}' }] }, { role: 'user', parts: [{ text: 'The prior response was invalid or truncated. Return complete, compact JSON matching the schema. Keep reply under 900 words. Never wrap JSON in a code fence.' }] }],
+      generationConfig: { ...request.generationConfig, maxOutputTokens: 2400 },
+    })
+    candidate = payload?.candidates?.[0]
+    raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
+    parsed = parseStructuredChatResponse(raw)
+  }
+  const text = limitedText(cleanReplyText(parsed.reply), 12000)
   if (!text) throw geminiError('Gemini returned an empty response.', 502, 'gemini_empty_response')
-  return { text, foods: normalizeFoods(parsed?.foods), model }
+  return {
+    text,
+    foods: normalizeFoods(parsed.foods),
+    contextUpdate: normalizeContextUpdate(parsed.contextUpdate),
+    goalUpdates: normalizeGoalUpdates(parsed.goalUpdates),
+    model,
+  }
+}
+
+export function parseStructuredChatResponse(value) {
+  const raw = stripCodeFence(String(value || '').trim())
+  if (!raw) return { valid: false, reply: '', foods: [], contextUpdate: null, goalUpdates: {} }
+  try {
+    let parsed = JSON.parse(raw)
+    for (let index = 0; index < 2 && typeof parsed === 'string'; index += 1) parsed = JSON.parse(parsed)
+    if (parsed && typeof parsed === 'object') {
+      return { valid: typeof parsed.reply === 'string', reply: parsed.reply || '', foods: parsed.foods || [], contextUpdate: parsed.contextUpdate || null, goalUpdates: parsed.goalUpdates || {} }
+    }
+  } catch { /* extract a safe reply below */ }
+  return { valid: false, reply: extractJsonStringField(raw, 'reply') || raw.replace(/^\s*[\[{]+/, '').replace(/[\]}]+\s*$/, ''), foods: [], contextUpdate: null, goalUpdates: {} }
+}
+
+export function cleanReplyText(value) {
+  let text = stripCodeFence(String(value || '').trim())
+  for (let index = 0; index < 3; index += 1) {
+    try {
+      const parsed = JSON.parse(text)
+      if (typeof parsed === 'string') { text = parsed.trim(); continue }
+      if (parsed && typeof parsed.reply === 'string') { text = parsed.reply.trim(); continue }
+    } catch { break }
+    break
+  }
+  if (/^\s*\{/.test(text) && /["']reply["']\s*:/.test(text)) text = extractJsonStringField(text, 'reply') || text
+  return stripCodeFence(text).replace(/^\s*[\[{]+\s*/, '').replace(/\s*[\]}]+\s*$/, '').trim()
+}
+
+function extractJsonStringField(raw, field) {
+  const match = new RegExp(`"${field}"\\s*:\\s*"`).exec(raw)
+  if (!match) return ''
+  let output = ''
+  let escaped = false
+  for (let index = match.index + match[0].length; index < raw.length; index += 1) {
+    const character = raw[index]
+    if (escaped) {
+      const escapes = { n: '\n', r: '\r', t: '\t', '"': '"', '\\': '\\', '/': '/' }
+      if (character === 'u' && /^[0-9a-fA-F]{4}$/.test(raw.slice(index + 1, index + 5))) {
+        output += String.fromCharCode(parseInt(raw.slice(index + 1, index + 5), 16)); index += 4
+      } else output += escapes[character] ?? character
+      escaped = false
+    } else if (character === '\\') escaped = true
+    else if (character === '"') return output
+    else output += character
+  }
+  return output
+}
+function stripCodeFence(value) { return String(value || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim() }
+function normalizeContextUpdate(value) {
+  if (!value || typeof value !== 'object') return null
+  const context = limitedText(value.context, 20000)
+  return context ? { context, mode: value.mode === 'replace' ? 'replace' : 'append' } : null
+}
+function normalizeGoalUpdates(value) {
+  if (!value || typeof value !== 'object') return {}
+  const output = {}
+  for (const key of ['calorieBalancePercent','protein','carbs','fat','fiber','move','exercise','stand','steps','sleepHours']) {
+    const parsed = finite(value[key])
+    if (parsed != null) output[key] = parsed
+  }
+  return output
 }
 
 function normalizeFoods(value) {
@@ -414,17 +513,10 @@ async function callGemini(model, requestBody, allowMapsFallback = false) {
 
 function buildPlanPrompt({ dashboard, context, budget, location, localTime, timeZone }) {
   const entries = dashboard?.today?.foodEntries || []
-  const foods = entries.map((entry) =>
-    `- ${entry.time || 'Today'} | ${entry.meal || 'Uncategorized'} | ${entry.food || 'Food'}: ${numberLabel(entry.calories)} kcal, ${numberLabel(entry.protein)} g protein, ${numberLabel(entry.carbs)} g carbs, ${numberLabel(entry.fat)} g fat, ${numberLabel(entry.fiber)} g fiber`
-  ).join('\n') || '- No foods are logged today.'
-  const recipes = (dashboard?.recipes || []).slice(0, 30).map((recipe) =>
-    `- ${recipe.name}: ${numberLabel(recipe.nutrition?.calories)} kcal and ${numberLabel(recipe.nutrition?.protein)} g protein per ${recipe.serving || 'saved serving'}`
-  ).join('\n') || '- No saved recipes.'
+  const foods = entries.map((entry) => `- ${entry.time || 'Today'} | ${entry.meal || 'Uncategorized'} | ${entry.food || 'Food'}: ${numberLabel(entry.calories)} kcal, ${numberLabel(entry.protein)} g protein, ${numberLabel(entry.carbs)} g carbs, ${numberLabel(entry.fat)} g fat, ${numberLabel(entry.fiber)} g fiber`).join('\n') || '- No foods are logged today.'
+  const recipes = (dashboard?.recipes || []).slice(0, 30).map((recipe) => `- ${recipe.name}: ${numberLabel(recipe.nutrition?.calories)} kcal and ${numberLabel(recipe.nutrition?.protein)} g protein per ${recipe.serving || 'saved serving'}`).join('\n') || '- No saved recipes.'
   const schedule = scheduleGuidance(localTime, entries)
-  const locationText = location
-    ? `Latitude ${location.latitude.toFixed(5)}, longitude ${location.longitude.toFixed(5)}, accuracy about ${Math.round(location.accuracy || 0)} meters. Use location only for genuinely useful nearby options.`
-    : 'Location was unavailable. Do not invent nearby businesses.'
-
+  const locationText = location ? `Latitude ${location.latitude.toFixed(5)}, longitude ${location.longitude.toFixed(5)}, accuracy about ${Math.round(location.accuracy || 0)} meters. Use location only for genuinely useful nearby options.` : 'Location was unavailable. Do not invent nearby businesses.'
   return `You are Fuel's meal-planning assistant. Create a practical meal plan for the REST OF TODAY only.
 
 CURRENT CONTEXT
@@ -433,14 +525,18 @@ CURRENT CONTEXT
 - Location: ${locationText}
 - Schedule instruction: ${schedule}
 
-REMAINING NUTRITION
-- Calories: ${numberLabel(budget.caloriesRemaining)} kcal remaining of ${numberLabel(budget.caloriesGoal)}
-- Protein: ${numberLabel(budget.proteinRemaining)} g remaining
-- Carbohydrates: ${numberLabel(budget.carbsRemaining)} g remaining
-- Fat: ${numberLabel(budget.fatRemaining)} g remaining
-- Fiber: ${numberLabel(budget.fiberRemaining)} g remaining
-- Active energy so far: ${numberLabel(budget.activeEnergy)} kcal
-- Total expenditure so far: ${numberLabel(budget.totalExpenditure)} kcal
+CALCULATED DAILY TARGET
+- Average daily calories burned: ${numberLabel(budget.averageExpenditure)} kcal
+- Goal relative to average: ${numberLabel(budget.calorieBalancePercent)}%
+- Calculated calorie target: ${numberLabel(budget.caloriesGoal)} kcal
+- Calories remaining: ${numberLabel(budget.caloriesRemaining)} kcal
+- Protein remaining: ${numberLabel(budget.proteinRemaining)} g
+- Carbohydrates remaining: ${numberLabel(budget.carbsRemaining)} g
+- Fat remaining: ${numberLabel(budget.fatRemaining)} g
+- Fiber remaining: ${numberLabel(budget.fiberRemaining)} g
+
+COMPLETE HEALTH DATA
+${buildHealthSummary(dashboard)}
 
 SAVED USER CONTEXT
 ${limitedText(context, 12000) || 'No saved context.'}
@@ -452,78 +548,56 @@ SAVED FUEL RECIPES
 ${recipes}
 
 RULES
-1. Treat allergies and dietary restrictions as hard constraints. Never claim a restaurant is allergen-safe; say to verify ingredients and cross-contact.
-2. Plan only eating occasions that are still relevant at the current local time. Use the schedule instruction and logged meal categories. Do not recommend breakfast after breakfast time unless the user has specifically missed it and it remains practical.
-3. Keep the proposed total close to the remaining calorie budget, usually within 10%, without encouraging unsafe restriction or compensatory exercise.
+1. Treat allergies and dietary restrictions as hard constraints.
+2. Plan only eating occasions still relevant at the current local time.
+3. Keep the proposed total close to the calculated remaining calorie target without encouraging unsafe restriction.
 4. Prioritize remaining protein and fiber while preserving useful carbohydrates for training and recovery.
-5. Use vegetarian options. Include portions and estimated calories, protein, carbs, fat, and fiber.
-6. Use saved recipes when they fit. Include at most two location-aware alternatives.
-7. If very few calories remain, provide a hunger-guided light option and state that modestly exceeding the goal is preferable to unsafe restriction.
+5. Include portions and estimated calories, protein, carbs, fat, and fiber.
+6. If very few calories remain, provide a hunger-guided light option and state that modestly exceeding the target is preferable to unsafe restriction.
+7. Return complete plain text, never JSON or code fences.
 
-Use concise plain text with these exact headings:
-MEAL PLAN FOR THE REST OF TODAY
-BUDGET
-PLAN
-OPTIONAL LOCAL ALTERNATIVES
-ESTIMATED PLAN TOTAL
-WHY THIS FITS
-
-Under PLAN, number each remaining eating occasion and provide an appropriate local time.`
+Use concise plain text with these headings: MEAL PLAN FOR THE REST OF TODAY, TARGET, PLAN, ESTIMATED PLAN TOTAL, WHY THIS FITS.`
 }
 
 function buildHealthSummary(dashboard) {
-  const s = dashboard?.today?.summary || {}
-  const goal = (key) => finite(dashboard?.goals?.[key]?.target)
-  const metric = (label, value, unit = '', goalKey = null) => {
-    const g = goalKey ? goal(goalKey) : null
-    return `- ${label}: ${value == null || value === '' ? 'not logged' : `${numberLabel(value)}${unit}`}${g != null ? ` (goal ${numberLabel(g)}${unit})` : ''}`
-  }
-  const workouts = (dashboard?.today?.workouts || [])
-    .map((w) => `- ${w.activity || 'Activity'}${w.durationMinutes != null ? `, ${numberLabel(w.durationMinutes)} min` : ''}${w.activeCalories != null ? `, ${numberLabel(w.activeCalories)} kcal` : ''}${w.distanceMiles != null ? `, ${numberLabel(w.distanceMiles)} mi` : ''}${w.averageHeartRate != null ? `, avg HR ${numberLabel(w.averageHeartRate)}` : ''}`)
-    .join('\n') || '- No workouts logged today.'
-  const history = (dashboard?.trends || []).slice(-14).map((t) => {
-    const net = t.caloriesConsumed != null && t.totalExpenditure != null ? t.caloriesConsumed - t.totalExpenditure : null
-    return `${t.date}: intake ${numberLabel(t.caloriesConsumed)} kcal, burned ${numberLabel(t.totalExpenditure)} kcal, net ${net == null ? 'n/a' : `${net > 0 ? '+' : ''}${numberLabel(net)}`} kcal, protein ${numberLabel(t.protein)} g, steps ${numberLabel(t.stepCount)}, sleep ${numberLabel(t.sleepHours)} h, resting HR ${numberLabel(t.restingHeartRate)}`
-  }).join('\n') || 'No history yet.'
-  return `TODAY'S HEALTH (${s.date || 'today'}${s.partialDay ? ', day still in progress' : ''})
-Energy: ${metric('calories consumed', s.caloriesConsumed, ' kcal', 'calories').slice(2)}; resting ${numberLabel(s.restingEnergy)} kcal; active ${numberLabel(s.activeEnergy)} kcal; total burned ${numberLabel(s.totalExpenditure)} kcal; balance ${numberLabel(s.energyBalance)} kcal
-Macros: protein ${numberLabel(s.protein)} g, carbs ${numberLabel(s.carbs)} g, fat ${numberLabel(s.fat)} g, fiber ${numberLabel(s.fiber)} g
-${metric('Steps', s.stepCount, '', 'steps')}
-${metric('Exercise minutes', s.exerciseMinutes, ' min', 'exercise')}
-${metric('Stand minutes', s.standMinutes, ' min', 'stand')}
-${metric('Walking + running distance', s.distanceMiles, ' mi')}
-${metric('Flights climbed', s.flightsClimbed)}
-${metric('Sleep', s.sleepHours, ' h', 'sleepHours')}
-${metric('Resting heart rate', s.restingHeartRate, ' bpm')}
-${metric('Heart rate variability', s.hrv, ' ms')}
-${metric('Respiratory rate', s.respiratoryRate, ' /min')}
-${metric('Blood oxygen', s.bloodOxygen, ' %')}
-${metric('VO2 max', s.vo2Max, ' mL/kg/min')}
+  const summary = dashboard?.today?.summary || {}
+  const history = (dashboard?.trends || []).slice(-14)
+  return `TODAY'S COMPLETE HEALTH RECORD
+${JSON.stringify(summary, null, 2)}
+
+ENERGY AVERAGES
+${JSON.stringify(dashboard?.energyAverages || {}, null, 2)}
+
+CURRENT GOALS
+${JSON.stringify(Object.fromEntries(Object.entries(dashboard?.goals || {}).map(([key, value]) => [key, value?.target ?? null])), null, 2)}
 
 TODAY'S WORKOUTS
-${workouts}
+${JSON.stringify(dashboard?.today?.workouts || [], null, 2)}
 
 DAILY HISTORY (last 14 days)
-${history}`
+${JSON.stringify(history, null, 2)}`
 }
 
 function buildChatContext(state) {
-  return `You are Fuel AI, the user's private nutrition, fitness, and recovery assistant. Answer questions about their meal plan and ANY of the health data below — energy, macros, activity, sleep, vitals, workouts, and recent trends — concisely and accurately. If something is "not logged", say so rather than guessing. Preserve hard allergy and dietary constraints as absolute limits.
+  return `You are Fuel AI, the user's private nutrition, fitness, and recovery assistant. You can read ALL health data below, including energy, activity, sleep, vitals, workouts, swimming, cycling, stride length, cardio recovery, and trends. Never say a listed metric is unavailable.
 
 ${buildHealthSummary(state.dashboard)}
 
 REMAINING TODAY
-${numberLabel(state.budget.caloriesRemaining)} kcal, ${numberLabel(state.budget.proteinRemaining)} g protein, ${numberLabel(state.budget.carbsRemaining)} g carbs, ${numberLabel(state.budget.fatRemaining)} g fat, ${numberLabel(state.budget.fiberRemaining)} g fiber.
+${numberLabel(state.budget.caloriesRemaining)} kcal remaining from a calculated ${numberLabel(state.budget.caloriesGoal)} kcal target (${numberLabel(state.budget.calorieBalancePercent)}% relative to an average burn of ${numberLabel(state.budget.averageExpenditure)} kcal), ${numberLabel(state.budget.proteinRemaining)} g protein, ${numberLabel(state.budget.carbsRemaining)} g carbs, ${numberLabel(state.budget.fatRemaining)} g fat, ${numberLabel(state.budget.fiberRemaining)} g fiber.
 
-FOOD LOGGING
-You can write entries into the user's food diary by returning them in "foods".
-1. Populate "foods" ONLY when the user asks to log something, or sends a photo of food to log. Leave it empty for questions, substitutions, and plan edits.
-2. Every image the user sends is food. Identify each distinct item, infer the portion from the photo, and estimate calories, protein, carbs, fat, and fiber.
-3. When details are vague, estimate from a typical serving rather than refusing. Give your best numbers and say they are estimates.
-4. Set "meal" to the stated or most likely eating occasion: Breakfast, Lunch, Dinner, or Snack.
-5. Use one entry per distinct food, not one per plate.
+FOOD LOGGING AND AUTOMATIC PLANNING
+- Populate foods only when the user asks to log food or sends a food photo.
+- Estimate a typical serving when details are vague.
+- After food is logged, Fuel automatically generates a fresh plan for the rest of the day. Keep the confirmation concise because the updated plan will be shown separately.
 
-In "reply", answer conversationally in plain text. If you logged food, list each item with its calories and state what remains of today's budget.
+CONTEXT AND GOALS
+- You may read the saved context below.
+- When explicitly asked to remember or change a durable preference, return contextUpdate with append or replace.
+- When explicitly asked to change goals, return goalUpdates. calorieBalancePercent is negative for deficit, positive for surplus, and zero for maintenance. Never set a fixed calorie number.
+
+RESPONSE FORMAT
+Return valid compact JSON matching the schema. The reply field must contain clean, complete plain text. Never place JSON, braces, or a code fence inside reply.
 
 SAVED USER CONTEXT
 ${limitedText(state.context, 10000) || 'No saved context.'}`
@@ -580,7 +654,7 @@ function normalizeMessages(value) {
   if (!Array.isArray(value)) return []
   return value.map((item) => ({
     role: item?.role === 'assistant' ? 'assistant' : 'user',
-    text: limitedText(item?.text, 5000),
+    text: limitedText(item?.text, 12000),
     at: item?.at || null,
   })).filter((item) => item.text)
 }
