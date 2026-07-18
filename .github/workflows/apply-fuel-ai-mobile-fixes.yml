@@ -23,7 +23,20 @@ jobs:
           fetch-depth: 1
           show-progress: false
       - name: Apply fixes
-        run: python3 scripts/apply-fuel-ai-mobile-fixes.py
+        run: |
+          set +e
+          python3 scripts/apply-fuel-ai-mobile-fixes.py > patch-error.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add patch-error.log
+            git commit -m "Capture Fuel AI patch failure"
+            git push origin HEAD:feature/fuel-ai-mobile-resilience
+            cat patch-error.log
+            exit "$status"
+          fi
+          rm -f patch-error.log
       - uses: actions/setup-node@v4
         with:
           node-version: 24
