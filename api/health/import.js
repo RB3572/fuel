@@ -140,7 +140,8 @@ export function parseTextPayload(text) {
     'cardioRec', 'cardioRecovery'
   ]
   for (const key of keys) {
-    const match = trimmed.match(new RegExp(`(?:^|[\n,{])\s*["']?${key}["']?\s*[:=]\s*["']?([^,"'\n}]+)`, 'i'))
+    const pattern = String.raw`(?:^|[\n,{])\s*["']?${key}["']?\s*[:=]\s*["']?([^,"'\n}]+)`
+    const match = trimmed.match(new RegExp(pattern, 'i'))
     if (match) output[key] = match[1].trim()
   }
   return output
