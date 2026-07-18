@@ -34,6 +34,7 @@ jobs:
           run = next(i for i in range(start, len(lines)) if lines[i].strip() == 'run: |')
           end = next(i for i in range(run + 1, len(lines)) if lines[i].startswith('      - name: Install dependencies'))
           body = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[run + 1:end]) + '\n'
+          body = body.replace('re.subn(pattern, replacement, text, count=1, flags=re.S)', 're.subn(pattern, lambda _match: replacement, text, count=1, flags=re.S)')
           Path('/tmp/apply-energy-goals-ai.sh').write_text(body)
           PY
           bash /tmp/apply-energy-goals-ai.sh > /tmp/energy-goals-patch.log 2>&1
