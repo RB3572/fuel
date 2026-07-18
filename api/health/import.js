@@ -2,7 +2,7 @@ import { sql, userForSyncToken } from '../_lib/db.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
-const PARSER_VERSION = 12
+const PARSER_VERSION = 13
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -37,7 +37,7 @@ export default async function handler(req, res) {
         ADD COLUMN IF NOT EXISTS cycling_distance_mi double precision,
         ADD COLUMN IF NOT EXISTS flights_climbed double precision,
         ADD COLUMN IF NOT EXISTS swimming_strokes double precision,
-        ADD COLUMN IF NOT EXISTS wrist_temperature double precision,
+        ADD COLUMN IF NOT EXISTS running_stride_length_m double precision,
         ADD COLUMN IF NOT EXISTS cardio_recovery_bpm double precision
     `
 
@@ -48,7 +48,7 @@ export default async function handler(req, res) {
         resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
         blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
         cycling_distance_mi, flights_climbed, swimming_strokes,
-        wrist_temperature, cardio_recovery_bpm,
+        running_stride_length_m, cardio_recovery_bpm,
         partial_day, source, raw_payload, updated_at
       ) VALUES (
         ${user.id}, ${record.date}, ${record.activeEnergy}, ${record.restingEnergy}, ${record.totalExpenditure},
@@ -56,7 +56,7 @@ export default async function handler(req, res) {
         ${record.restingHeartRate}, ${record.hrv}, ${record.vo2Max}, ${record.sleepHours}, ${record.respiratoryRate},
         ${record.bloodOxygen}, ${record.standMinutes}, ${record.walkingHeartRateAverage},
         ${record.cyclingDistance}, ${record.flightsClimbed}, ${record.swimmingStrokes},
-        ${record.wristTemperature}, ${record.cardioRecovery},
+        ${record.runningStrideLength}, ${record.cardioRecovery},
         ${record.partialDay}, 'Apple Shortcuts', ${JSON.stringify(payload)}, now()
       )
       ON CONFLICT (user_id, date) DO UPDATE SET
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
         cycling_distance_mi = COALESCE(EXCLUDED.cycling_distance_mi, health_daily.cycling_distance_mi),
         flights_climbed = COALESCE(EXCLUDED.flights_climbed, health_daily.flights_climbed),
         swimming_strokes = COALESCE(EXCLUDED.swimming_strokes, health_daily.swimming_strokes),
-        wrist_temperature = COALESCE(EXCLUDED.wrist_temperature, health_daily.wrist_temperature),
+        running_stride_length_m = COALESCE(EXCLUDED.running_stride_length_m, health_daily.running_stride_length_m),
         cardio_recovery_bpm = COALESCE(EXCLUDED.cardio_recovery_bpm, health_daily.cardio_recovery_bpm),
         partial_day = EXCLUDED.partial_day,
         source = EXCLUDED.source,
@@ -89,7 +89,7 @@ export default async function handler(req, res) {
         resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
         blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
         cycling_distance_mi, flights_climbed, swimming_strokes,
-        wrist_temperature, cardio_recovery_bpm, partial_day
+        running_stride_length_m, cardio_recovery_bpm, partial_day
     `
 
     sendJson(res, 200, {
@@ -125,7 +125,7 @@ function normalizeObject(value) {
   return value
 }
 
-function parseTextPayload(text) {
+export function parseTextPayload(text) {
   const trimmed = String(text || '').trim()
   if (!trimmed) return {}
   try { return JSON.parse(trimmed) } catch { /* tolerant parsing below */ }
@@ -136,7 +136,7 @@ function parseTextPayload(text) {
     'restingHeartRate', 'heartRateVariability', 'HRV', 'hrv', 'respiratoryRate', 'respRate', 'cardioFitness',
     'vo2Max', 'sleep', 'sleepTotal', 'sleepHours', 'bloodOx', 'bloodOxygen', 'standMins', 'standMinutes',
     'wlkHRAvg', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
-    'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'wristTemp', 'wristTemperature',
+    'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'runningStrideLength', 'strideLength',
     'cardioRec', 'cardioRecovery', 'walkingHr'
   ]
   for (const key of keys) {
@@ -146,7 +146,7 @@ function parseTextPayload(text) {
   return output
 }
 
-function normalize(payload) {
+export function normalize(payload) {
   const activeEnergy = number(value(payload, ['activeEnergy', 'active calories']))
   const restingEnergy = number(value(payload, ['restingEnergy', 'resting energy', 'basalEnergy']))
   const explicitTotal = number(value(payload, ['totalExpenditure', 'total energy']))
@@ -170,7 +170,7 @@ function normalize(payload) {
     cyclingDistance: number(value(payload, ['BikeDist', 'bikeDistance', 'cyclingDistance'])),
     flightsClimbed: number(value(payload, ['flightsClimb', 'flightsClimbed'])),
     swimmingStrokes: number(value(payload, ['swmStrokes', 'swimmingStrokes', 'swimStrokes'])),
-    wristTemperature: number(value(payload, ['wristTemp', 'wristTemperature'])),
+    runningStrideLength: number(value(payload, ['runningStrideLength', 'strideLength', 'runningStride'])),
     cardioRecovery: number(value(payload, ['cardioRec', 'cardioRecovery', 'heartRateRecovery'])),
     partialDay: booleanValue(value(payload, ['partialDay'])) ?? true,
   }
@@ -178,8 +178,13 @@ function normalize(payload) {
 
 function value(object, aliases) {
   const wanted = new Set(aliases.map(normalizeKey))
-  for (const [key, current] of Object.entries(object || {})) if (wanted.has(normalizeKey(key))) return current
-  return null
+  let blankMatch = null
+  for (const [key, current] of Object.entries(object || {})) {
+    if (!wanted.has(normalizeKey(key))) continue
+    if (current != null && (typeof current !== 'string' || current.trim() !== '')) return current
+    if (blankMatch == null) blankMatch = current
+  }
+  return blankMatch
 }
 
 function number(input) {
@@ -232,9 +237,16 @@ function booleanValue(input) {
 
 function dateValue(input) {
   if (!input) return ''
-  const direct = String(input).match(/\b(20\d{2}-\d{2}-\d{2})\b/)
+  const text = String(input).replace(/[\u00A0\u202F]/g, ' ')
+  const direct = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/)
   if (direct) return direct[1]
-  const parsed = new Date(String(input))
+  const appleDate = text.match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),\s*(20\d{2})\b/i)
+  if (appleDate) {
+    const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }
+    const month = months[appleDate[1].slice(0, 3).toLowerCase()]
+    return `${appleDate[3]}-${String(month).padStart(2, '0')}-${String(Number(appleDate[2])).padStart(2, '0')}`
+  }
+  const parsed = new Date(text)
   return Number.isNaN(parsed.getTime()) ? '' : new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(parsed)
 }
 
