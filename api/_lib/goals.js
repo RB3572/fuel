@@ -57,7 +57,7 @@ export async function saveUserGoals(userId, input) {
   const heightIn = finite(profileInput.heightIn)
   const weightLb = finite(profileInput.weightLb)
   const age = integer(profileInput.age)
-  const objective = normalizeObjective(profileInput.objective || current.profile?.objective || objectiveFromPercent(goals.calorieBalancePercent))
+  const objective = normalizeObjective(profileInput.objective || objectiveFromPercent(goals.calorieBalancePercent))
   const heightCm = heightIn == null ? current.profile?.heightIn == null ? null : current.profile.heightIn * 2.54 : heightIn * 2.54
   const weightKg = weightLb == null ? current.profile?.weightLb == null ? null : current.profile.weightLb / 2.2046226218 : weightLb / 2.2046226218
   const calories = calculateCalorieTarget(current.averageExpenditure, goals.calorieBalancePercent)

@@ -371,6 +371,7 @@ async function answerChat({ state, cache, message, image }) {
     raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
     parsed = parseStructuredChatResponse(raw)
   }
+  if (!parsed.valid) throw geminiError('Fuel AI could not produce a complete response. Please try that message again.', 502, 'gemini_incomplete_response')
   const text = limitedText(cleanReplyText(parsed.reply), 12000)
   if (!text) throw geminiError('Gemini returned an empty response.', 502, 'gemini_empty_response')
   return {
