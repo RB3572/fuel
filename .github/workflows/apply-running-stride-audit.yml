@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feature/running-stride-health-audit
+  pull_request:
+    branches:
+      - master
 
 permissions:
   contents: write
