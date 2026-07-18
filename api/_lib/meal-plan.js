@@ -16,6 +16,9 @@ const MAX_MESSAGES = 18
 const CHAT_RETENTION_MS = 2 * 24 * 60 * 60 * 1000 // Keep chat history for two days.
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
+const GEMINI_PLAN_TIMEOUT_MS = 18000
+const GEMINI_RETRY_TIMEOUT_MS = 12000
+const GEMINI_CHAT_TIMEOUT_MS = 25000
 
 export async function handleMealPlan(req, res) {
   if (!['GET', 'POST'].includes(req.method)) {
@@ -293,59 +296,67 @@ function mealBudget(dashboard) {
 
 const PLAN_RESPONSE_SCHEMA = {
   type: 'object',
-  properties: { plan: { type: 'string' } },
-  required: ['plan'],
+  properties: {
+    target: { type: 'string' },
+    plan: { type: 'string' },
+    estimatedPlanTotal: { type: 'string' },
+    whyThisFits: { type: 'string' },
+  },
+  required: ['target', 'plan', 'estimatedPlanTotal', 'whyThisFits'],
 }
 
 async function generateMealPlan({ state, location, localTime, timeZone }) {
   const model = process.env.GEMINI_MEAL_PLAN_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL
   const prompt = buildPlanPrompt({ ...state, location, localTime, timeZone })
-  const buildRequest = (instruction = '') => {
-    const requestBody = {
-      contents: [{ role: 'user', parts: [{ text: `${prompt}${instruction}` }] }],
-      generationConfig: {
-        temperature: 0.3,
-        topP: 0.9,
-        maxOutputTokens: 3200,
-        responseMimeType: 'application/json',
-        responseSchema: PLAN_RESPONSE_SCHEMA,
-      },
-    }
-    if (location) {
-      requestBody.tools = [{ googleMaps: {} }]
-      requestBody.toolConfig = { retrievalConfig: { latLng: { latitude: location.latitude, longitude: location.longitude } } }
-    }
-    return requestBody
-  }
+  const buildRequest = (instruction = '') => ({
+    contents: [{ role: 'user', parts: [{ text: `${prompt}${instruction}` }] }],
+    generationConfig: {
+      temperature: 0.25,
+      topP: 0.9,
+      maxOutputTokens: 1800,
+      responseMimeType: 'application/json',
+      responseSchema: PLAN_RESPONSE_SCHEMA,
+    },
+  })
 
-  let payload = await callGemini(model, buildRequest(), Boolean(location))
+  let payload = await callGemini(model, buildRequest(), false, GEMINI_PLAN_TIMEOUT_MS)
   let parsed = parsePlanPayload(payload)
-  if (parsed.candidate?.finishReason === 'MAX_TOKENS' || !planLooksComplete(parsed.text)) {
-    payload = await callGemini(model, buildRequest('\n\nRETRY REQUIREMENTS: Return one complete plan under 1,200 words. Start with MEAL PLAN FOR THE REST OF TODAY, include every requested heading exactly once, and finish the WHY THIS FITS section with a complete sentence. Do not continue a prior fragment.'), Boolean(location))
+  if (parsed.candidate?.finishReason === 'MAX_TOKENS' || !parsed.valid) {
+    payload = await callGemini(model, buildRequest('\n\nRETRY REQUIREMENTS: Keep the complete response concise. Each required field must be present and end with a complete sentence. The plan field should contain short meal lines with portions and estimates, not a long essay.'), false, GEMINI_RETRY_TIMEOUT_MS)
     parsed = parsePlanPayload(payload)
   }
-  if (!planLooksComplete(parsed.text)) {
+  if (!parsed.valid) {
     throw geminiError('Fuel AI could not produce a complete meal plan. Please try again.', 502, 'gemini_incomplete_plan')
   }
-  return { text: parsed.text, sources: groundingSources(parsed.candidate), model }
+  const text = formatPlanPayload(parsed)
+  return { text, sources: [], model }
 }
 
 function parsePlanPayload(payload) {
   const candidate = payload?.candidates?.[0]
   const raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
-  if (!raw) return { text: '', candidate }
+  if (!raw) return { valid: false, target: '', plan: '', estimatedPlanTotal: '', whyThisFits: '', candidate }
   try {
-    const parsed = JSON.parse(raw)
-    const text = typeof parsed === 'string' ? parsed : parsed?.plan
-    return { text: cleanReplyText(text || ''), candidate }
+    const value = JSON.parse(raw)
+    const target = cleanReplyText(value?.target || '')
+    const plan = cleanReplyText(value?.plan || '')
+    const estimatedPlanTotal = cleanReplyText(value?.estimatedPlanTotal || '')
+    const whyThisFits = cleanReplyText(value?.whyThisFits || '')
+    const valid = [target, plan, estimatedPlanTotal, whyThisFits].every((field) => field.length >= 8)
+    return { valid, target, plan, estimatedPlanTotal, whyThisFits, candidate }
   } catch {
-    return { text: cleanReplyText(raw), candidate }
+    return { valid: false, target: '', plan: '', estimatedPlanTotal: '', whyThisFits: '', candidate }
   }
+}
+
+function formatPlanPayload(value) {
+  const whyThisFits = /[.!?)]$/.test(value.whyThisFits) ? value.whyThisFits : `${value.whyThisFits}.`
+  return `MEAL PLAN FOR THE REST OF TODAY\n\nTARGET\n${value.target}\n\nPLAN\n${value.plan}\n\nESTIMATED PLAN TOTAL\n${value.estimatedPlanTotal}\n\nWHY THIS FITS\n${whyThisFits}`.trim()
 }
 
 export function planLooksComplete(value) {
   const text = cleanReplyText(value)
-  if (text.length < 180) return false
+  if (text.length < 100) return false
   const required = ['MEAL PLAN FOR THE REST OF TODAY', 'TARGET', 'PLAN', 'ESTIMATED PLAN TOTAL', 'WHY THIS FITS']
   if (!required.every((heading) => text.toUpperCase().includes(heading))) return false
   if (!/[.!?)]$/.test(text)) return false
@@ -404,7 +415,7 @@ async function answerChat({ state, cache, message, image }) {
     contents,
     generationConfig: { temperature: 0.3, topP: 0.9, maxOutputTokens: 2800, responseMimeType: 'application/json', responseSchema: CHAT_RESPONSE_SCHEMA },
   }
-  let payload = await callGemini(model, request)
+  let payload = await callGemini(model, request, false, GEMINI_CHAT_TIMEOUT_MS)
   let candidate = payload?.candidates?.[0]
   let raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
   let parsed = parseStructuredChatResponse(raw)
@@ -413,7 +424,7 @@ async function answerChat({ state, cache, message, image }) {
       ...request,
       contents: [...contents, { role: 'model', parts: [{ text: raw || '{}' }] }, { role: 'user', parts: [{ text: 'The prior response was invalid or truncated. Return complete, compact JSON matching the schema. Keep reply under 900 words. Never wrap JSON in a code fence.' }] }],
       generationConfig: { ...request.generationConfig, maxOutputTokens: 2400 },
-    })
+    }, false, GEMINI_RETRY_TIMEOUT_MS)
     candidate = payload?.candidates?.[0]
     raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
     parsed = parseStructuredChatResponse(raw)
@@ -534,7 +545,7 @@ async function logFoods(userId, foods) {
   }
 }
 
-async function callGemini(model, requestBody, allowMapsFallback = false) {
+async function callGemini(model, requestBody, allowMapsFallback = false, timeoutMs = GEMINI_CHAT_TIMEOUT_MS) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''
   if (!apiKey) {
     throw geminiError('Fuel AI is not configured. Set GEMINI_API_KEY in the deployment environment.', 503, 'gemini_not_configured')
@@ -542,11 +553,20 @@ async function callGemini(model, requestBody, allowMapsFallback = false) {
   const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 
   const invoke = async (body) => {
-    const response = await fetch(`${GEMINI_ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST', headers, body: JSON.stringify(body),
-    })
-    const payload = await response.json().catch(() => ({}))
-    return { response, payload }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const response = await fetch(`${GEMINI_ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
+      })
+      const payload = await response.json().catch(() => ({}))
+      return { response, payload }
+    } catch (error) {
+      if (error?.name === 'AbortError') throw geminiError('Fuel AI took too long to respond. Please try again.', 504, 'gemini_timeout')
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   let result = await invoke(requestBody)
@@ -577,7 +597,7 @@ function buildPlanPrompt({ dashboard, context, budget, location, localTime, time
   }).join('\n') || '- No foods are logged today.'
   const recipes = (dashboard?.recipes || []).slice(0, 30).map((recipe) => `- ${recipe.name}: ${numberLabel(recipe.nutrition?.calories)} kcal and ${numberLabel(recipe.nutrition?.protein)} g protein per ${recipe.serving || 'saved serving'}`).join('\n') || '- No saved recipes.'
   const schedule = scheduleGuidance(localTime, entries)
-  const locationText = location ? `Latitude ${location.latitude.toFixed(5)}, longitude ${location.longitude.toFixed(5)}, accuracy about ${Math.round(location.accuracy || 0)} meters. Use location only for genuinely useful nearby options.` : 'Location was unavailable. Do not invent nearby businesses.'
+  const locationText = location ? `Local coordinates are available for time-zone and general context only. Do not name or invent nearby businesses.` : 'Location was unavailable. Do not invent nearby businesses.'
   return `You are Fuel's meal-planning assistant. Create a practical meal plan for the REST OF TODAY only.
 
 CURRENT CONTEXT
@@ -615,9 +635,13 @@ RULES
 4. Prioritize remaining protein and fiber while preserving useful carbohydrates for training and recovery.
 5. Include portions and estimated calories, protein, carbs, fat, fiber, sodium, caffeine, total and added sugars, plus other useful micronutrients when reasonably inferable. Omit uncertain nutrient values rather than inventing them.
 6. If very few calories remain, provide a hunger-guided light option and state that modestly exceeding the target is preferable to unsafe restriction.
-7. Return complete plain text, never JSON or code fences.
+7. Return compact JSON matching the response schema. Put clean plain text inside each field, without code fences or duplicate section headings.
 
-Use concise plain text with these headings: MEAL PLAN FOR THE REST OF TODAY, TARGET, PLAN, ESTIMATED PLAN TOTAL, WHY THIS FITS.`
+FIELD REQUIREMENTS
+- target: Briefly state the remaining calorie and macro targets.
+- plan: List only the remaining eating occasions, with portions and nutrition estimates.
+- estimatedPlanTotal: Summarize the proposed plan's calories and macros.
+- whyThisFits: Explain briefly why the plan fits the user's remaining needs and restrictions.`
 }
 
 function buildHealthSummary(dashboard) {

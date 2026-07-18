@@ -473,3 +473,5 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
   .status-spinner, .typing-dots i { animation: none; }
   .chat-thread { scroll-behavior: auto; }
 }
+
+.status-retry{border:0;border-radius:11px;background:var(--black);color:var(--white);padding:10px 15px;font-weight:750;cursor:pointer}.status-card.error{flex-wrap:wrap}.status-card.error p{flex-basis:100%;text-align:center}

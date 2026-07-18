@@ -19,6 +19,8 @@ const els={
 // serverless body limit and slow Gemini down for no accuracy gain.
 const MAX_IMAGE_DIMENSION=1280
 const JPEG_QUALITY=.82
+const PLAN_REQUEST_TIMEOUT_MS=35000
+const CHAT_REQUEST_TIMEOUT_MS=42000
 
 function loadImage(dataUrl){
   return new Promise((resolve,reject)=>{
@@ -70,11 +72,13 @@ function setStatus(message,{error=false,loading=false}={}){
 }
 
 function hideStatus(){els.status.hidden=true}
+function showGenerationError(message){setStatus(message,{error:true});const retry=document.createElement('button');retry.type='button';retry.className='status-retry';retry.textContent='Try again';retry.addEventListener('click',()=>void generatePlan(),{once:true});els.status.append(retry)}
+async function timedFetch(url,options={},timeoutMs=PLAN_REQUEST_TIMEOUT_MS){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{return await fetch(url,{...options,signal:controller.signal})}catch(error){if(error?.name==='AbortError')throw new Error('Fuel AI took too long to respond. Try again.');throw error}finally{clearTimeout(timer)}}
 
 async function loadPlanner(){
   setStatus('Checking today’s Fuel data…',{loading:true})
   try{
-    const response=await fetch('/api/meal-plan',{cache:'no-store',headers:{Accept:'application/json'}})
+    const response=await timedFetch('/api/meal-plan',{cache:'no-store',headers:{Accept:'application/json'}},15000)
     const payload=await response.json()
     if(response.status===401){
       location.replace(payload.signInUrl||'/api/auth/google/start?return_to=%2Fmeal-plan.html')
@@ -116,29 +120,18 @@ async function generatePlan(){
   if(state.busy)return
   state.busy=true
   setComposerBusy(true)
-  els.chat.hidden=true
-  setStatus('Requesting your current location…',{loading:true})
-  let locationData={}
+  state.location=null
+  setStatus('Building a plan from today’s Fuel data…',{loading:true})
   try{
-    try{
-      state.location=await getLocation()
-      locationData=state.location
-      setStatus('Building a plan from today’s Fuel data and current location…',{loading:true})
-    }catch(error){
-      state.location=null
-      setStatus(error instanceof Error?error.message:'Location was unavailable. Generating without it.',{loading:true})
-    }
-
-    const response=await fetch('/api/meal-plan',{
+    const response=await timedFetch('/api/meal-plan',{
       method:'POST',
       headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({
         action:'plan',
-        ...locationData,
         localTime:new Date().toString(),
         timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',
       }),
-    })
+    },PLAN_REQUEST_TIMEOUT_MS)
     const payload=await response.json()
     if(payload.code==='gemini_scope_missing'&&payload.reauthorizeUrl){
       if(sessionStorage.getItem('fuelGeminiReauthAttempted')==='1')throw new Error('Fuel could not add Gemini access to the current Google session. Sign out of Fuel once, then sign back in.')
@@ -152,7 +145,7 @@ async function generatePlan(){
     renderConversation(payload)
     hideStatus()
   }catch(error){
-    setStatus(error instanceof Error?error.message:'Unable to generate a meal plan.',{error:true})
+    showGenerationError(error instanceof Error?error.message:'Unable to generate a meal plan.')
   }finally{
     state.busy=false
     setComposerBusy(false)
@@ -213,7 +206,7 @@ async function sendMessage(message,{retried=false,image=null}={}){
   appendTypingBubble()
   els.thread.scrollTop=els.thread.scrollHeight
   try{
-    const response=await fetch('/api/meal-plan',{
+    const response=await timedFetch('/api/meal-plan',{
       method:'POST',
       headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({
@@ -224,7 +217,7 @@ async function sendMessage(message,{retried=false,image=null}={}){
         localTime:new Date().toString(),
         timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',
       }),
-    })
+    },CHAT_REQUEST_TIMEOUT_MS)
     const payload=await response.json()
     removeTypingBubble()
     if(response.status===409&&payload.code==='plan_stale'&&!retried){

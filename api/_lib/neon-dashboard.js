@@ -233,6 +233,7 @@ function healthWorkouts(health) {
 
 function normalizeFood(row) {
   return {
+    id: String(row.id),
     time: new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(row.occurred_at)),
     meal: row.meal || '', food: row.description || '', portion: row.portion || '',
     calories: number(row.calories_kcal), protein: number(row.protein_g), carbs: number(row.carbs_g),
