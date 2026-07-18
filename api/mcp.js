@@ -5,7 +5,7 @@ import { bearerToken, oauthChallenge, verifyAccessToken } from './_lib/mcp-auth.
 import { appendUserContext, getUserContext, saveUserContext } from './_lib/user-context.js'
 import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientsFromRow } from './_lib/nutrients.js'
 
-const SERVER_VERSION = '1.3.0'
+const SERVER_VERSION = '1.4.0'
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -93,6 +93,23 @@ const tools = [
     outputSchema: { type: 'object', additionalProperties: true },
     securitySchemes: WRITE_SECURITY,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'delete_food_entry',
+    title: 'Delete food entry',
+    description: 'Permanently delete one food or drink entry belonging to the signed-in user. Call list_food_entries first to obtain the exact entry_id, and only call this tool after the user explicitly confirms the deletion.',
+    inputSchema: {
+      type: 'object',
+      required: ['entry_id', 'confirm'],
+      properties: {
+        entry_id: { type: 'string', minLength: 1, maxLength: 100, description: 'Exact food entry ID returned by list_food_entries.' },
+        confirm: { type: 'boolean', enum: [true], description: 'Must be true to confirm permanent deletion.' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: WRITE_SECURITY,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'get_goals',
@@ -268,7 +285,7 @@ async function handleMessage(req, message) {
       protocolVersion: String(message.params?.protocolVersion || DEFAULT_PROTOCOL_VERSION),
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'Fuel', title: 'Fuel Health and Nutrition', version: SERVER_VERSION },
-      instructions: 'Fuel is a private per-user health and nutrition dashboard. Read get_user_context before interpreting health data, recommending food, or estimating food entries. Read current Fuel data before interpreting progress. Use user-supplied nutrition when available and clearly mark estimates. Never expose another user’s data. Context, goal, and food updates require the write scope.',
+      instructions: 'Fuel is a private per-user health and nutrition dashboard. Read get_user_context before interpreting health data, recommending food, or estimating food entries. Read current Fuel data before interpreting progress. Use user-supplied nutrition when available and clearly mark estimates. Never expose another user’s data. Context, goal, and food updates require the write scope. Before deleting food, list entries to obtain the exact entry ID and require explicit user confirmation.',
     })
   }
   if (message.method === 'ping') return rpcResult(id, {})
@@ -303,7 +320,7 @@ async function callTool(req, params) {
 }
 
 async function executeTool(name, userId, args) {
-  if (['get_fuel_dashboard', 'list_food_entries', 'log_food', 'list_recipes', 'get_recipe'].includes(name)) await ensureNutrientSchema()
+  if (['get_fuel_dashboard', 'list_food_entries', 'log_food', 'delete_food_entry', 'list_recipes', 'get_recipe'].includes(name)) await ensureNutrientSchema()
   if (name === 'get_fuel_dashboard') {
     const [dashboard, userContext] = await Promise.all([
       getNeonDashboard(userId),
@@ -396,6 +413,21 @@ async function executeTool(name, userId, args) {
         carbs_g, fat_g, fiber_g, sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients, confidence, notes, source
     `
     return { ok: true, duplicatePrevented: false, entry: normalizeFoodRow(rows[0]) }
+  }
+
+  if (name === 'delete_food_entry') {
+    const entryId = text(args.entry_id, 100)
+    if (!entryId) throw new Error('entry_id is required. Call list_food_entries to obtain the exact ID.')
+    if (args.confirm !== true) throw new Error('confirm must be true before a food entry can be permanently deleted.')
+    const db = sql()
+    const rows = await db`
+      DELETE FROM food_entries
+      WHERE user_id = ${userId} AND id::text = ${entryId}
+      RETURNING id, occurred_at, meal, description, portion, calories_kcal, protein_g,
+        carbs_g, fat_g, fiber_g, sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients, confidence, notes, source
+    `
+    if (!rows.length) return { ok: true, deleted: false, entryId }
+    return { ok: true, deleted: true, entry: normalizeFoodRow(rows[0]) }
   }
 
   if (name === 'get_goals') return getUserGoals(userId)
@@ -514,6 +546,7 @@ function toolError(message) {
 
 function summarize(name, data) {
   if (name === 'log_food') return data.duplicatePrevented ? 'This food entry was already logged, so no duplicate was created.' : 'Food was logged in Fuel.'
+  if (name === 'delete_food_entry') return data.deleted ? `Deleted ${data.entry?.description || 'the food entry'} from Fuel.` : 'No matching food entry was found, so nothing was deleted.'
   if (name === 'set_goals' || name === 'automatically_set_goals') return 'Fuel goals were updated.'
   if (name === 'update_user_context') return 'Fuel preferences and context were updated.'
   if (name === 'get_user_context') return data.context ? 'Fuel preferences and context were retrieved.' : 'No Fuel preferences or context are saved yet.'
