@@ -4,42 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f7f7f5">
-  <title>AI meal plan · Fuel</title>
+  <title>Fuel AI</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
-  <link rel="stylesheet" href="/meal-plan.css?v=20260717-6">
+  <link rel="stylesheet" href="/meal-plan.css?v=20260717-10">
 </head>
 <body>
-  <main class="meal-shell">
+  <main class="meal-shell chat-only">
     <header class="meal-topbar">
-      <div class="meal-title"><span>FUEL AI</span><h1>Meal planner</h1></div>
+      <div class="meal-title"><span>FUEL AI</span><h1>Assistant</h1></div>
       <nav class="top-actions" aria-label="Fuel navigation">
         <a class="icon-button" href="/" aria-label="Dashboard" title="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></a>
-        <a class="icon-button active" href="/meal-plan.html" aria-current="page" aria-label="Meal planner" title="Meal planner"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg></a>
+        <a class="icon-button active" href="/meal-plan.html" aria-current="page" aria-label="Fuel AI" title="Fuel AI"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg></a>
         <a class="icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></a>
       </nav>
     </header>
 
-    <section class="intro-card card">
-      <span class="eyebrow">REST OF TODAY</span>
-      <h2>A plan that updates when your food log changes.</h2>
-      <p>Fuel uses the current time, today’s remaining targets, your saved preferences, and your location. Opening this page generates a new plan only after new food has been logged.</p>
-    </section>
-
     <section id="status-card" class="status-card card"><div class="status-spinner" aria-hidden="true"></div><p>Checking today’s Fuel data…</p></section>
 
-    <section id="budget-section" class="budget-section" hidden>
-      <div class="section-head"><div><span class="eyebrow">AVAILABLE TODAY</span><h2>Remaining targets</h2></div><span id="budget-date"></span></div>
-      <div class="budget-grid">
-        <article class="budget-card card featured"><span>Calories</span><strong id="remaining-calories">—</strong><small id="calorie-progress">—</small></article>
-        <article class="budget-card card"><span>Protein</span><strong id="remaining-protein">—</strong><small>remaining</small></article>
-        <article class="budget-card card"><span>Carbs</span><strong id="remaining-carbs">—</strong><small>remaining</small></article>
-        <article class="budget-card card"><span>Fat</span><strong id="remaining-fat">—</strong><small>remaining</small></article>
-        <article class="budget-card card"><span>Fiber</span><strong id="remaining-fiber">—</strong><small>remaining</small></article>
-      </div>
-    </section>
-
     <section id="chat-section" class="chat-section card" hidden>
-      <div class="section-head chat-heading"><div><span class="eyebrow">GEMINI MEAL PLAN</span><h2>Your plan</h2></div><span id="generated-time"></span></div>
       <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
       <div id="maps-sources" class="maps-sources" hidden><h3><span translate="no">Google Maps</span> sources</h3><div id="source-list"></div></div>
       <form id="chat-form" class="chat-composer">
@@ -47,14 +29,14 @@
           <img id="preview-img" alt="Food photo ready to log">
           <button id="remove-image" type="button" aria-label="Remove photo">&times;</button>
         </div>
-        <textarea id="chat-input" rows="1" maxlength="3000" placeholder="Ask a question, or tell Fuel what you ate to log it…" aria-label="Message Fuel AI"></textarea>
+        <textarea id="chat-input" rows="1" maxlength="3000" placeholder="Ask about your health, plan a meal, or say what you ate to log it…" aria-label="Message Fuel AI"></textarea>
         <input id="image-input" type="file" accept="image/*" hidden>
         <button id="attach-button" type="button" aria-label="Attach a food photo" title="Attach a food photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.2"/></svg></button>
         <button id="send-button" type="submit" aria-label="Send message" title="Send"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
       </form>
-      <p class="disclaimer">Send a photo of your food and Fuel will estimate the calories and macros, then log them. Nutrition and restaurant details are estimates. Verify ingredients, allergies, cross-contact, prices, and availability before ordering or eating.</p>
+      <p class="disclaimer">Fuel AI estimates nutrition and can log food to your diary. Verify ingredients, allergies, cross-contact, prices, and availability before ordering or eating.</p>
     </section>
   </main>
-  <script src="/meal-plan.js?v=20260717-6" defer></script>
+  <script src="/meal-plan.js?v=20260717-10" defer></script>
 </body>
 </html>

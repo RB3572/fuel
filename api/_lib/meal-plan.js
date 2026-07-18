@@ -471,8 +471,46 @@ WHY THIS FITS
 Under PLAN, number each remaining eating occasion and provide an appropriate local time.`
 }
 
+function buildHealthSummary(dashboard) {
+  const s = dashboard?.today?.summary || {}
+  const goal = (key) => finite(dashboard?.goals?.[key]?.target)
+  const metric = (label, value, unit = '', goalKey = null) => {
+    const g = goalKey ? goal(goalKey) : null
+    return `- ${label}: ${value == null || value === '' ? 'not logged' : `${numberLabel(value)}${unit}`}${g != null ? ` (goal ${numberLabel(g)}${unit})` : ''}`
+  }
+  const workouts = (dashboard?.today?.workouts || [])
+    .map((w) => `- ${w.activity || 'Activity'}${w.durationMinutes != null ? `, ${numberLabel(w.durationMinutes)} min` : ''}${w.activeCalories != null ? `, ${numberLabel(w.activeCalories)} kcal` : ''}${w.distanceMiles != null ? `, ${numberLabel(w.distanceMiles)} mi` : ''}${w.averageHeartRate != null ? `, avg HR ${numberLabel(w.averageHeartRate)}` : ''}`)
+    .join('\n') || '- No workouts logged today.'
+  const history = (dashboard?.trends || []).slice(-14).map((t) => {
+    const net = t.caloriesConsumed != null && t.totalExpenditure != null ? t.caloriesConsumed - t.totalExpenditure : null
+    return `${t.date}: intake ${numberLabel(t.caloriesConsumed)} kcal, burned ${numberLabel(t.totalExpenditure)} kcal, net ${net == null ? 'n/a' : `${net > 0 ? '+' : ''}${numberLabel(net)}`} kcal, protein ${numberLabel(t.protein)} g, steps ${numberLabel(t.stepCount)}, sleep ${numberLabel(t.sleepHours)} h, resting HR ${numberLabel(t.restingHeartRate)}`
+  }).join('\n') || 'No history yet.'
+  return `TODAY'S HEALTH (${s.date || 'today'}${s.partialDay ? ', day still in progress' : ''})
+Energy: ${metric('calories consumed', s.caloriesConsumed, ' kcal', 'calories').slice(2)}; resting ${numberLabel(s.restingEnergy)} kcal; active ${numberLabel(s.activeEnergy)} kcal; total burned ${numberLabel(s.totalExpenditure)} kcal; balance ${numberLabel(s.energyBalance)} kcal
+Macros: protein ${numberLabel(s.protein)} g, carbs ${numberLabel(s.carbs)} g, fat ${numberLabel(s.fat)} g, fiber ${numberLabel(s.fiber)} g
+${metric('Steps', s.stepCount, '', 'steps')}
+${metric('Exercise minutes', s.exerciseMinutes, ' min', 'exercise')}
+${metric('Stand minutes', s.standMinutes, ' min', 'stand')}
+${metric('Walking + running distance', s.distanceMiles, ' mi')}
+${metric('Flights climbed', s.flightsClimbed)}
+${metric('Sleep', s.sleepHours, ' h', 'sleepHours')}
+${metric('Resting heart rate', s.restingHeartRate, ' bpm')}
+${metric('Heart rate variability', s.hrv, ' ms')}
+${metric('Respiratory rate', s.respiratoryRate, ' /min')}
+${metric('Blood oxygen', s.bloodOxygen, ' %')}
+${metric('VO2 max', s.vo2Max, ' mL/kg/min')}
+
+TODAY'S WORKOUTS
+${workouts}
+
+DAILY HISTORY (last 14 days)
+${history}`
+}
+
 function buildChatContext(state) {
-  return `Continue as Fuel's meal-planning assistant. Answer changes and questions about the current plan concisely. Preserve hard allergy and dietary constraints as absolute limits.
+  return `You are Fuel AI, the user's private nutrition, fitness, and recovery assistant. Answer questions about their meal plan and ANY of the health data below — energy, macros, activity, sleep, vitals, workouts, and recent trends — concisely and accurately. If something is "not logged", say so rather than guessing. Preserve hard allergy and dietary constraints as absolute limits.
+
+${buildHealthSummary(state.dashboard)}
 
 REMAINING TODAY
 ${numberLabel(state.budget.caloriesRemaining)} kcal, ${numberLabel(state.budget.proteinRemaining)} g protein, ${numberLabel(state.budget.carbsRemaining)} g carbs, ${numberLabel(state.budget.fatRemaining)} g fat, ${numberLabel(state.budget.fiberRemaining)} g fiber.

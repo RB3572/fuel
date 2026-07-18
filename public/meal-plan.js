@@ -1,12 +1,10 @@
 const state={payload:null,busy:false,location:null,image:null}
 const els={
   status:document.getElementById('status-card'),
-  budget:document.getElementById('budget-section'),
   chat:document.getElementById('chat-section'),
   thread:document.getElementById('chat-thread'),
   sources:document.getElementById('maps-sources'),
   sourceList:document.getElementById('source-list'),
-  generatedTime:document.getElementById('generated-time'),
   form:document.getElementById('chat-form'),
   input:document.getElementById('chat-input'),
   send:document.getElementById('send-button'),
@@ -65,11 +63,6 @@ function setImage(image){
   }
 }
 
-function number(value,digits=0){
-  const parsed=Number(value)
-  return Number.isFinite(parsed)?new Intl.NumberFormat('en-US',{maximumFractionDigits:digits}).format(parsed):'—'
-}
-
 function setStatus(message,{error=false,loading=false}={}){
   els.status.className=`status-card card${error?' error':''}`
   els.status.innerHTML=`${loading?'<div class="status-spinner" aria-hidden="true"></div>':''}<p>${escapeHtml(message)}</p>`
@@ -77,18 +70,6 @@ function setStatus(message,{error=false,loading=false}={}){
 }
 
 function hideStatus(){els.status.hidden=true}
-
-function renderBudget(budget){
-  if(!budget)return
-  els.budget.hidden=false
-  document.getElementById('budget-date').textContent=budget.date||''
-  document.getElementById('remaining-calories').textContent=`${number(budget.caloriesRemaining)} kcal`
-  document.getElementById('calorie-progress').textContent=`${number(budget.caloriesConsumed)} consumed of ${number(budget.caloriesGoal)} kcal`
-  document.getElementById('remaining-protein').textContent=`${number(budget.proteinRemaining,1)} g`
-  document.getElementById('remaining-carbs').textContent=`${number(budget.carbsRemaining,1)} g`
-  document.getElementById('remaining-fat').textContent=`${number(budget.fatRemaining,1)} g`
-  document.getElementById('remaining-fiber').textContent=`${number(budget.fiberRemaining,1)} g`
-}
 
 async function loadPlanner(){
   setStatus('Checking today’s Fuel data…',{loading:true})
@@ -101,7 +82,6 @@ async function loadPlanner(){
     }
     if(!response.ok)throw new Error(payload.error||'Unable to load the meal planner.')
     state.payload=payload
-    renderBudget(payload.budget)
     if(payload.plan&&!payload.needsGeneration){
       sessionStorage.removeItem('fuelGeminiReauthAttempted')
       renderConversation(payload)
@@ -169,7 +149,6 @@ async function generatePlan(){
     if(!response.ok)throw new Error(payload.error||'Unable to generate a meal plan.')
     sessionStorage.removeItem('fuelGeminiReauthAttempted')
     state.payload=payload
-    renderBudget(payload.budget)
     renderConversation(payload)
     hideStatus()
   }catch(error){
@@ -188,8 +167,6 @@ function renderConversation(payload){
   appendBubble('assistant',payload.plan,true)
   for(const message of messages)appendBubble(message.role,message.text,false)
   renderSources(payload.sources||[])
-  const generated=new Date(payload.generatedAt||Date.now())
-  els.generatedTime.textContent=`Generated ${new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit'}).format(generated)}`
   requestAnimationFrame(()=>{els.thread.scrollTop=els.thread.scrollHeight})
 }
 
@@ -254,7 +231,6 @@ async function sendMessage(message,{retried=false,image=null}={}){
     }
     if(!response.ok)throw new Error(payload.error||'Unable to answer that message.')
     state.payload=payload
-    renderBudget(payload.budget)
     // Append rather than re-render the thread: a full re-render rebuilds from the
     // server's text-only history and would drop the photo the user just sent.
     appendBubble('assistant',payload.reply)

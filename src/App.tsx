@@ -103,22 +103,30 @@ function EnergyInteractiveChart({data}:{data:TrendPoint[]}){const[active,setActi
 function InteractiveLine({data,metric,unit,decimals=0,chartTitle,yLabel}:{data:TrendPoint[];metric:keyof TrendPoint;unit:string;decimals?:number;chartTitle:string;yLabel:string}){const points=data.map((p,i)=>({date:p.date,value:typeof p[metric]==='number'?p[metric] as number:null,i})).filter((p):p is{date:string;value:number;i:number}=>p.value!=null),[active,setActive]=useState<number|null>(null);if(points.length<2)return <div className="empty">Insufficient data</div>;const max=Math.max(...points.map(p=>p.value)),min=Math.min(...points.map(p=>p.value)),w=760,h=220,padX=42,padY=30,range=max-min||1,xy=points.map((p,i)=>({...p,x:padX+i/(points.length-1)*(w-padX*2),y:padY+(max-p.value)/range*(h-padY*2)})),a=active==null?null:xy[active],first=xy[0],last=xy.at(-1)!,labelLeft=a?`${Math.min(86,Math.max(12,(a.x/w)*100))}%`:'50%',labelTop=a?`${Math.min(80,Math.max(8,(a.y/h)*100))}%`:'50%';return <div className="interactive-line animated-chart is-visible" onMouseLeave={()=>setActive(null)}><div className="chart-header-row"><div><strong className="chart-title">{chartTitle}</strong><span className="chart-axis-note">Horizontal axis: date · Vertical axis: {yLabel}</span></div><ChartLegend items={[["legend-line",chartTitle]]}/></div><div className="chart-stage"><span className="y-axis-label">{yLabel}</span><svg viewBox={`0 0 ${w} ${h}`} onMouseMove={e=>{const r=e.currentTarget.getBoundingClientRect(),idx=Math.round(((e.clientX-r.left)/r.width)*(points.length-1));setActive(Math.max(0,Math.min(points.length-1,idx)))}}><defs><linearGradient id={`fill-${String(metric)}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopOpacity=".18"/><stop offset="1" stopOpacity="0"/></linearGradient></defs><line className="gridline" x1={padX} x2={w-padX} y1={padY} y2={padY}/><line className="gridline" x1={padX} x2={w-padX} y1={h-padY} y2={h-padY}/><path className="area" d={`M ${xy[0].x} ${h-padY} L ${xy.map(p=>`${p.x} ${p.y}`).join(' L ')} L ${xy.at(-1)!.x} ${h-padY} Z`} fill={`url(#fill-${String(metric)})`}/><polyline className="trend-line" points={xy.map(p=>`${p.x},${p.y}`).join(' ')} fill="none"/>{a&&<line className="cursor" x1={a.x} x2={a.x} y1={padY} y2={h-padY}/>} {xy.map((p,i)=><circle key={p.date} cx={p.x} cy={p.y} r={i===active?6:3} onClick={()=>setActive(i)} onFocus={()=>setActive(i)} tabIndex={0}/>)}</svg>{a&&<div className="point-label line-point-label" style={{left:labelLeft,top:labelTop}}><strong>{dateFmt(a.date)}</strong><span>{fmt(a.value,decimals)} {unit}</span></div>}<span className="y-max-label">{fmt(max,decimals)} {unit}</span><span className="y-min-label">{fmt(min,decimals)} {unit}</span></div><div className="line-axis-footer"><span>{dateFmt(first.date)}</span><strong>Date</strong><span>{dateFmt(last.date)}</span></div></div>}
 function NetBalanceChart({data}:{data:TrendPoint[]}){
   const[active,setActive]=useState<number|null>(null)
+  const scrollRef=useRef<HTMLDivElement|null>(null)
   const points=data.map(p=>({date:p.date,net:p.caloriesConsumed!=null&&p.totalExpenditure!=null?p.caloriesConsumed-p.totalExpenditure:null}))
+  // Start scrolled to the most recent day (right edge); the user scrolls left for
+  // history. Run once more on the next frame so a not-yet-settled layout on mount
+  // (which can leave it scrolled part-way) still lands on the newest day.
+  useEffect(()=>{const el=scrollRef.current;if(!el)return;const toEnd=()=>{el.scrollLeft=el.scrollWidth};toEnd();const r=requestAnimationFrame(toEnd);return()=>cancelAnimationFrame(r)},[points.length])
   if(!points.some(p=>p.net!=null))return <div className="empty">No energy balance data yet</div>
   const max=Math.max(1,...points.map(p=>p.net==null?0:Math.abs(p.net)))
-  const step=Math.max(1,Math.round(points.length/6))
-  const a=active==null?null:points[active]
-  return <div className="net-balance" onMouseLeave={()=>setActive(null)}>
-    <div className="chart-header-row"><div><strong className="chart-title">Daily deficit and surplus</strong><span className="chart-axis-note">Above the line is a surplus, below is a deficit · kilocalories per day</span></div><ChartLegend items={[["legend-surplus","Surplus"],["legend-deficit","Deficit"]]}/></div>
-    <div className="net-bars">
-      <span className="net-zero" aria-hidden="true"/>
-      {points.map((p,i)=>{const surplus=(p.net||0)>0,height=p.net==null?0:Math.max(3,(Math.abs(p.net)/max)*100);return <button key={p.date} className={`net-day ${i===active?'selected':''}`} onMouseEnter={()=>setActive(i)} onFocus={()=>setActive(i)} onBlur={()=>setActive(null)} onClick={()=>setActive(i)}>
-        <span className="net-up">{p.net!=null&&surplus&&<i className="net-bar surplus" style={{'--net-height':`${height}%`} as CSSProperties}/>}</span>
-        <span className="net-down">{p.net!=null&&!surplus&&<i className="net-bar deficit" style={{'--net-height':`${height}%`} as CSSProperties}/>}</span>
-        {i===active&&a?.net!=null&&<span className="point-label net-point-label"><strong>{longDate(a.date)}</strong><span>{a.net>0?`+${fmt(a.net)} kcal surplus`:`${fmt(a.net)} kcal deficit`}</span></span>}
-      </button>})}
+  const step=Math.max(1,Math.round(points.length/8))
+  // The readout replaces a floating tooltip, which the scroll container would clip.
+  const shown=active!=null?points[active]:points[points.length-1]
+  const readout=!shown||shown.net==null?'No data for this day':shown.net>0?`${longDate(shown.date)} · +${fmt(shown.net)} kcal surplus`:`${longDate(shown.date)} · ${fmt(shown.net)} kcal deficit`
+  return <div className="net-balance">
+    <div className="chart-header-row"><div><strong className="chart-title">Daily deficit and surplus</strong><span className="chart-axis-note net-readout">{readout}</span></div><ChartLegend items={[["legend-surplus","Surplus"],["legend-deficit","Deficit"]]}/></div>
+    <div className="net-scroll" ref={scrollRef} onMouseLeave={()=>setActive(null)}>
+      <div className="net-bars">
+        <span className="net-zero" aria-hidden="true"/>
+        {points.map((p,i)=>{const surplus=(p.net||0)>0,height=p.net==null?0:Math.max(3,(Math.abs(p.net)/max)*100);return <button key={p.date} className={`net-day ${i===active?'selected':''}`} aria-label={`${longDate(p.date)}: ${p.net==null?'no data':p.net>0?`${fmt(p.net)} kcal surplus`:`${fmt(-p.net)} kcal deficit`}`} onMouseEnter={()=>setActive(i)} onFocus={()=>setActive(i)} onBlur={()=>setActive(null)} onClick={()=>setActive(i)}>
+          <span className="net-up">{p.net!=null&&surplus&&<i className="net-bar surplus" style={{'--net-height':`${height}%`} as CSSProperties}/>}</span>
+          <span className="net-down">{p.net!=null&&!surplus&&<i className="net-bar deficit" style={{'--net-height':`${height}%`} as CSSProperties}/>}</span>
+        </button>})}
+      </div>
+      <div className="net-axis" aria-hidden="true">{points.map((p,i)=><span key={p.date}>{i===0||i===points.length-1||i%step===0?dateFmt(p.date):''}</span>)}</div>
     </div>
-    <div className="net-axis" aria-hidden="true">{points.map((p,i)=><span key={p.date}>{i===0||i===points.length-1||i%step===0?dateFmt(p.date):''}</span>)}</div>
   </div>
 }
 function ChartLegend({items}:{items:Array<[string,string]>}){return <div className="chart-legend">{items.map(([className,label])=><span key={label}><i className={className}/>{label}</span>)}</div>}
