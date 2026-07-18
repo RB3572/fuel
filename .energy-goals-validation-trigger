@@ -1,1 +1,1 @@
-Trigger PR validation after workflow registration.
+Run registered PR validation after the base workflow became available.
