@@ -36,3 +36,8 @@ test('meal-plan client times out and presents a retry instead of spinning foreve
   assert.match(client, /status-retry/)
   assert.match(client, /Fuel AI took too long to respond/)
 })
+
+test('initial plan generation does not block on geolocation', () => {
+  assert.doesNotMatch(client, /state\.location=await getLocation\(\)/)
+  assert.match(client, /Building a plan from today’s Fuel data/)
+})

@@ -120,24 +120,14 @@ async function generatePlan(){
   if(state.busy)return
   state.busy=true
   setComposerBusy(true)
-  setStatus('Requesting your current location…',{loading:true})
-  let locationData={}
+  state.location=null
+  setStatus('Building a plan from today’s Fuel data…',{loading:true})
   try{
-    try{
-      state.location=await getLocation()
-      locationData=state.location
-      setStatus('Building a plan from today’s Fuel data and current location…',{loading:true})
-    }catch(error){
-      state.location=null
-      setStatus(error instanceof Error?error.message:'Location was unavailable. Generating without it.',{loading:true})
-    }
-
     const response=await timedFetch('/api/meal-plan',{
       method:'POST',
       headers:{'Content-Type':'application/json',Accept:'application/json'},
       body:JSON.stringify({
         action:'plan',
-        ...locationData,
         localTime:new Date().toString(),
         timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',
       }),

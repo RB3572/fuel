@@ -356,7 +356,7 @@ function formatPlanPayload(value) {
 
 export function planLooksComplete(value) {
   const text = cleanReplyText(value)
-  if (text.length < 180) return false
+  if (text.length < 100) return false
   const required = ['MEAL PLAN FOR THE REST OF TODAY', 'TARGET', 'PLAN', 'ESTIMATED PLAN TOTAL', 'WHY THIS FITS']
   if (!required.every((heading) => text.toUpperCase().includes(heading))) return false
   if (!/[.!?)]$/.test(text)) return false
