@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - feature/site-food-delete-gemini-timeout
+  pull_request:
+    branches:
+      - master
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
