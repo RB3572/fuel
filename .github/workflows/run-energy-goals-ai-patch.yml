@@ -40,13 +40,40 @@ jobs:
           bash /tmp/apply-energy-goals-ai.sh > /tmp/energy-goals-patch.log 2>&1
           python - <<'PY'
           from pathlib import Path
-          path = Path('test/energy-goals-ai.test.js')
-          text = path.read_text()
-          old = "  for (const token of ['runningStrideLength','cardioRecovery','bloodOxygen','walkingHeartRateAverage','contextUpdate','goalUpdates','updatedPlan']) assert.match(mealPlan, new RegExp(token))"
-          new = "  assert.match(mealPlan, /JSON\\.stringify\\(summary/)\n  assert.match(mealPlan, /buildHealthSummary\\(state\\.dashboard\\)/)\n  const dashboardSource = readFileSync(new URL('../api/_lib/neon-dashboard.js', import.meta.url), 'utf8')\n  for (const token of ['runningStrideLength','cardioRecovery','bloodOxygen','walkingHeartRateAverage']) assert.match(dashboardSource, new RegExp(token))\n  for (const token of ['contextUpdate','goalUpdates','updatedPlan']) assert.match(mealPlan, new RegExp(token))"
-          if old not in text:
+
+          test_path = Path('test/energy-goals-ai.test.js')
+          test_text = test_path.read_text()
+          old_test = "  for (const token of ['runningStrideLength','cardioRecovery','bloodOxygen','walkingHeartRateAverage','contextUpdate','goalUpdates','updatedPlan']) assert.match(mealPlan, new RegExp(token))"
+          new_test = "  assert.match(mealPlan, /JSON\\.stringify\\(summary/)\n  assert.match(mealPlan, /buildHealthSummary\\(state\\.dashboard\\)/)\n  const dashboardSource = readFileSync(new URL('../api/_lib/neon-dashboard.js', import.meta.url), 'utf8')\n  for (const token of ['runningStrideLength','cardioRecovery','bloodOxygen','walkingHeartRateAverage']) assert.match(dashboardSource, new RegExp(token))\n  for (const token of ['contextUpdate','goalUpdates','updatedPlan']) assert.match(mealPlan, new RegExp(token))"
+          if old_test in test_text:
+              test_path.write_text(test_text.replace(old_test, new_test, 1))
+          elif 'const dashboardSource' not in test_text:
               raise SystemExit('Expected Gemini health assertion was not found.')
-          path.write_text(text.replace(old, new, 1))
+
+          goals_path = Path('api/_lib/goals.js')
+          goals = goals_path.read_text()
+          old_objective = "const objective = normalizeObjective(profileInput.objective || current.profile?.objective || objectiveFromPercent(goals.calorieBalancePercent))"
+          new_objective = "const objective = normalizeObjective(profileInput.objective || objectiveFromPercent(goals.calorieBalancePercent))"
+          if old_objective in goals:
+              goals_path.write_text(goals.replace(old_objective, new_objective, 1))
+
+          app_path = Path('src/App.tsx')
+          app = app_path.read_text()
+          marker = "  const[message,setMessage]=useState('')"
+          preview = "  const previewCalories=reference.averageExpenditure==null?reference.calories:Math.round(reference.averageExpenditure*(1+goals.calorieBalancePercent/100))"
+          if preview not in app:
+              app = app.replace(marker, marker + '\n' + preview, 1)
+          app = app.replace('{fmt(reference.calories)} kcal/day', '{fmt(previewCalories)} kcal/day', 1)
+          app_path.write_text(app)
+
+          meal_path = Path('api/_lib/meal-plan.js')
+          meal = meal_path.read_text()
+          retry_end = "    parsed = parseStructuredChatResponse(raw)\n  }\n  const text = limitedText(cleanReplyText(parsed.reply), 12000)"
+          hardened = "    parsed = parseStructuredChatResponse(raw)\n  }\n  if (!parsed.valid) throw geminiError('Fuel AI could not produce a complete response. Please try that message again.', 502, 'gemini_incomplete_response')\n  const text = limitedText(cleanReplyText(parsed.reply), 12000)"
+          if retry_end in meal:
+              meal_path.write_text(meal.replace(retry_end, hardened, 1))
+          elif 'gemini_incomplete_response' not in meal:
+              raise SystemExit('Could not harden incomplete Gemini response handling.')
           PY
 
       - name: Upload patch diagnostics
@@ -119,5 +146,5 @@ jobs:
             echo "No source changes to commit."
             exit 0
           fi
-          git commit -m "Improve energy goals and Fuel AI integration"
+          git commit -m "Harden dynamic goals and Fuel AI responses"
           git push origin HEAD
