@@ -2,7 +2,7 @@ import { sql, userForSyncToken } from '../_lib/db.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
-const PARSER_VERSION = 11
+const PARSER_VERSION = 12
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -36,7 +36,9 @@ export default async function handler(req, res) {
         ADD COLUMN IF NOT EXISTS walking_heart_rate_avg_bpm double precision,
         ADD COLUMN IF NOT EXISTS cycling_distance_mi double precision,
         ADD COLUMN IF NOT EXISTS flights_climbed double precision,
-        ADD COLUMN IF NOT EXISTS swimming_strokes double precision
+        ADD COLUMN IF NOT EXISTS swimming_strokes double precision,
+        ADD COLUMN IF NOT EXISTS wrist_temperature double precision,
+        ADD COLUMN IF NOT EXISTS cardio_recovery_bpm double precision
     `
 
     const rows = await db`
@@ -46,6 +48,7 @@ export default async function handler(req, res) {
         resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
         blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
         cycling_distance_mi, flights_climbed, swimming_strokes,
+        wrist_temperature, cardio_recovery_bpm,
         partial_day, source, raw_payload, updated_at
       ) VALUES (
         ${user.id}, ${record.date}, ${record.activeEnergy}, ${record.restingEnergy}, ${record.totalExpenditure},
@@ -53,6 +56,7 @@ export default async function handler(req, res) {
         ${record.restingHeartRate}, ${record.hrv}, ${record.vo2Max}, ${record.sleepHours}, ${record.respiratoryRate},
         ${record.bloodOxygen}, ${record.standMinutes}, ${record.walkingHeartRateAverage},
         ${record.cyclingDistance}, ${record.flightsClimbed}, ${record.swimmingStrokes},
+        ${record.wristTemperature}, ${record.cardioRecovery},
         ${record.partialDay}, 'Apple Shortcuts', ${JSON.stringify(payload)}, now()
       )
       ON CONFLICT (user_id, date) DO UPDATE SET
@@ -74,6 +78,8 @@ export default async function handler(req, res) {
         cycling_distance_mi = COALESCE(EXCLUDED.cycling_distance_mi, health_daily.cycling_distance_mi),
         flights_climbed = COALESCE(EXCLUDED.flights_climbed, health_daily.flights_climbed),
         swimming_strokes = COALESCE(EXCLUDED.swimming_strokes, health_daily.swimming_strokes),
+        wrist_temperature = COALESCE(EXCLUDED.wrist_temperature, health_daily.wrist_temperature),
+        cardio_recovery_bpm = COALESCE(EXCLUDED.cardio_recovery_bpm, health_daily.cardio_recovery_bpm),
         partial_day = EXCLUDED.partial_day,
         source = EXCLUDED.source,
         raw_payload = EXCLUDED.raw_payload,
@@ -82,7 +88,8 @@ export default async function handler(req, res) {
         exercise_minutes, step_count, walking_running_distance_mi, swimming_distance_yd,
         resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
         blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
-        cycling_distance_mi, flights_climbed, swimming_strokes, partial_day
+        cycling_distance_mi, flights_climbed, swimming_strokes,
+        wrist_temperature, cardio_recovery_bpm, partial_day
     `
 
     sendJson(res, 200, {
@@ -129,7 +136,8 @@ function parseTextPayload(text) {
     'restingHeartRate', 'heartRateVariability', 'HRV', 'hrv', 'respiratoryRate', 'respRate', 'cardioFitness',
     'vo2Max', 'sleep', 'sleepTotal', 'sleepHours', 'bloodOx', 'bloodOxygen', 'standMins', 'standMinutes',
     'wlkHRAvg', 'walkingHeartRateAverage', 'BikeDist', 'cyclingDistance', 'flightsClimb',
-    'flightsClimbed', 'swmStrokes', 'swimmingStrokes'
+    'flightsClimbed', 'swmStrokes', 'swimmingStrokes', 'wristTemp', 'wristTemperature',
+    'cardioRec', 'cardioRecovery', 'walkingHr'
   ]
   for (const key of keys) {
     const match = trimmed.match(new RegExp(`(?:^|[\\n,{])\\s*["']?${key}["']?\\s*[:=]\\s*["']?([^,"'\\n}]+)`, 'i'))
@@ -158,10 +166,12 @@ function normalize(payload) {
     sleepHours: sleepDurationHours(value(payload, ['sleep', 'sleepTotal', 'sleepHours'])),
     bloodOxygen: normalizeBloodOxygen(number(value(payload, ['bloodOx', 'bloodOxygen', 'oxygenSaturation']))),
     standMinutes: number(value(payload, ['standMins', 'standMinutes'])),
-    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHeartRateAverage', 'walkingHeartRate'])),
+    walkingHeartRateAverage: number(value(payload, ['wlkHRAvg', 'walkingHr', 'walkingHeartRateAverage', 'walkingHeartRate'])),
     cyclingDistance: number(value(payload, ['BikeDist', 'bikeDistance', 'cyclingDistance'])),
     flightsClimbed: number(value(payload, ['flightsClimb', 'flightsClimbed'])),
     swimmingStrokes: number(value(payload, ['swmStrokes', 'swimmingStrokes', 'swimStrokes'])),
+    wristTemperature: number(value(payload, ['wristTemp', 'wristTemperature'])),
+    cardioRecovery: number(value(payload, ['cardioRec', 'cardioRecovery', 'heartRateRecovery'])),
     partialDay: booleanValue(value(payload, ['partialDay'])) ?? true,
   }
 }
