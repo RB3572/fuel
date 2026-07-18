@@ -3,6 +3,11 @@ from pathlib import Path
 path = Path('scripts/apply-site-delete-gemini-fix.py')
 text = path.read_text()
 
+regex_line = "    updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)"
+if regex_line not in text:
+    raise RuntimeError('Expected regex replacement helper was not found.')
+text = text.replace(regex_line, "    updated, count = re.subn(pattern, lambda _match: replacement, text, count=1, flags=flags)", 1)
+
 bad_block = r'''replace_once(
     'public/meal-plan.js',
     "  els.chat.hidden=true\n  setStatus('Requesting today’s Fuel data…',{loading:true})",
