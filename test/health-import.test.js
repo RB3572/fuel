@@ -8,8 +8,8 @@ const completeDictionary = {
   flightsClimb: '11', excersiseMinutes: '43', swmStrokes: '281', cardioRec: '32',
   runningStrideLength: '1.24', restingEnergy: '1837.115000000009', bloodOx: '98.66666666666667',
   standMins: '121', cardioFitness: '54.84', date: 'Jul 18, 2026 at 12:20\u202fAM',
-  BikeDist: '5.2', swimDistance: 1150.000030704476, wlkHRAvg: '',
-  sleep: 'Core\nREM\nDeep28800', walkingHr: '80', activeEnergy: '612.7870000000049',
+  BikeDist: '5.2', swimDistance: 1150.000030704476, wlkHRAvg: '80',
+  sleep: 'Core\nREM\nDeep28800', activeEnergy: '612.7870000000049',
   steps: '6615', respRate: '14.70588235294118',
 }
 
@@ -39,7 +39,7 @@ test('normalizes every current Apple Shortcut dictionary key', () => {
 })
 
 test('preserves zero values and treats empty Shortcut values as missing', () => {
-  const payload = {"hrv":"","restingHeartRate":"","walkingrunDistance":"","flightsClimb":"","excersiseMinutes":"","swmStrokes":"","cardioRec":"","runningStrideLength":"","restingEnergy":"","bloodOx":"97","standMins":"","cardioFitness":"","date":"Jul 18, 2026 at 12:20\u202fAM","BikeDist":"","swimDistance":0,"wlkHRAvg":"","sleep":"","walkingHr":"","activeEnergy":"3.042999999999999","steps":"","respRate":""}
+  const payload = {"hrv":"","restingHeartRate":"","walkingrunDistance":"","flightsClimb":"","excersiseMinutes":"","swmStrokes":"","cardioRec":"","runningStrideLength":"","restingEnergy":"","bloodOx":"97","standMins":"","cardioFitness":"","date":"Jul 18, 2026 at 12:20\u202fAM","BikeDist":"","swimDistance":0,"wlkHRAvg":"","sleep":"","activeEnergy":"3.042999999999999","steps":"","respRate":""}
   const r = normalize(payload)
   assert.equal(r.date, '2026-07-18')
   assert.equal(r.bloodOxygen, 97)
@@ -47,11 +47,15 @@ test('preserves zero values and treats empty Shortcut values as missing', () => 
   assert.equal(r.activeEnergy, 3.042999999999999)
   assert.equal(r.runningStrideLength, null)
   assert.equal(r.hrv, null)
+  assert.equal(r.walkingHeartRateAverage, null)
   assert.equal(r.totalExpenditure, null)
 })
 
-test('blank aliases do not mask populated aliases', () => {
-  assert.equal(normalize({ wlkHRAvg: '', walkingHr: '82' }).walkingHeartRateAverage, 82)
+test('uses only wlkHRAvg for the Shortcut walking heart-rate average', () => {
+  assert.equal(normalize({ wlkHRAvg: '82', walkingHr: '99' }).walkingHeartRateAverage, 82)
+  assert.equal(normalize({ walkingHr: '99' }).walkingHeartRateAverage, null)
+  const importer = readFileSync(new URL('../api/health/import.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(importer, /['"]walkingHr['"]/) 
 })
 
 test('dashboard API and UI expose every current metric', () => {
