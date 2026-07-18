@@ -3,7 +3,7 @@ from pathlib import Path
 path = Path('scripts/apply-site-delete-gemini-fix.py')
 text = path.read_text()
 
-bad_block = '''replace_once(
+bad_block = r'''replace_once(
     'public/meal-plan.js',
     "  els.chat.hidden=true\n  setStatus('Requesting today’s Fuel data…',{loading:true})",
     "  setStatus('Requesting today’s Fuel data…',{loading:true})",
