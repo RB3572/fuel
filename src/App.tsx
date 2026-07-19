@@ -31,6 +31,8 @@ type GoalApiResponse = GoalValues & { calories:number; averageExpenditure:number
 
 const fmt=(v:N|undefined,d=0)=>v==null?'Not logged':new Intl.NumberFormat('en-US',{maximumFractionDigits:d}).format(v)
 const dateFmt=(s:string)=>new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric'}).format(new Date(`${s}T12:00:00`))
+const navDateLong=()=>new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric'}).format(new Date())
+const navDateShort=()=>new Intl.DateTimeFormat('en-US',{month:'short',day:'numeric'}).format(new Date())
 const longDate=(s:string)=>new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric'}).format(new Date(`${s}T12:00:00`))
 const duration=(v:N|undefined)=>v==null?'Not logged':`${Math.floor(v)}h ${Math.round((v%1)*60)}m`
 const positive=(v:N|undefined)=>v!=null&&v>0
@@ -107,7 +109,7 @@ export default function App(){
   if(session.loading)return <Centered title="Fuel" text="Loading your dashboard."/>
   if(!session.authenticated)return <SignIn/>
   const menu=<DashMenu editMode={editMode} loading={loading} onEdit={()=>{setEditMode(v=>!v);setMenuOpen(false)}} onRefresh={()=>{setMenuOpen(false);void load()}} onGoals={()=>{setMenuOpen(false);setGoalsOpen(true)}} onSync={()=>{setMenuOpen(false);setSyncOpen(true)}} onLogout={logout}/>
-  if(page==='lifting')return <Suspense fallback={<Centered title="Fuel" text="Loading lifting plans."/>}><LiftingPage selected={selectedLift} onSelect={setSelectedLift} nav={<TopNav current="lifting" goDashboard={()=>setPage('dashboard')} goLifting={()=>setSelectedLift(null)} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>}/></Suspense>
+  if(page==='lifting')return <Suspense fallback={<Centered title="Fuel" text="Loading lifting plans."/>}><LiftingPage selected={selectedLift} onSelect={setSelectedLift} nav={<TopNav current="lifting" user={session.user} goDashboard={()=>setPage('dashboard')} goLifting={()=>setSelectedLift(null)} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>}/></Suspense>
   const s=data?.today.summary
   const workoutDetail=s?.exerciseMinutes!=null?`${fmt(s.exerciseMinutes)} total exercise minutes`:`${data?.today.workouts.length||0} activity summaries`
   const sectionNodes:Record<SectionKey,{title:string;detail:string;node:ReactNode}>={
@@ -121,7 +123,7 @@ export default function App(){
     recovery:{title:'Recovery',detail:`Sleep target ${fmt(goalTarget(data?.goals,'sleepHours',8),1)} hours`,node:<section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1} chartTitle="Sleep duration" yLabel="Hours"/></section></section>},
   }
   return <main className={`app-shell${editMode?' edit-mode':''}`}>
-    <TopNav current="dashboard" goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
+    <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
     {editMode&&<div className="edit-banner panel"><LayoutGrid size={16}/><span>Editing your dashboard — drag to reorder, hide sections, and toggle energy metrics.</span><button className="edit-done" onClick={()=>setEditMode(false)}><Check size={15}/>Done</button></div>}
     {error&&<div className="error">{error}</div>}
     <EnergyHero summary={s} trends={data?.trends||[]} energyAverages={data?.energyAverages} range={range} setRange={setRange} boxes={layout.energyBoxes} editMode={editMode} onToggleBox={toggleBox}/>
@@ -134,10 +136,19 @@ export default function App(){
 }
 
 
+// The signed-in Google account picture, shown at the far left of every nav bar.
+// Falls back to an initial when Google returns no picture or the image fails.
+function BrandAvatar({user}:{user:SessionUser|null}){
+  const[broken,setBroken]=useState(false)
+  const label=user?.name||user?.email||'Signed in'
+  if(user?.picture&&!broken)return <img className="brand-avatar" src={user.picture} alt={label} title={label} referrerPolicy="no-referrer" onError={()=>setBroken(true)}/>
+  return <span className="brand-avatar brand-avatar-fallback" title={label} aria-label={label}>{(user?.name||user?.email||'U').slice(0,1).toUpperCase()}</span>
+}
+
 // One nav bar used on every in-app view (dashboard + lifting). The static pages
 // (recipes.html, meal-plan.html) render the same markup so the bar never changes.
-function TopNav({current,goDashboard,goLifting,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting';goDashboard:()=>void;goLifting:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
-  return <header className="topbar"><div className="brand"><h1>Fuel</h1></div><nav className="user" aria-label="Fuel navigation">
+function TopNav({current,user,goDashboard,goLifting,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting';user:SessionUser|null;goDashboard:()=>void;goLifting:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
+  return <header className="topbar"><div className="brand"><BrandAvatar user={user}/><div className="brand-text"><h1>Fuel</h1><p className="brand-date"><span className="date-long">{navDateLong()}</span><span className="date-short">{navDateShort()}</span></p></div></div><nav className="user" aria-label="Fuel navigation">
     <button className={`nav-icon-button${current==='dashboard'?' nav-active':''}`} onClick={goDashboard} aria-current={current==='dashboard'?'page':undefined} aria-label="Dashboard" title="Dashboard"><Home size={18}/></button>
     <a className="nav-icon-button" href="/meal-plan.html" aria-label="Fuel AI" title="Fuel AI"><Sparkles size={18}/></a>
     <a className="nav-icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><BookOpen size={18}/></a>
