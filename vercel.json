@@ -1,4 +1,7 @@
 {
+  "env": {
+    "GEMINI_MEAL_PLAN_MODEL": "gemini-3.1-flash-lite"
+  },
   "rewrites": [
     {
       "source": "/api/health/import-text",
