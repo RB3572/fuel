@@ -194,14 +194,9 @@ function renderChart(payload) {
   const hero = document.querySelector('.hero.panel')
   if (!hero) return false
 
-  let summaryBars = hero.querySelector('[data-energy-summary-bars]')
-  if (!summaryBars) {
-    summaryBars = document.createElement('div')
-    const stats = hero.querySelector('.hero-stats')
-    hero.insertBefore(summaryBars, stats || null)
-  }
-  summaryBars.outerHTML = summaryBarsMarkup(payload)
-
+  // The energy summary boxes + horizontal bar are now rendered by React (EnergySummary
+  // in App.tsx), which also makes them customizable. This script only injects the
+  // intraday "today over time" chart below the hero.
   let wrap = document.querySelector('[data-intraday-energy]')
   if (!wrap) {
     wrap = document.createElement('section')

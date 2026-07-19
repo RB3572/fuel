@@ -6,23 +6,29 @@
   <meta name="theme-color" content="#ffffff">
   <title>Fuel AI</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=2">
-  <link rel="stylesheet" href="/meal-plan.css?v=20260718-6">
+  <link rel="stylesheet" href="/fuel-nav.css?v=20260718-9">
+  <link rel="stylesheet" href="/meal-plan.css?v=20260718-9">
 </head>
 <body>
   <main class="meal-shell chat-only">
-    <header class="meal-topbar">
-      <div class="meal-title"><span>FUEL AI</span><h1>Assistant</h1></div>
-      <nav class="top-actions" aria-label="Fuel navigation">
-        <button id="new-plan-button" class="icon-button new-plan-button" type="button" aria-label="Regenerate meal plan" title="New meal plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg></button>
-        <a class="icon-button" href="/" aria-label="Dashboard" title="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></a>
-        <a class="icon-button active" href="/meal-plan.html" aria-current="page" aria-label="Fuel AI" title="Fuel AI"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg></a>
-        <a class="icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></a>
+    <header class="topbar">
+      <div class="brand"><h1>Fuel</h1></div>
+      <nav class="user" aria-label="Fuel navigation">
+        <a class="nav-icon-button" href="/" aria-label="Dashboard" title="Dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></a>
+        <a class="nav-icon-button nav-active" href="/meal-plan.html" aria-current="page" aria-label="Fuel AI" title="Fuel AI"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-1.7 4.3L6 9l4.3 1.7L12 15l1.7-4.3L18 9l-4.3-1.7L12 3Z"/><path d="m5 15-.8 2.2L2 18l2.2.8L5 21l.8-2.2L8 18l-2.2-.8L5 15Z"/></svg></a>
+        <a class="nav-icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></a>
+        <a class="nav-icon-button" href="/?view=lifting" aria-label="Lifting" title="Lifting"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/><path d="m18 22 4-4"/><path d="m2 6 4-4"/><path d="m3 10 7-7"/><path d="m14 21 7-7"/></svg></a>
+        <div class="fuel-nav-shell">
+          <button class="nav-icon-button" id="fuel-menu-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Menu" title="Menu"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg></button>
+          <div class="fuel-menu" id="fuel-menu" role="menu" hidden><a href="/" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>Dashboard</a><button type="button" id="fuel-signout" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>Sign out</button></div>
+        </div>
       </nav>
     </header>
 
     <section id="status-card" class="status-card card"><div class="status-spinner" aria-hidden="true"></div><p>Checking today’s Fuel data…</p></section>
 
     <section id="chat-section" class="chat-section card" hidden>
+      <div class="chat-actions"><button id="new-plan-button" class="new-plan-button" type="button" aria-label="Regenerate meal plan" title="New meal plan"><svg viewBox="0 0 24 24" aria-hidden="true" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg><span>New plan</span></button></div>
       <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
       <div id="maps-sources" class="maps-sources" hidden><h3><span translate="no">Google Maps</span> sources</h3><div id="source-list"></div></div>
       <form id="chat-form" class="chat-composer">
@@ -38,6 +44,6 @@
       <p class="disclaimer">Fuel AI estimates nutrition and can log food to your diary. Verify ingredients, allergies, cross-contact, prices, and availability before ordering or eating.</p>
     </section>
   </main>
-  <script src="/meal-plan.js?v=20260718-6" defer></script>
+  <script src="/meal-plan.js?v=20260718-9" defer></script>
 </body>
 </html>

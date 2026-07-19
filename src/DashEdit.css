@@ -1,0 +1,41 @@
+/* The unified top-nav styles live in public/fuel-nav.css (shared with the static
+   pages). This file adds only the dashboard-edit and lifting-subhead styles. */
+.topbar .user .profile-shell { display: grid; position: relative; }
+
+/* Edit banner */
+.edit-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; margin-bottom: 14px; border-radius: 14px; background: #111; color: #fff; font-size: 13px; box-shadow: none; }
+.edit-banner span { flex: 1; min-width: 0; }
+.edit-banner .edit-done { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; border: 0; background: #fff; color: #111; font-weight: 700; font-size: 12px; padding: 7px 12px; border-radius: 9px; cursor: pointer; }
+
+/* Editable sections */
+.dash-section { border: 1px dashed #cfcfcf; border-radius: 16px; padding: 10px 12px 14px; margin-top: 14px; background: #fafafa; }
+.dash-section.dragging { opacity: .5; }
+.dash-section.section-hidden { opacity: .5; }
+.dash-section .section-body { pointer-events: none; }
+.dash-section .section-body > .section-title { margin-top: 6px; }
+.section-edit-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.section-edit-bar .drag-handle { display: inline-flex; color: #9a9a9a; cursor: grab; }
+.section-edit-label { flex: 1; min-width: 0; display: grid; }
+.section-edit-label strong { font-size: 14px; }
+.section-edit-label small { color: #888; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.section-hide-toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; border: 1px solid #ddd; background: #fff; color: #333; font-size: 11px; font-weight: 700; padding: 6px 9px; border-radius: 8px; cursor: pointer; }
+.section-hide-toggle:hover { border-color: #bbb; }
+
+/* Energy metric picker (edit mode, inside the hero) */
+.energy-box-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 10px; border: 1px dashed #d5d5d5; border-radius: 12px; background: #fafafa; }
+.energy-box-picker .picker-label { font-size: 11px; font-weight: 800; letter-spacing: .06em; color: #777; text-transform: uppercase; margin-right: 2px; }
+.box-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #ddd; background: #fff; color: #555; font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 999px; cursor: pointer; }
+.box-chip.on { background: #111; border-color: #111; color: #fff; }
+
+/* Lifting sub-head (back button when viewing one plan) */
+.lifting-subhead { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.lifting-subhead h1, .lifting-subhead p { margin: 0; }
+.lifting-subhead p { color: #707070; font-size: 12px; }
+
+@media (max-width: 850px) {
+  .topbar .user .profile-shell { display: grid; }
+}
+@media (max-width: 560px) {
+  .edit-banner { font-size: 12px; padding: 10px 12px; }
+  .topbar .user .nav-icon-button { width: 36px; height: 36px; }
+}

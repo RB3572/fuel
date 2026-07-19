@@ -1,0 +1,38 @@
+/* Canonical Fuel top nav — identical on every page (dashboard, lifting, recipes,
+   meal planner). Linked by index.html and the static pages; React uses the same
+   class names. High-specificity selectors so it wins over per-page button styles. */
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 18px; }
+.topbar .brand { display: flex; align-items: center; gap: 12px; }
+.topbar .brand h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; color: #111; }
+.topbar .brand p { display: none; }
+.topbar .user { display: flex; align-items: center; gap: 8px; margin-left: auto; position: relative; }
+.topbar .user .nav-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid #dcdcdc;
+  border-radius: 11px;
+  background: #fff;
+  color: #111;
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: none;
+}
+.topbar .user .nav-icon-button:hover { border-color: #b6b6b6; }
+.topbar .user .nav-icon-button.nav-active { background: #111; border-color: #111; color: #fff; }
+.topbar .user .nav-icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Menu dropdown (static pages; React renders its own richer menu with the same trigger) */
+.fuel-nav-shell { position: relative; display: grid; }
+.fuel-menu { position: absolute; right: 0; top: 46px; z-index: 60; min-width: 184px; padding: 6px; display: grid; gap: 2px; background: #fff; border: 1px solid #e5e5e5; border-radius: 14px; box-shadow: 0 16px 40px rgba(0,0,0,.14); }
+.fuel-menu[hidden] { display: none; }
+.fuel-menu button, .fuel-menu a { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: 0; background: transparent; color: #111; font-size: 13px; font-weight: 600; text-align: left; text-decoration: none; border-radius: 9px; cursor: pointer; }
+.fuel-menu button:hover, .fuel-menu a:hover { background: #f4f4f4; }
+.fuel-menu svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+@media (max-width: 560px) {
+  .topbar .user .nav-icon-button { width: 36px; height: 36px; }
+  .topbar .brand h1 { font-size: 20px; }
+}

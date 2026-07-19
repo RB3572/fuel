@@ -104,3 +104,10 @@ function format(value, digits = 0) {
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char])
 }
+
+// Shared Fuel nav menu (Dashboard + Sign out). Same trigger button as every page.
+const fuelMenuBtn = document.getElementById('fuel-menu-btn')
+const fuelMenu = document.getElementById('fuel-menu')
+fuelMenuBtn?.addEventListener('click', (event) => { event.stopPropagation(); const open = fuelMenu.hidden; fuelMenu.hidden = !open; fuelMenuBtn.setAttribute('aria-expanded', String(open)) })
+document.addEventListener('click', (event) => { if (fuelMenu && !fuelMenu.hidden && !fuelMenu.contains(event.target) && event.target !== fuelMenuBtn) { fuelMenu.hidden = true; fuelMenuBtn.setAttribute('aria-expanded', 'false') } })
+document.getElementById('fuel-signout')?.addEventListener('click', async () => { try { await fetch('/api/auth/logout', { method: 'POST' }) } catch { /* ignore */ } window.location.href = '/' })

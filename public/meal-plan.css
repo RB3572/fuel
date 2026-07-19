@@ -92,12 +92,24 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
   background: var(--black);
   color: var(--white);
 }
+/* The Fuel nav lives in fuel-nav.css and is identical on every page. In this chat
+   layout the nav and each section must not stretch. */
+.chat-only > .topbar { flex: 0 0 auto; }
+.chat-actions { flex: 0 0 auto; display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .new-plan-button {
-  border-color: var(--blue);
-  background: var(--blue);
-  color: var(--white);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d9dde3;
+  background: #fff;
+  color: #111;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 12px;
+  border-radius: 999px;
   cursor: pointer;
 }
+.new-plan-button:hover { border-color: #b6b6b6; }
 .new-plan-button:disabled { opacity: .5; cursor: wait; }
 .icon-button svg, .chat-composer button svg {
   width: 19px;

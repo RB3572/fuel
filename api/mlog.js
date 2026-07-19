@@ -7,6 +7,7 @@ import { authorizationServerMetadata } from './_lib/mcp-auth.js'
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
+import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -60,6 +61,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'user-context') {
     await handleUserContext(req, res)
+    return
+  }
+  if (integrationRoute === 'dashboard-layout') {
+    await handleDashboardLayout(req, res)
     return
   }
   if (integrationRoute === 'meal-plan') {
@@ -176,6 +181,28 @@ export default async function handler(req, res) {
     console.error(`${operation} failed`, error)
     const message = req.method === 'POST' ? 'Food could not be logged.' : req.method === 'PUT' ? 'Food entry could not be updated.' : req.method === 'DELETE' ? 'Food entry could not be deleted.' : 'Unable to load Fuel data.'
     sendJson(res, 500, { error: message })
+  }
+}
+
+async function handleDashboardLayout(req, res) {
+  if (!['GET', 'PUT'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'PUT'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to manage your dashboard.' })
+      return
+    }
+    const layout = req.method === 'GET'
+      ? await getDashboardLayout(auth.id)
+      : await saveDashboardLayout(auth.id, unwrap(req.body).layout)
+    sendJson(res, 200, { ok: true, layout }, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Fuel dashboard layout request failed', error)
+    sendJson(res, 500, { error: 'Unable to save your dashboard layout.' })
   }
 }
 

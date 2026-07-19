@@ -359,3 +359,9 @@ window.visualViewport?.addEventListener('resize',syncViewportHeight,{passive:tru
 window.visualViewport?.addEventListener('scroll',syncViewportHeight,{passive:true})
 resizeInput()
 void loadPlanner()
+
+// Shared Fuel nav menu (Dashboard + Sign out) — same trigger button as every page.
+const fuelMenuBtn=document.getElementById('fuel-menu-btn'),fuelMenu=document.getElementById('fuel-menu')
+fuelMenuBtn?.addEventListener('click',event=>{event.stopPropagation();const open=fuelMenu.hidden;fuelMenu.hidden=!open;fuelMenuBtn.setAttribute('aria-expanded',String(open))})
+document.addEventListener('click',event=>{if(fuelMenu&&!fuelMenu.hidden&&!fuelMenu.contains(event.target)&&event.target!==fuelMenuBtn){fuelMenu.hidden=true;fuelMenuBtn.setAttribute('aria-expanded','false')}})
+document.getElementById('fuel-signout')?.addEventListener('click',async()=>{try{await fetch('/api/auth/logout',{method:'POST'})}catch{/* ignore */}window.location.href='/'})
