@@ -12,7 +12,6 @@ const ENERGY_CLOCK_PARTS = new Intl.DateTimeFormat('en-US', {
   hourCycle: 'h23',
 })
 
-let energyRequestRunning = false
 
 function clockParts(value) {
   const parts = Object.fromEntries(ENERGY_CLOCK_PARTS.formatToParts(value).map((part) => [part.type, part.value]))
@@ -208,32 +207,23 @@ function renderChart(payload) {
   return true
 }
 
-async function refreshIntradayEnergy() {
-  if (energyRequestRunning || (location.pathname !== '/' && location.pathname !== '/index.html')) return
-  const hero = document.querySelector('.hero.panel')
-  if (!hero) return
-  energyRequestRunning = true
-  try {
-    const response = await fetch('/api/mlog', { cache: 'no-store', headers: { Accept: 'application/json' } })
-    if (!response.ok) return
-    renderChart(await response.json())
-  } catch {
-    // The authenticated dashboard handles its own connection errors.
-  } finally {
-    energyRequestRunning = false
-  }
+// The dashboard payload is fetched once by React (App.tsx) and broadcast on
+// `fuel:dashboard`. This script used to fetch /api/mlog itself on mount, on focus
+// and every 30s, exactly duplicating React's polling and doubling the load on the
+// Postgres-backed endpoint. Now it only listens.
+function refreshIntradayEnergy() {
+  if (location.pathname !== '/' && location.pathname !== '/index.html') return
+  const payload = window.__fuelDashboard
+  if (!payload || !document.querySelector('.hero.panel')) return
+  renderChart(payload)
 }
 
-// The fitness-ring reveal animation is owned entirely by React (ActivityRings in
-// App.tsx). This script only injects the intraday energy chart. The observer must
-// NOT refresh on every mutation: renderChart rewrites innerHTML, which is itself a
-// mutation, so an unconditional refresh here forms an infinite fetch/render loop
-// that freezes the main thread. Only refresh from the observer until the chart has
-// been injected. Ongoing updates come from the interval/focus/DOMContentLoaded below.
+addEventListener('fuel:dashboard', refreshIntradayEnergy)
+
+// React owns the chart's container position, so re-inject if a re-render drops it.
+// The observer must NOT refresh unconditionally: renderChart rewrites innerHTML,
+// which is itself a mutation, so that would form an infinite render loop.
 new MutationObserver(() => {
-  if (!document.querySelector('[data-intraday-energy]')) void refreshIntradayEnergy()
+  if (!document.querySelector('[data-intraday-energy]')) refreshIntradayEnergy()
 }).observe(document.documentElement, { childList: true, subtree: true })
-addEventListener('DOMContentLoaded', () => void refreshIntradayEnergy())
-addEventListener('focus', () => void refreshIntradayEnergy())
-setInterval(() => void refreshIntradayEnergy(), 30000)
-void refreshIntradayEnergy()
+refreshIntradayEnergy()

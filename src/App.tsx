@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { Activity, ArrowLeft, Bike, BookOpen, Check, ChevronRight, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Timer, Trash2, X } from 'lucide-react'
-import { workoutPlans } from './workouts'
+import { Activity, Bike, BookOpen, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, X } from 'lucide-react'
 import type { LiftPlan } from './workouts'
+// Code-split: the workout dataset and its stylesheet only download when the user
+// actually opens the Lifting tab, keeping them out of the dashboard's first paint.
+const LiftingPage = lazy(() => import('./LiftingPage'))
 import './App.css'
 import './ChartLabels.css'
 import './ProfileMenu.css'
-import './Lifting.css'
 import './DashEdit.css'
 
 type N = number | null
@@ -64,6 +65,10 @@ function normalizeLayout(raw:unknown):Layout{
   return{order,hidden,energyBoxes}
 }
 
+// public/intraday-energy.js renders the intraday chart from this payload instead of
+// issuing its own /api/mlog request, which previously doubled every dashboard fetch.
+function publishDashboard(payload:DashboardData){(window as unknown as{__fuelDashboard?:DashboardData}).__fuelDashboard=payload;dispatchEvent(new CustomEvent('fuel:dashboard'))}
+
 function useInView<T extends HTMLElement>(){const ref=useRef<T|null>(null);const[visible,setVisible]=useState(false);useEffect(()=>{const node=ref.current;if(!node)return;if(typeof IntersectionObserver==='undefined'){setVisible(true);return}const observer=new IntersectionObserver(([entry])=>{if(entry.isIntersecting){setVisible(true);observer.disconnect()}},{threshold:.18,rootMargin:'0px 0px -6% 0px'});observer.observe(node);return()=>observer.disconnect()},[]);return{ref,visible}}
 
 export default function App(){
@@ -82,12 +87,19 @@ export default function App(){
   const[dragKey,setDragKey]=useState<SectionKey|null>(null)
   const[page,setPage]=useState<'dashboard'|'lifting'>(typeof window!=='undefined'&&new URLSearchParams(window.location.search).get('view')==='lifting'?'lifting':'dashboard')
   const[selectedLift,setSelectedLift]=useState<LiftPlan|null>(null)
-  const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await fetch('/api/mlog',{cache:'no-store',headers:{Accept:'application/json'}});if(r.status===401){setSession({loading:false,authenticated:false,user:null});setData(null);return}const p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to load Fuel');setData(p)}catch(e){setError(e instanceof Error?e.message:'Unable to load Fuel')}finally{setLoading(false)}},[])
-  useEffect(()=>{fetch('/api/auth/session').then(r=>r.json()).then(p=>setSession({loading:false,authenticated:p.authenticated,user:p.user||null})).catch(()=>setSession({loading:false,authenticated:false,user:null}))},[])
-  useEffect(()=>{if(!session.authenticated)return;void load();const id=setInterval(load,30000);const focus=()=>void load();addEventListener('focus',focus);return()=>{clearInterval(id);removeEventListener('focus',focus)}},[session.authenticated,load])
+  const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await fetch('/api/mlog',{cache:'no-store',headers:{Accept:'application/json'}});if(r.status===401){setSession({loading:false,authenticated:false,user:null});setData(null);return}const p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to load Fuel');setData(p);publishDashboard(p)}catch(e){setError(e instanceof Error?e.message:'Unable to load Fuel')}finally{setLoading(false)}},[])
+  // Fire the session check, the dashboard payload, and the saved layout together on
+  // mount. Previously the dashboard waited a full round-trip for /api/auth/session
+  // before it even started loading; /api/mlog already returns 401 when signed out,
+  // which is all we need to fall back to the sign-in screen.
+  useEffect(()=>{
+    fetch('/api/auth/session').then(r=>r.json()).then(p=>setSession({loading:false,authenticated:p.authenticated,user:p.user||null})).catch(()=>setSession({loading:false,authenticated:false,user:null}))
+    void load()
+    fetch('/api/mlog?fuel_route=dashboard-layout',{cache:'no-store',headers:{Accept:'application/json'}}).then(r=>r.json()).then(p=>{if(p?.layout)setLayout(normalizeLayout(p.layout))}).catch(()=>{})
+  },[load])
+  useEffect(()=>{if(!session.authenticated)return;const id=setInterval(load,30000);const focus=()=>void load();addEventListener('focus',focus);return()=>{clearInterval(id);removeEventListener('focus',focus)}},[session.authenticated,load])
   const logout=async()=>{await fetch('/api/auth/logout',{method:'POST'});setSession({loading:false,authenticated:false,user:null});setData(null)}
   const deleteFood=async(entry:FoodEntry)=>{if(!entry.id||deletingFoodId)return;const label=entry.food||entry.meal||'this food entry';if(!window.confirm(`Delete "${label}" from Fuel? This cannot be undone.`))return;setDeletingFoodId(entry.id);setError('');try{const r=await fetch('/api/mlog',{method:'DELETE',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({entryId:entry.id})}),p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to delete this food entry.');await load()}catch(e){setError(e instanceof Error?e.message:'Unable to delete this food entry.')}finally{setDeletingFoodId(null)}}
-  useEffect(()=>{if(!session.authenticated)return;fetch('/api/mlog?fuel_route=dashboard-layout',{cache:'no-store',headers:{Accept:'application/json'}}).then(r=>r.json()).then(p=>{if(p?.layout)setLayout(normalizeLayout(p.layout))}).catch(()=>{})},[session.authenticated])
   const saveLayout=useCallback((next:Layout)=>{setLayout(next);fetch('/api/mlog?fuel_route=dashboard-layout',{method:'PUT',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({layout:next})}).catch(()=>{})},[])
   const toggleHidden=(key:SectionKey)=>saveLayout({...layout,hidden:layout.hidden.includes(key)?layout.hidden.filter(k=>k!==key):[...layout.hidden,key]})
   const reorder=(target:SectionKey)=>{if(!dragKey||dragKey===target){setDragKey(null);return}const order=layout.order.filter(k=>k!==dragKey);order.splice(order.indexOf(target),0,dragKey);saveLayout({...layout,order});setDragKey(null)}
@@ -95,7 +107,7 @@ export default function App(){
   if(session.loading)return <Centered title="Fuel" text="Loading your dashboard."/>
   if(!session.authenticated)return <SignIn/>
   const menu=<DashMenu editMode={editMode} loading={loading} onEdit={()=>{setEditMode(v=>!v);setMenuOpen(false)}} onRefresh={()=>{setMenuOpen(false);void load()}} onGoals={()=>{setMenuOpen(false);setGoalsOpen(true)}} onSync={()=>{setMenuOpen(false);setSyncOpen(true)}} onLogout={logout}/>
-  if(page==='lifting')return <LiftingPage selected={selectedLift} onSelect={setSelectedLift} nav={<TopNav current="lifting" goDashboard={()=>setPage('dashboard')} goLifting={()=>setSelectedLift(null)} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>}/>
+  if(page==='lifting')return <Suspense fallback={<Centered title="Fuel" text="Loading lifting plans."/>}><LiftingPage selected={selectedLift} onSelect={setSelectedLift} nav={<TopNav current="lifting" goDashboard={()=>setPage('dashboard')} goLifting={()=>setSelectedLift(null)} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>}/></Suspense>
   const s=data?.today.summary
   const workoutDetail=s?.exerciseMinutes!=null?`${fmt(s.exerciseMinutes)} total exercise minutes`:`${data?.today.workouts.length||0} activity summaries`
   const sectionNodes:Record<SectionKey,{title:string;detail:string;node:ReactNode}>={
@@ -121,11 +133,6 @@ export default function App(){
   </main>
 }
 
-function LiftingPage({selected,onSelect,nav}:{selected:LiftPlan|null;onSelect:(p:LiftPlan|null)=>void;nav:ReactNode}){
-  useEffect(()=>{window.scrollTo({top:0,behavior:'smooth'})},[selected])
-  if(selected)return <main className="app-shell lifting-page">{nav}<div className="lifting-subhead"><button className="back-button" onClick={()=>onSelect(null)} aria-label="Back to lifting plans"><ArrowLeft size={18}/></button><div><h1>Lifting</h1><p>View-only plan. Apple Health remains the activity log.</p></div></div><article className="lift-detail"><section className="panel lift-detail-hero"><span className={`level-pill level-${selected.level}`}>{selected.level}</span><h1>{selected.title}</h1><p>{selected.summary}</p><div className="lift-detail-meta"><span><Timer size={16}/>{selected.duration}</span><span><Target size={16}/>{selected.focus}</span></div><div className="lift-card-tags">{selected.tags.map(t=><span className="lift-tag" key={t}>{t}</span>)}</div></section><section className="panel lift-steps">{selected.steps.map((step,i)=><div className="lift-step" key={`${step.exercise}-${i}`}><div className="lift-phase">{step.phase}</div><div><h3>{step.exercise}</h3><p>{step.prescription}</p>{step.rest&&<p className="rest">Rest: {step.rest}</p>}{step.cues&&<p className="cues">{step.cues}</p>}</div></div>)}</section><section className="panel lifting-note">Choose loads that preserve the listed repetitions in reserve (RIR). Technical failure means the next repetition would require altered range, posture, or assistance. Do not force painful ranges, and use a spotter or safety arms for heavy presses and squats.</section></article></main>
-  return <main className="app-shell lifting-page">{nav}<section className="panel lifting-intro"><h2>Choose a 30-45 minute session.</h2><p>These plans prioritize high-quality compound work, controlled weekly fatigue, and time-efficient supersets. Most working sets stop one to three repetitions before technical failure. Drop sets and cluster sets are used selectively rather than as defaults, and the recovery sessions stay deliberately easy.</p><div className="lifting-principles"><span>Dynamic warm-up first</span><span>1-3 reps in reserve</span><span>Compound lifts prioritized</span><span>Static stretching last</span><span>No logging from this page</span></div></section><div className="lift-grid">{workoutPlans.map(plan=><button className="lift-card" key={plan.id} onClick={()=>onSelect(plan)}><div className="lift-card-head"><h3>{plan.title}</h3><ChevronRight className="chevron" size={18}/></div><p className="lift-focus">{plan.focus}</p><p className="lift-summary">{plan.summary}</p><div className="lift-card-meta"><span><Timer size={14}/>{plan.duration}</span><span className={`level-pill level-${plan.level}`}>{plan.level}</span></div><div className="lift-card-tags">{plan.tags.map(t=><span className="lift-tag" key={t}>{t}</span>)}</div></button>)}</div><section className="panel lifting-research"><h3><BookOpen size={17}/> Programming basis</h3><p>The library uses progressive resistance training principles, adequate rest for strength work, moderate proximity to failure, full-range compound movements, and non-competing supersets when time is limited. Dynamic movements prepare the session, while short static holds are reserved for the end. Because running and swimming already create substantial endurance load, lower-body volume and failure work are constrained to protect recovery.</p></section></main>
-}
 
 // One nav bar used on every in-app view (dashboard + lifting). The static pages
 // (recipes.html, meal-plan.html) render the same markup so the bar never changes.

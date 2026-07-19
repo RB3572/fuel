@@ -5,18 +5,6 @@ let tokenData = null
 let panel = null
 let launcher = null
 
-function textCleanup() {
-  document.querySelectorAll('button, p, span').forEach((node) => {
-    if (node.textContent?.trim() === 'Connect Google Drive') node.childNodes[node.childNodes.length - 1].textContent = ' Continue with Google'
-    if (node.textContent?.includes('stored in MLog')) node.textContent = 'A private view of nutrition, activity, and recovery data stored securely in Fuel.'
-    if (node.textContent?.includes('Google Drive connected')) node.textContent = node.textContent.replace('Google Drive connected', 'Fuel account')
-    if (node.textContent?.includes('Loading MLog')) node.textContent = node.textContent.replace('Loading MLog', 'Loading Fuel')
-  })
-  document.querySelectorAll('a').forEach((node) => {
-    if (node.textContent?.includes('Open MLog')) node.remove()
-  })
-}
-
 async function copyText(value, button) {
   await navigator.clipboard.writeText(value)
   const original = button.textContent
@@ -88,7 +76,6 @@ function setToken(payload) {
 }
 
 async function initialize() {
-  textCleanup()
   const sessionResponse = await fetch('/api/auth/session', { headers: { Accept: 'application/json' } }).catch(() => null)
   if (!sessionResponse?.ok) return
   const session = await sessionResponse.json().catch(() => null)
@@ -110,6 +97,10 @@ async function initialize() {
   }
 }
 
-const observer = new MutationObserver(textCleanup)
-observer.observe(document.documentElement, { childList: true, subtree: true })
-window.addEventListener('DOMContentLoaded', () => setTimeout(initialize, 200))
+// The sync panel is secondary UI, so its session/token requests are deferred until
+// the browser is idle rather than competing with the dashboard's first paint. A
+// MutationObserver used to run a whole-document text rewrite here on every React
+// mutation; every string it targeted is long gone, so it was pure overhead.
+const startPanel = () => (window.requestIdleCallback || ((fn) => setTimeout(fn, 600)))(initialize)
+if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', startPanel)
+else startPanel()

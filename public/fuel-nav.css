@@ -32,6 +32,13 @@
 .fuel-menu button:hover, .fuel-menu a:hover { background: #f4f4f4; }
 .fuel-menu svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
+/* Carried over from the retired recipe-nav.css (its nav classes are no longer
+   rendered; these two rules are still load-bearing). */
+.profile-menu { z-index: 100; }
+.activity-rings .fitness-track,
+.activity-rings .fitness-progress { display: block !important; visibility: visible !important; opacity: 1 !important; }
+.activity-rings.is-visible .rings-graphic { opacity: 1 !important; transform: scale(1) !important; }
+
 @media (max-width: 560px) {
   .topbar .user .nav-icon-button { width: 36px; height: 36px; }
   .topbar .brand h1 { font-size: 20px; }
