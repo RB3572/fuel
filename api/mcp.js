@@ -4,6 +4,7 @@ import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { bearerToken, oauthChallenge, verifyAccessToken } from './_lib/mcp-auth.js'
 import { appendUserContext, getUserContext, saveUserContext } from './_lib/user-context.js'
 import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientsFromRow } from './_lib/nutrients.js'
+import { getRecipe, listRecipes, saveRecipe } from './_lib/recipes.js'
 
 const SERVER_VERSION = '1.4.0'
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
@@ -192,7 +193,7 @@ const tools = [
   {
     name: 'list_recipes',
     title: 'List recipes',
-    description: 'List recipes saved in the signed-in user’s Fuel recipe index, optionally filtered by name or ingredients.',
+    description: 'List recipes from the shared Fuel recipe bank, optionally filtered by name or ingredients. The bank is global: it returns every recipe anyone has contributed, not just the signed-in user’s.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -208,7 +209,7 @@ const tools = [
   {
     name: 'get_recipe',
     title: 'Get recipe',
-    description: 'Retrieve one saved Fuel recipe by recipe ID or exact name, including ingredients, instructions, serving, and nutrition.',
+    description: 'Retrieve one recipe from the shared Fuel recipe bank by recipe ID or exact name, including ingredients, instructions, serving, and nutrition.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -221,6 +222,32 @@ const tools = [
     outputSchema: { type: 'object', additionalProperties: true },
     securitySchemes: READ_SECURITY,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'add_recipe',
+    title: 'Add recipe',
+    description: 'Add a recipe to the shared Fuel recipe bank. The bank is a global, shared resource: the recipe becomes visible to everyone who uses Fuel, not just the person adding it. Adding a recipe whose name already exists updates that recipe in place rather than creating a duplicate.',
+    inputSchema: {
+      type: 'object',
+      required: ['name'],
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 300, description: 'Recipe name. Matching an existing name updates that recipe for everyone.' },
+        serving: { type: 'string', maxLength: 200, description: 'What one serving is, e.g. "1 bowl (350 g)".' },
+        ingredients: { type: 'array', items: { type: 'string', maxLength: 500 }, maxItems: 100, description: 'One ingredient per item, including quantity.' },
+        instructions: { type: 'array', items: { type: 'string', maxLength: 2000 }, maxItems: 60, description: 'Ordered preparation steps, one per item.' },
+        source: { type: 'string', maxLength: 500, description: 'Where the recipe came from, e.g. a URL or cookbook.' },
+        calories: { type: 'number', minimum: 0, maximum: 20000, description: 'Calories per serving (kcal).' },
+        protein: { type: 'number', minimum: 0, maximum: 2000, description: 'Protein per serving (g).' },
+        carbs: { type: 'number', minimum: 0, maximum: 2000, description: 'Carbohydrates per serving (g).' },
+        fat: { type: 'number', minimum: 0, maximum: 2000, description: 'Fat per serving (g).' },
+        fiber: { type: 'number', minimum: 0, maximum: 500, description: 'Fiber per serving (g).' },
+        nutrients: { type: 'object', properties: NUTRIENT_JSON_SCHEMA_PROPERTIES, additionalProperties: false, description: 'Additional per-serving micronutrients.' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: WRITE_SECURITY,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ]
 
@@ -320,7 +347,7 @@ async function callTool(req, params) {
 }
 
 async function executeTool(name, userId, args) {
-  if (['get_fuel_dashboard', 'list_food_entries', 'log_food', 'delete_food_entry', 'list_recipes', 'get_recipe'].includes(name)) await ensureNutrientSchema()
+  if (['get_fuel_dashboard', 'list_food_entries', 'log_food', 'delete_food_entry', 'list_recipes', 'get_recipe', 'add_recipe'].includes(name)) await ensureNutrientSchema()
   if (name === 'get_fuel_dashboard') {
     const [dashboard, userContext] = await Promise.all([
       getNeonDashboard(userId),
@@ -464,36 +491,25 @@ async function executeTool(name, userId, args) {
       : appendUserContext(userId, context)
   }
 
+  // The recipe bank is shared across every Fuel user, so these three tools
+  // deliberately do not scope by userId. See api/_lib/recipes.js.
   if (name === 'list_recipes') {
-    const query = text(args.query, 200) || ''
-    const pattern = `%${query.replace(/[%_]/g, '\\$&')}%`
-    const limit = integer(args.limit, 1, 100) || 100
-    const db = sql()
-    const recipes = await db`
-      SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, updated_at
-      FROM recipes
-      WHERE user_id = ${userId}
-        AND (${query} = '' OR name ILIKE ${pattern} ESCAPE '\\' OR ingredients ILIKE ${pattern} ESCAPE '\\')
-      ORDER BY name ASC
-      LIMIT ${limit}
-    `
-    return { count: recipes.length, recipes: recipes.map(normalizeRecipe) }
+    const recipes = await listRecipes({ query: text(args.query, 200) || '', limit: integer(args.limit, 1, 100) || 100 })
+    return { count: recipes.length, recipes, shared: true }
   }
 
   if (name === 'get_recipe') {
     const recipeId = text(args.recipe_id, 100) || ''
     const recipeName = text(args.name, 300) || ''
     if (!recipeId && !recipeName) throw new Error('Provide recipe_id or name.')
-    const db = sql()
-    const rows = await db`
-      SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, updated_at
-      FROM recipes
-      WHERE user_id = ${userId}
-        AND (id::text = ${recipeId} OR (${recipeName} <> '' AND lower(name) = lower(${recipeName})))
-      LIMIT 1
-    `
-    if (!rows.length) throw new Error('Recipe not found.')
-    return { recipe: normalizeRecipe(rows[0]) }
+    const recipe = await getRecipe({ recipeId, name: recipeName })
+    if (!recipe) throw new Error('Recipe not found.')
+    return { recipe, shared: true }
+  }
+
+  if (name === 'add_recipe') {
+    const result = await saveRecipe(args, userId)
+    return { ...result, shared: true }
   }
 
   throw new Error(`Tool is not implemented: ${name}`)
@@ -503,33 +519,6 @@ function normalizeFoodRow(row) {
   return { ...row, nutrients: nutrientsFromRow(row) }
 }
 
-function normalizeRecipe(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    serving: row.serving || '',
-    ingredients: splitList(row.ingredients),
-    instructions: splitInstructions(row.notes),
-    nutrition: {
-      calories: nullableNumber(row.calories_kcal),
-      protein: nullableNumber(row.protein_g),
-      carbs: nullableNumber(row.carbs_g),
-      fat: nullableNumber(row.fat_g),
-      fiber: nullableNumber(row.fiber_g),
-      nutrients: nutrientsFromRow(row),
-    },
-    source: row.source || '',
-    updatedAt: row.updated_at || null,
-  }
-}
-
-function splitList(value) {
-  return value ? String(value).split(/\s*;\s*|\n+/).map((item) => item.trim()).filter(Boolean) : []
-}
-function splitInstructions(value) {
-  if (!value || /^saved recipe\.?$/i.test(String(value).trim())) return []
-  return String(value).split(/\n+|(?<=\.)\s+(?=[A-Z0-9])/).map((item) => item.trim()).filter(Boolean)
-}
 
 function authenticationError(scope) {
   const challenge = oauthChallenge(scope)
@@ -552,8 +541,11 @@ function summarize(name, data) {
   if (name === 'get_user_context') return data.context ? 'Fuel preferences and context were retrieved.' : 'No Fuel preferences or context are saved yet.'
   if (name === 'list_food_entries') return `Found ${data.count} food entries from ${data.startDate} through ${data.endDate}.`
   if (name === 'get_health_data') return `Found ${data.count} daily health records from ${data.startDate} through ${data.endDate}.`
-  if (name === 'list_recipes') return `Found ${data.count} saved recipes.`
+  if (name === 'list_recipes') return `Found ${data.count} recipes in the shared Fuel recipe bank.`
   if (name === 'get_recipe') return `Retrieved ${data.recipe?.name || 'the recipe'}.`
+  if (name === 'add_recipe') return data.created
+    ? `Added ${data.recipe?.name || 'the recipe'} to the shared Fuel recipe bank, where everyone can see it.`
+    : `${data.recipe?.name || 'That recipe'} already existed in the shared Fuel recipe bank, so it was updated for everyone.`
   return 'Fuel data retrieved.'
 }
 
@@ -603,10 +595,6 @@ function nonnegative(value) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed < 0) throw new Error('Nutrition values must be nonnegative numbers.')
   return parsed
-}
-function nullableNumber(value) {
-  const parsed = Number(value)
-  return value == null || value === '' || !Number.isFinite(parsed) ? null : parsed
 }
 function text(value, maximumLength) {
   if (value == null) return null
