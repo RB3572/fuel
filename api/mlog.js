@@ -8,6 +8,9 @@ import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
+import { getRecipe, recipesNeedingNutrition, saveEstimatedNutrition } from './_lib/recipes.js'
+import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
+import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -65,6 +68,14 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'dashboard-layout') {
     await handleDashboardLayout(req, res)
+    return
+  }
+  if (integrationRoute === 'log-recipe') {
+    await handleLogRecipe(req, res)
+    return
+  }
+  if (integrationRoute === 'recipe-nutrition') {
+    await handleRecipeNutrition(req, res)
     return
   }
   if (integrationRoute === 'meal-plan') {
@@ -182,6 +193,154 @@ export default async function handler(req, res) {
     const message = req.method === 'POST' ? 'Food could not be logged.' : req.method === 'PUT' ? 'Food entry could not be updated.' : req.method === 'DELETE' ? 'Food entry could not be deleted.' : 'Unable to load Fuel data.'
     sendJson(res, 500, { error: message })
   }
+}
+
+// One-click logging of a saved recipe. The nutrition is read from the recipe bank
+// server-side rather than accepted from the client, so what lands in food_entries
+// always matches the recipe and cannot be forged by a crafted request.
+async function handleLogRecipe(req, res) {
+  if (req.method !== 'POST') {
+    methodNotAllowed(res, ['POST'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to log a recipe.' })
+      return
+    }
+    await ensureNutrientSchema()
+    const body = unwrap(req.body)
+    const recipeId = text(body.recipeId ?? body.recipe_id) || ''
+    const recipeName = text(body.name) || ''
+    if (!recipeId && !recipeName) {
+      sendJson(res, 422, { error: 'A recipe is required.' }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    const recipe = await getRecipe({ recipeId, name: recipeName })
+    if (!recipe) {
+      sendJson(res, 404, { error: 'That recipe is no longer in the recipe bank.' }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    if (recipe.nutrition?.calories == null) {
+      sendJson(res, 409, {
+        error: `${recipe.name} has no nutrition breakdown yet, so logging it would count as zero calories.`,
+        needsNutrition: true,
+        recipeId: recipe.id,
+      }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+
+    const servings = servingCount(body.servings)
+    const scale = (value) => (value == null ? null : Math.round(value * servings * 10) / 10)
+    const nutrients = normalizeNutrients(recipe.nutrition?.nutrients)
+    const scaled = {}
+    for (const [key, value] of Object.entries(nutrients)) scaled[key] = Math.round(value * servings * 1000) / 1000
+    const cols = nutrientColumns(scaled)
+
+    const portion = servings === 1
+      ? (recipe.serving || '1 serving')
+      : `${formatServings(servings)} \u00d7 ${recipe.serving || 'serving'}`
+    const noteParts = [`Logged from the Fuel recipe bank: ${recipe.name}.`]
+    if (recipe.nutritionEstimated) noteParts.push('Nutrition for this recipe was estimated by Fuel AI.')
+
+    const db = sql()
+    const rows = await db`
+      INSERT INTO food_entries (
+        user_id, occurred_at, meal, description, portion,
+        calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
+        sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients,
+        confidence, notes, source, updated_at
+      ) VALUES (
+        ${auth.id}, ${new Date().toISOString()}, ${text(body.meal) || ''}, ${recipe.name}, ${portion},
+        ${scale(recipe.nutrition.calories)}, ${scale(recipe.nutrition.protein)},
+        ${scale(recipe.nutrition.carbs)}, ${scale(recipe.nutrition.fat)}, ${scale(recipe.nutrition.fiber)},
+        ${cols.sugarsG}, ${cols.addedSugarsG}, ${cols.sodiumMg}, ${cols.caffeineMg},
+        ${JSON.stringify(scaled)}::jsonb,
+        ${recipe.nutritionEstimated ? 'estimated' : 'recipe'}, ${noteParts.join(' ')},
+        ${`Fuel recipe:${recipe.id}`}, now()
+      )
+      RETURNING id, occurred_at, meal, description, portion, calories_kcal, protein_g, carbs_g, fat_g, fiber_g
+    `
+    sendJson(res, 201, { ok: true, entry: rows[0], recipe: { id: recipe.id, name: recipe.name }, servings }, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Recipe logging failed', error)
+    sendJson(res, 500, { error: 'That recipe could not be logged.' })
+  }
+}
+
+// Fills in missing nutrition so those recipes become one-click loggable. Bounded per
+// request: Gemini is called once per recipe and serverless functions have a deadline.
+async function handleRecipeNutrition(req, res) {
+  if (!['GET', 'POST'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to fill in recipe nutrition.' })
+      return
+    }
+    const pending = await recipesNeedingNutrition(200)
+    if (req.method === 'GET') {
+      sendJson(res, 200, { pending: pending.length, recipes: pending.map((r) => ({ id: r.id, name: r.name })) }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    const body = unwrap(req.body)
+    const requestedId = text(body.recipeId ?? body.recipe_id) || ''
+    const batch = requestedId ? pending.filter((r) => String(r.id) === requestedId) : pending.slice(0, batchSize(body.limit))
+    const updated = []
+    const failed = []
+    let quotaError = ''
+    for (const recipe of batch) {
+      try {
+        const estimate = await estimateRecipeNutrition(recipe)
+        const saved = await saveEstimatedNutrition(recipe.id, estimate)
+        if (saved) updated.push({ id: saved.id, name: saved.name, nutrition: saved.nutrition, assumptions: estimate.assumptions })
+      } catch (error) {
+        if (error instanceof NutritionQuotaError) {
+          // Every remaining call would fail the same way, so stop and say why
+          // rather than reporting a pile of identical per-recipe failures.
+          quotaError = error.message
+          break
+        }
+        console.error(`Recipe nutrition estimate failed for ${recipe.name}`, error)
+        failed.push({ id: recipe.id, name: recipe.name, error: error instanceof Error ? error.message : 'Estimate failed.' })
+      }
+    }
+    if (quotaError && !updated.length) {
+      sendJson(res, 503, { error: quotaError, quotaExhausted: true }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    sendJson(res, 200, {
+      ok: true,
+      updated,
+      failed,
+      quotaExhausted: Boolean(quotaError),
+      ...(quotaError ? { error: quotaError } : {}),
+      remaining: Math.max(0, pending.length - updated.length),
+    }, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Recipe nutrition backfill failed', error)
+    sendJson(res, 500, { error: 'Recipe nutrition could not be filled in.' })
+  }
+}
+
+function servingCount(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 1
+  return Math.min(20, Math.round(parsed * 4) / 4)
+}
+function formatServings(value) {
+  return Number.isInteger(value) ? String(value) : String(value)
+}
+function batchSize(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 6
+  return Math.min(12, Math.round(parsed))
 }
 
 async function handleDashboardLayout(req, res) {

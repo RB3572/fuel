@@ -25,6 +25,13 @@ async function migrate() {
   } catch (error) {
     console.warn('recipes.user_id could not be made nullable; contributions will keep recording an author.', error?.message || error)
   }
+  // Marks rows whose nutrition was inferred by Fuel AI rather than contributed, so
+  // the recipe card and the logged food entry can both say so honestly.
+  try {
+    await db`ALTER TABLE recipes ADD COLUMN IF NOT EXISTS nutrition_estimated boolean NOT NULL DEFAULT false`
+  } catch (error) {
+    console.warn('recipes.nutrition_estimated is unavailable; estimates will not be labelled.', error?.message || error)
+  }
   // Best effort: with the bank shared, one canonical row per name is the intent.
   // This fails harmlessly if two accounts already saved the same recipe name, in
   // which case saveRecipe's read-then-write path is the only dedupe.
@@ -40,7 +47,7 @@ export async function listRecipes({ query = '', limit = 100 } = {}) {
   const db = sql()
   const pattern = `%${String(query).replace(/[%_\\]/g, '\\$&')}%`
   const rows = await db`
-    SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, updated_at
+    SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, nutrition_estimated, updated_at
     FROM recipes
     WHERE (${query} = '' OR name ILIKE ${pattern} ESCAPE '\\' OR ingredients ILIKE ${pattern} ESCAPE '\\')
     ORDER BY name ASC
@@ -53,7 +60,7 @@ export async function getRecipe({ recipeId = '', name = '' } = {}) {
   await ensureRecipeSchema()
   const db = sql()
   const rows = await db`
-    SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, updated_at
+    SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, nutrition_estimated, updated_at
     FROM recipes
     WHERE (${recipeId} <> '' AND id::text = ${recipeId})
        OR (${name} <> '' AND lower(name) = lower(${name}))
@@ -116,7 +123,7 @@ async function insert(name, f, nutrients, contributorId) {
       ${f.calories}, ${f.protein}, ${f.carbs}, ${f.fat}, ${f.fiber},
       ${cols.sugarsG}, ${cols.addedSugarsG}, ${cols.sodiumMg}, ${cols.caffeineMg},
       ${JSON.stringify(nutrients)}::jsonb, now())
-    RETURNING id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, updated_at
+    RETURNING id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, nutrition_estimated, updated_at
   `
   return normalizeRecipe(rows[0])
 }
@@ -133,7 +140,7 @@ async function update(id, f, nutrients) {
       sodium_mg = ${cols.sodiumMg}, caffeine_mg = ${cols.caffeineMg},
       nutrients = ${JSON.stringify(nutrients)}::jsonb, updated_at = now()
     WHERE id = ${id}
-    RETURNING id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, updated_at
+    RETURNING id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, nutrition_estimated, updated_at
   `
   return normalizeRecipe(rows[0])
 }
@@ -156,6 +163,8 @@ export function normalizeRecipe(row) {
       nutrients: nutrientsFromRow(row),
     },
     source: row.source || '',
+    nutritionEstimated: row.nutrition_estimated === true,
+    hasNutrition: nullableNumber(row.calories_kcal) != null,
     updatedAt: row.updated_at || null,
   }
 }
@@ -194,4 +203,50 @@ function nullableNumber(value) {
   if (value === null || value === undefined || value === '') return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+// Recipes that cannot be one-click logged yet: no calorie figure, but enough
+// ingredient detail for Fuel AI to estimate one.
+export async function recipesNeedingNutrition(limit = 200) {
+  await ensureRecipeSchema()
+  const db = sql()
+  const rows = await db`
+    SELECT id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, nutrition_estimated, updated_at
+    FROM recipes
+    WHERE calories_kcal IS NULL
+      AND ingredients IS NOT NULL AND btrim(ingredients) <> ''
+    ORDER BY name ASC
+    LIMIT ${limit}
+  `
+  return rows.map(normalizeRecipe)
+}
+
+// Writes an AI-derived breakdown onto a recipe. Kept separate from saveRecipe so a
+// backfill can never clobber a contributor's own ingredients or instructions.
+export async function saveEstimatedNutrition(recipeId, estimate) {
+  await ensureRecipeSchema()
+  const db = sql()
+  const nutrients = normalizeNutrients(estimate?.nutrients)
+  const cols = nutrientColumns(nutrients)
+  const rows = await db`
+    UPDATE recipes SET
+      calories_kcal = ${numberOrNull(estimate?.calories)},
+      protein_g = ${numberOrNull(estimate?.protein)},
+      carbs_g = ${numberOrNull(estimate?.carbs)},
+      fat_g = ${numberOrNull(estimate?.fat)},
+      fiber_g = ${numberOrNull(estimate?.fiber)},
+      sugars_g = ${cols.sugarsG}, added_sugars_g = ${cols.addedSugarsG},
+      sodium_mg = ${cols.sodiumMg}, caffeine_mg = ${cols.caffeineMg},
+      nutrients = ${JSON.stringify(nutrients)}::jsonb,
+      nutrition_estimated = true,
+      updated_at = now()
+    WHERE id = ${recipeId} AND calories_kcal IS NULL
+    RETURNING id, name, serving, ingredients, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, nutrients, notes, source, user_id, nutrition_estimated, updated_at
+  `
+  return rows.length ? normalizeRecipe(rows[0]) : null
+}
+
+function numberOrNull(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }

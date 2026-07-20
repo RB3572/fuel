@@ -560,7 +560,7 @@ async function logFoods(userId, foods) {
   }
 }
 
-async function callGemini(model, requestBody, allowMapsFallback = false, timeoutMs = GEMINI_CHAT_TIMEOUT_MS) {
+export async function callGemini(model, requestBody, allowMapsFallback = false, timeoutMs = GEMINI_CHAT_TIMEOUT_MS) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''
   if (!apiKey) {
     throw geminiError('Fuel AI is not configured. Set GEMINI_API_KEY in the deployment environment.', 503, 'gemini_not_configured')
