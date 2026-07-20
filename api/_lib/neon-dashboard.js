@@ -15,7 +15,10 @@ export async function getNeonDashboard(userId) {
     db`SELECT * FROM health_daily WHERE user_id = ${userId} AND date >= (${today}::date - interval '30 days') ORDER BY date ASC`,
     db`SELECT * FROM food_entries WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
     db`SELECT * FROM supplements WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
-    listRecipes(),
+    // The shared recipe bank is a secondary feature and now routes through schema
+    // migrations and a cross-user table, so a failure here must not 500 the whole
+    // dashboard — degrade to an empty list, as getIntradayEnergy already does.
+    listRecipes().catch((error) => { console.error('Shared recipe bank load failed', error); return [] }),
     getUserGoals(userId),
   ])
 
@@ -165,7 +168,7 @@ export async function getNeonDashboard(userId) {
       { title: 'Health', rows: healthRows.length },
       { title: 'Food', rows: foodRows.length },
       { title: 'Supplements', rows: supplementRows.length },
-      { title: 'Recipes', rows: recipeRows.length },
+      { title: 'Recipes', rows: sharedRecipes.length },
     ],
     storage: 'Neon Postgres',
   }
