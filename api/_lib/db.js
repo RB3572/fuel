@@ -25,9 +25,14 @@ export async function upsertUser(user) {
 }
 
 export async function ensureUserFromSession(session) {
+  // Resolve the CURRENT app_users id from the Google identity rather than trusting the
+  // cookie's userId. The session cookie lives 30 days and can outlive its row (e.g. the
+  // users table was reset and re-seeded with new UUIDs), and a stale id then violates
+  // the app_users foreign keys on mcp_oauth_codes / tokens / etc. Upsert by email is
+  // idempotent and self-healing: it returns the live id for the signed-in account.
+  if (session?.user?.email) return (await upsertUser(session.user)).id
   if (session?.userId) return session.userId
-  const user = await upsertUser(session?.user)
-  return user.id
+  throw new Error('Fuel session is missing a Google identity.')
 }
 
 export function tokenHash(token) {
