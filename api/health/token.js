@@ -2,7 +2,7 @@ import { ensureUserFromSession, getOrCreateSyncToken, rotateSyncToken } from '..
 import { authenticatedSession } from '../_lib/google.js'
 import { methodNotAllowed, sendJson } from '../_lib/http.js'
 
-const SHORTCUT_URL = 'https://www.icloud.com/shortcuts/bfdc6b641b3f4172a7b842fc60dc1dd3'
+const SHORTCUT_URL = 'https://www.icloud.com/shortcuts/0895a9a876fa454f8e2bc90daa555fc7'
 
 export default async function handler(req, res) {
   if (!['GET', 'POST'].includes(req.method)) {

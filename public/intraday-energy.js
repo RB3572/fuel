@@ -82,7 +82,9 @@ function renderSeries(series, x, y) {
   const path = series.points.length > 1
     ? `<path class="intraday-line ${series.key}-line" d="${pointsToPath(series.points, x, y)}"/>`
     : ''
-  const dots = series.points.map((point) => `
+  // Synthetic points only extend a line to "now"; they are not recorded measurements,
+  // so they get no dot or tooltip.
+  const dots = series.points.filter((point) => !point.synthetic).map((point) => `
     <circle class="intraday-point ${series.key}-point" cx="${x(point.minute)}" cy="${y(point.value)}" r="4">
       <title>${series.label}: ${Math.round(point.value).toLocaleString()} kcal at ${formatTime(point.timestamp)}</title>
     </circle>
@@ -90,13 +92,26 @@ function renderSeries(series, x, y) {
   return path + dots
 }
 
+// Cumulative calories consumed do not change between meals, so the recorded points
+// stop at the last food logged while the burned lines keep updating from Health
+// snapshots. Extend the consumed line flat to the current time with its last known
+// total, so it stays level with the other series instead of trailing behind.
+function extendConsumedToNow(series, end) {
+  if (series.key !== 'consumed' || !series.points.length) return series
+  const last = series.points[series.points.length - 1]
+  if (last.minute >= end) return series
+  return { ...series, points: [...series.points, { minute: end, value: last.value, timestamp: new Date().toISOString(), synthetic: true }] }
+}
+
 function chartMarkup(payload) {
   const series = makeSeries(payload)
   const end = currentMinute()
-  const visibleSeries = series.map((item) => ({
-    ...item,
-    points: item.points.filter((point) => point.minute >= 0 && point.minute <= end),
-  }))
+  const visibleSeries = series
+    .map((item) => ({
+      ...item,
+      points: item.points.filter((point) => point.minute >= 0 && point.minute <= end),
+    }))
+    .map((item) => extendConsumedToNow(item, end))
   const allPoints = visibleSeries.flatMap((item) => item.points)
 
   if (!allPoints.length) {
@@ -122,7 +137,7 @@ function chartMarkup(payload) {
       <div>
         <span class="eyebrow">TODAY OVER TIME</span>
         <h3>Calories</h3>
-        <p>Only measurements stored in Neon are plotted. Lines connect recorded points without adding or projecting values.</p>
+        <p>Burned lines connect measurements stored in Neon. The consumed line extends flat to now at your current total, since it only changes when you log food.</p>
       </div>
       <div class="intraday-legend">
         ${visibleSeries.map((item) => `<span><i class="${item.key}-dot"></i>${item.label}</span>`).join('')}
