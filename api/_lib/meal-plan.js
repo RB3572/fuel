@@ -12,8 +12,7 @@ const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models
 // stays multimodal (needed for photo food logging). Override with GEMINI_MODEL.
 const DEFAULT_MODEL = 'gemini-flash-latest'
 const TIME_ZONE = 'America/Los_Angeles'
-const MAX_MESSAGES = 18
-const CHAT_RETENTION_MS = 2 * 24 * 60 * 60 * 1000 // Keep chat history for two days.
+const MAX_MESSAGES = 10 // Chat history is always the most recent 10 messages.
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
 const GEMINI_PLAN_TIMEOUT_MS = 18000
@@ -81,9 +80,9 @@ export async function handleMealPlan(req, res) {
       const wantsNewPlan = /\b(regenerate|new plan|another plan|different plan|fresh plan|re-?do (the |my )?plan|remake (the |my )?plan|make (me )?(a |another )?(new )?plan)\b/i.test(message)
       const regenerate = dataChanged || answer.regeneratePlan || wantsNewPlan
       const nextState = dataChanged ? await currentState(userId) : state
-      // A regenerated plan starts a fresh thread: clear all history so only the new
-      // plan remains. Pure questions keep the conversation flowing.
-      const messages = regenerate ? [] : appendMessages(cache.messages, [
+      // Chat history is never cleared on regeneration: even when a new plan is built,
+      // the conversation keeps flowing, capped to the most recent MAX_MESSAGES.
+      const messages = appendMessages(cache.messages, [
         { role: 'user', text: message || 'Sent a photo to log.', at: new Date().toISOString() },
         { role: 'assistant', text: answer.text, at: new Date().toISOString() },
       ])
@@ -119,6 +118,23 @@ export async function handleMealPlan(req, res) {
       return
     }
 
+    if (action === 'clear') {
+      // Explicit user action from the "Clear chat" button: empty the conversation
+      // but keep the current plan and its sources.
+      if (cache) {
+        await saveCachedPlan(userId, {
+          foodFingerprint: cache.food_fingerprint,
+          plan: cache.plan,
+          messages: [],
+          sources: cache.sources,
+          model: cache.model,
+          generatedAt: cache.generated_at || new Date(),
+        })
+      }
+      sendJson(res, 200, { ...responseBase(state, validCache ? cache : null), messages: [], cleared: true }, cookie ? [cookie] : [])
+      return
+    }
+
     // The "New plan" button sends force:true to regenerate even when the cached plan
     // still matches today's food.
     if (validCache && !body.force) {
@@ -130,12 +146,12 @@ export async function handleMealPlan(req, res) {
     const localTime = limitedText(body.localTime, 100) || new Date().toString()
     const timeZone = limitedText(body.timeZone, 100) || TIME_ZONE
     const generated = await generateMealPlan({ state, location, localTime, timeZone })
-    // A newly generated plan starts a fresh thread: clear all prior chat so the new
-    // plan is the only message shown.
+    // A newly generated plan keeps the existing conversation (most recent
+    // MAX_MESSAGES); generating a plan is not a reason to wipe chat history.
     const saved = await saveCachedPlan(userId, {
       foodFingerprint: state.foodFingerprint,
       plan: generated.text,
-      messages: [],
+      messages: keepRecentMessages(cache?.messages),
       sources: generated.sources,
       model: generated.model,
       generatedAt: new Date(),
@@ -745,15 +761,11 @@ function appendMessages(existing, additions) {
   return keepRecentMessages([...normalizeMessages(existing), ...additions])
 }
 
-// Normalize, then drop messages older than the two-day retention window and cap
-// the total. Entries without a timestamp are always kept.
+// Chat history is simply the most recent MAX_MESSAGES messages. It is never expired
+// by time, and never cleared when a new plan is generated — only the explicit
+// "Clear chat" action empties it.
 function keepRecentMessages(value) {
-  const cutoff = Date.now() - CHAT_RETENTION_MS
-  return normalizeMessages(value).filter((item) => {
-    if (!item.at) return true
-    const at = new Date(item.at).getTime()
-    return Number.isNaN(at) || at >= cutoff
-  }).slice(-MAX_MESSAGES)
+  return normalizeMessages(value).slice(-MAX_MESSAGES)
 }
 
 function normalizeMessages(value) {
