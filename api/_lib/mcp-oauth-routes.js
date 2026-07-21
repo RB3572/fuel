@@ -41,8 +41,11 @@ async function authorize(req, res) {
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
   try {
-    if (req.method === 'GET') return authorizeGet(req, res)
-    return authorizeDecision(req, res, parseForm(req.body), true)
+    // These MUST be awaited: returning the promise un-awaited let rejections escape
+    // this try/catch and crash the function (FUNCTION_INVOCATION_FAILED / 500) rather
+    // than rendering a proper OAuth error page.
+    if (req.method === 'GET') return await authorizeGet(req, res)
+    return await authorizeDecision(req, res, parseForm(req.body), true)
   } catch (error) {
     console.error('Fuel MCP authorization failed', error)
     sendHtml(res, error.statusCode || 400, errorPage(error.oauthCode || 'invalid_request', error.message || 'Unable to authorize Fuel.'))

@@ -88,7 +88,11 @@ export function validateAuthorizeParameters(params) {
   const redirectUri = String(params.redirect_uri || '')
   const codeChallenge = String(params.code_challenge || '')
   const codeChallengeMethod = String(params.code_challenge_method || '')
-  const resource = String(params.resource || '')
+  // Default a missing resource to MCP_RESOURCE, exactly as the token endpoint does.
+  // ChatGPT (and other MCP clients) omit the RFC 8707 resource parameter; requiring
+  // it here rejected them, and because the authorize handler returned its async work
+  // un-awaited, that rejection surfaced as a raw 500 instead of a graceful error.
+  const resource = String(params.resource || MCP_RESOURCE)
 
   if (responseType !== 'code') throw oauthError('unsupported_response_type', 'Only the authorization code flow is supported.')
   if (!clientId || !redirectUri) throw oauthError('invalid_request', 'client_id and redirect_uri are required.')
