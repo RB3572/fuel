@@ -80,15 +80,27 @@ export async function refreshSession(session) {
     return { session, cookie: null }
   }
   const { clientId, clientSecret } = googleEnv()
-  const response = await fetch(tokenEndpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: session.tokens.refreshToken, grant_type: 'refresh_token' }),
-  })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(payload.error_description || payload.error || 'Google token refresh failed')
-  const nextSession = { ...session, tokens: compactTokenResponse(payload, session.tokens) }
-  return { session: nextSession, cookie: sessionCookie(nextSession) }
+  try {
+    const response = await fetch(tokenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: session.tokens.refreshToken, grant_type: 'refresh_token' }),
+    })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.error_description || payload.error || 'Google token refresh failed')
+    const nextSession = { ...session, tokens: compactTokenResponse(payload, session.tokens) }
+    return { session: nextSession, cookie: sessionCookie(nextSession) }
+  } catch (error) {
+    // The signed session cookie carries the user's identity, and the flows that call
+    // this — the dashboard, MCP OAuth, food logging, meal planner — need only that,
+    // not a live Google access token (they run on Neon + the Gemini API key). A dead
+    // or revoked Google refresh token (e.g. Google's 7-day testing-mode expiry) must
+    // not break them, so keep the existing session instead of throwing. Flows that
+    // genuinely need a live token (Google Sheets import) surface their own 401 via
+    // googleFetch.
+    console.warn('Google token refresh failed; continuing with existing session identity.', error?.message || error)
+    return { session, cookie: null }
+  }
 }
 
 export async function authenticatedSession(req) {
