@@ -95,7 +95,9 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
 /* The Fuel nav lives in fuel-nav.css and is identical on every page. In this chat
    layout the nav and each section must not stretch. */
 .chat-only > .topbar { flex: 0 0 auto; }
-.chat-actions { flex: 0 0 auto; display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.chat-actions { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
+.clear-chat-button { color: #b42318; border-color: #f0cfca; }
+.clear-chat-button:hover { border-color: #d98a80; }
 .new-plan-button {
   display: inline-flex;
   align-items: center;

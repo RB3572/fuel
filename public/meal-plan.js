@@ -10,6 +10,7 @@ const els={
   send:document.getElementById('send-button'),
   attach:document.getElementById('attach-button'),
   newPlan:document.getElementById('new-plan-button'),
+  clearChat:document.getElementById('clear-chat-button'),
   imageInput:document.getElementById('image-input'),
   preview:document.getElementById('image-preview'),
   previewImg:document.getElementById('preview-img'),
@@ -154,6 +155,31 @@ async function generatePlan(force=false){
   }
 }
 
+// Clears the conversation on the server (keeping the current plan) and re-renders,
+// so the thread drops back to just the plan bubble.
+async function clearChat(){
+  if(state.busy||!state.payload?.plan)return
+  if(!window.confirm('Clear the chat history? Your current meal plan stays.'))return
+  state.busy=true
+  setComposerBusy(true)
+  try{
+    const response=await timedFetch('/api/meal-plan',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({action:'clear'}),
+    },15000)
+    const payload=await response.json().catch(()=>({}))
+    if(!response.ok)throw new Error(payload.error||'Could not clear the chat.')
+    state.payload=payload
+    renderConversation(payload)
+  }catch(error){
+    setStatus(error instanceof Error?error.message:'Could not clear the chat.',{error:true})
+  }finally{
+    state.busy=false
+    setComposerBusy(false)
+  }
+}
+
 function renderConversation(payload){
   if(!payload?.plan)return
   els.chat.hidden=false
@@ -265,6 +291,7 @@ function setComposerBusy(busy){
   els.send.disabled=busy
   els.attach.disabled=busy
   if(els.newPlan)els.newPlan.disabled=busy
+  if(els.clearChat)els.clearChat.disabled=busy
 }
 
 function resizeInput(){
@@ -329,6 +356,7 @@ els.form.addEventListener('submit',event=>{
   void sendMessage(message,{image})
 })
 els.newPlan?.addEventListener('click',()=>{if(!state.busy)void generatePlan(true)})
+els.clearChat?.addEventListener('click',()=>{if(!state.busy)void clearChat()})
 els.attach.addEventListener('click',()=>els.imageInput.click())
 els.removeImage.addEventListener('click',()=>setImage(null))
 els.imageInput.addEventListener('change',async()=>{
