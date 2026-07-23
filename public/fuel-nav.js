@@ -39,3 +39,16 @@ async function paintAvatar() {
 }
 
 void paintAvatar()
+
+// On narrow screens the nav is a horizontally scrollable pill row; bring the current
+// page's pill into view. Scrolling a container is not a DOM mutation of React-owned
+// nodes, and these static pages have no React at all.
+function centreActiveNavItem() {
+  const nav = document.querySelector('.topbar .user')
+  const active = nav?.querySelector('.nav-active')
+  if (!nav || !active) return
+  if (nav.scrollWidth <= nav.clientWidth + 1) return
+  nav.scrollLeft = Math.max(0, active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2)
+}
+centreActiveNavItem()
+addEventListener('resize', centreActiveNavItem, { passive: true })

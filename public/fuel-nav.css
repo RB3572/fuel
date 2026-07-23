@@ -1,14 +1,12 @@
 /* Canonical Fuel navigation — identical markup on every surface (React dashboard,
    lifting, compare, explore + the static recipes and meal-plan pages).
 
-   Three responsive states, all from the same DOM:
-     >= 1000px  top bar, icon + label pills
-     820-999px  top bar, icon-only pills (labels hidden)
-     <  820px   brand-only top bar + a fixed bottom tab bar (icon over label)
+   Always a top navigation. Two states from the same DOM:
+     >= 900px  single row: brand left, icon + label pills right
+     <  900px  two rows: brand, then a full-width horizontally scrollable pill row
 
-   The bottom bar is the mobile pattern that actually works: thumb-reachable, every
-   target well over the 44px minimum, and each destination is labelled instead of
-   being an unexplained icon. */
+   Every destination keeps its label at every size, and pills stay at least 38px tall
+   so they remain comfortable touch targets. */
 
 :root {
   --fuel-nav-bg: #f7f7f5;
@@ -17,7 +15,6 @@
   --fuel-nav-muted: #83837e;
   --fuel-nav-border: #e3e3df;
   --fuel-nav-hover: #ececea;
-  --fuel-bottom-nav-h: 0px;
 }
 
 /* ---------- Top bar ---------------------------------------------------------- */
@@ -86,13 +83,6 @@
 .topbar .user .nav-icon-button.nav-active { background: var(--fuel-nav-ink); color: #fff; }
 .topbar .user .nav-icon-button:focus-visible { outline: 2px solid var(--fuel-nav-ink); outline-offset: 2px; }
 
-/* Tablet: keep the top bar but drop labels so seven items still fit comfortably. */
-@media (max-width: 999px) {
-  .topbar .user .nav-icon-button { padding: 0; width: 40px; justify-content: center; }
-  .topbar .user .nav-label { display: none; }
-  .topbar .user { gap: 4px; }
-}
-
 /* ---------- Menus ------------------------------------------------------------ */
 .fuel-nav-shell { position: relative; display: grid; }
 /* Scoped under .topbar .user so these beat ProfileMenu.css, which loads later in the
@@ -118,80 +108,75 @@
 .topbar .user .profile-menu button:hover, .topbar .user .profile-menu a:hover { background: var(--fuel-nav-hover); }
 .topbar .user .fuel-menu svg, .topbar .user .profile-menu svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-/* ---------- Mobile: fixed bottom tab bar ------------------------------------- */
-@media (max-width: 819px) {
-  :root { --fuel-bottom-nav-h: 60px; }
-
-  .topbar { padding: 10px 0 11px; margin-bottom: 14px; }
+/* ---------- Mobile / narrow: the nav moves to its own row under the brand -----
+   Still a top navigation, just given a full-width row of its own so every pill keeps
+   its label and a comfortable target. The row scrolls horizontally when the
+   destinations outrun the screen; the active pill is scrolled into view on load. */
+@media (max-width: 899px) {
+  .topbar {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 0 9px;
+    margin-bottom: 14px;
+  }
+  .topbar .brand { flex: 1 1 auto; }
   .topbar .brand h1 { font-size: 19px; }
   .topbar .brand-avatar { width: 34px; height: 34px; }
   .topbar .brand-date .date-long { display: none; }
   .topbar .brand-date .date-short { display: inline; }
 
   .topbar .user {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    z-index: 90;
-    margin: 0;
-    gap: 0;
-    display: flex;
-    align-items: stretch;
-    background: rgba(255, 255, 255, .93);
-    -webkit-backdrop-filter: saturate(180%) blur(14px);
-    backdrop-filter: saturate(180%) blur(14px);
-    border-top: 1px solid var(--fuel-nav-border);
-    padding: 5px 4px calc(5px + env(safe-area-inset-bottom, 0px));
-    box-shadow: 0 -6px 24px rgba(17,17,17,.06);
+    order: 2;
+    flex: 1 0 100%;
+    /* Flex items default to min-width:auto, which pins the row to its content width
+       and stops overflow-x from ever scrolling. */
+    min-width: 0;
+    max-width: 100%;
+    margin-left: 0;
+    gap: 6px;
+    /* Scrolls rather than wrapping, so the header keeps a fixed, compact height. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-padding-inline: 2px;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
   }
-  /* Every destination is an equal-width, full-height target. */
-  .topbar .user .nav-icon-button,
-  .topbar .user .fuel-nav-shell,
-  .topbar .user .profile-shell { flex: 1 1 0; min-width: 0; }
-  .topbar .user .nav-icon-button {
-    width: auto;
-    flex-direction: column;
-    justify-content: center;
-    gap: 3px;
-    height: auto;
-    min-height: 50px;
-    padding: 6px 2px 4px;
-    border-radius: 12px;
-    font-size: 10px;
-    font-weight: 700;
-  }
-  .topbar .user .nav-icon-button svg { width: 21px; height: 21px; }
-  .topbar .user .nav-icon-button .nav-label { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 700; letter-spacing: -.02em; color: inherit; }
-  .topbar .user .nav-icon-button:hover { background: transparent; }
-  /* Active tab reads as selected without a heavy filled pill. */
-  .topbar .user .nav-icon-button.nav-active { background: rgba(17,17,17,.065); color: var(--fuel-nav-ink); }
-  .topbar .user .nav-icon-button.nav-active svg { stroke-width: 2.4; }
-  .topbar .user .fuel-nav-shell,
-  .topbar .user .profile-shell { position: static; display: flex; }
-  .topbar .user .fuel-nav-shell > .nav-icon-button,
-  .topbar .user .profile-shell > .nav-icon-button { flex: 1 1 0; }
+  .topbar .user::-webkit-scrollbar { display: none; }
 
-  /* Menus open upward, above the bar, as sheets. */
+  .topbar .user .nav-icon-button {
+    flex: 0 0 auto;
+    height: 38px;
+    padding: 0 13px;
+    border-radius: 999px;
+    background: var(--fuel-nav-panel);
+    border: 1px solid var(--fuel-nav-border);
+  }
+  .topbar .user .nav-icon-button .nav-label { display: inline; font-size: 12.5px; }
+  .topbar .user .nav-icon-button.nav-active {
+    background: var(--fuel-nav-ink);
+    border-color: var(--fuel-nav-ink);
+    color: #fff;
+  }
+
+  /* The pill row is an overflow container, so an absolutely-positioned dropdown
+     inside it would be clipped. On these widths the menu becomes a sheet instead. */
   .topbar .user .fuel-menu, .topbar .user .profile-menu {
     position: fixed; left: 12px; right: 12px; top: auto;
-    bottom: calc(var(--fuel-bottom-nav-h) + env(safe-area-inset-bottom, 0px) + 10px);
-    width: auto; min-width: 0; max-height: 60vh; overflow-y: auto;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    width: auto; min-width: 0; max-height: 62vh; overflow-y: auto;
     box-shadow: 0 -10px 44px rgba(0,0,0,.18);
   }
   .topbar .user .fuel-menu button, .topbar .user .fuel-menu a,
   .topbar .user .profile-menu button, .topbar .user .profile-menu a { padding: 13px 12px; font-size: 14.5px; }
-
-  /* Reserve room so the bar never covers page content. Higher specificity than the
-     per-page shells, which set their own padding after this file loads. */
-  body .app-shell,
-  body .recipe-shell { padding-bottom: calc(var(--fuel-bottom-nav-h) + env(safe-area-inset-bottom, 0px) + 26px); }
-  body .meal-shell { padding-bottom: calc(var(--fuel-bottom-nav-h) + env(safe-area-inset-bottom, 0px)); }
 }
 
-/* Very narrow phones: seven labels still fit, just tighter. */
-@media (max-width: 400px) {
-  .topbar .user .nav-icon-button { padding: 6px 0 4px; }
-  .topbar .user .nav-icon-button .nav-label { font-size: 9px; letter-spacing: -.03em; }
-  .topbar .user .nav-icon-button svg { width: 20px; height: 20px; }
+@media (max-width: 420px) {
+  .topbar .user .nav-icon-button { padding: 0 11px; gap: 6px; }
+  .topbar .user .nav-icon-button .nav-label { font-size: 12px; }
 }
 
 /* Carried over from the retired recipe-nav.css (its nav classes are no longer

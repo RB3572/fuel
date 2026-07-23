@@ -155,8 +155,8 @@ async function generatePlan(force=false){
   }
 }
 
-// Clears the conversation on the server (keeping the current plan) and re-renders,
-// so the thread drops back to just the plan bubble.
+// Clears the conversation on the server and re-renders. The current plan is kept and
+// re-seeded as the first message, so the thread restarts from today's plan.
 async function clearChat(){
   if(state.busy||!state.payload?.plan)return
   if(!window.confirm('Clear the chat history? Your current meal plan stays.'))return
@@ -181,12 +181,16 @@ async function clearChat(){
 }
 
 function renderConversation(payload){
-  if(!payload?.plan)return
+  const messages=Array.isArray(payload?.messages)?payload.messages:[]
+  if(!payload?.plan&&!messages.length)return
   els.chat.hidden=false
-  const messages=Array.isArray(payload.messages)?payload.messages:[]
   els.thread.innerHTML=''
-  appendBubble('assistant',payload.plan,true)
-  for(const message of messages)appendBubble(message.role,message.text,false)
+  // Plans are ordinary messages in the thread now (kind:'plan' just picks the styling),
+  // so they sit in chronological order rather than pinned above the conversation.
+  // Fallback: a session saved before this change has a plan but no plan message, so
+  // show it first rather than leaving the thread empty.
+  if(payload?.plan&&!messages.some(m=>m&&m.kind==='plan'))appendBubble('assistant',payload.plan,true)
+  for(const message of messages)appendBubble(message.role,message.text,message?.kind==='plan')
   renderSources(payload.sources||[])
   requestAnimationFrame(()=>{els.thread.scrollTop=els.thread.scrollHeight})
 }
@@ -256,17 +260,13 @@ async function sendMessage(message,{retried=false,image=null}={}){
     }
     if(!response.ok)throw new Error(payload.error||'Unable to answer that message.')
     state.payload=payload
-    if(payload.planUpdated&&payload.plan){
-      // This message created a new plan (e.g. food logged). Start fresh: reset the
-      // thread so only the new plan remains, matching plan generation.
-      renderConversation(payload)
-    }else{
-      // Append rather than re-render the thread: a full re-render rebuilds from the
-      // server's text-only history and would drop the photo the user just sent.
-      appendBubble('assistant',payload.reply)
-      renderSources(payload.sources||[])
-      els.thread.scrollTop=els.thread.scrollHeight
-    }
+    // Always append rather than re-render: a full re-render rebuilds from the server's
+    // text-only history and would drop the photo the user just sent. A regenerated plan
+    // is simply the next bubble after the reply.
+    appendBubble('assistant',payload.reply)
+    if(payload.planUpdated&&payload.updatedPlan)appendBubble('assistant',payload.updatedPlan,true)
+    renderSources(payload.sources||[])
+    els.thread.scrollTop=els.thread.scrollHeight
   }catch(error){
     removeTypingBubble()
     appendBubble('assistant',friendlyClientError(error instanceof Error?error.message:'Unable to answer that message.'))

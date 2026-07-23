@@ -82,10 +82,6 @@ export async function handleMealPlan(req, res) {
       const nextState = dataChanged ? await currentState(userId) : state
       // Chat history is never cleared on regeneration: even when a new plan is built,
       // the conversation keeps flowing, capped to the most recent MAX_MESSAGES.
-      const messages = appendMessages(cache.messages, [
-        { role: 'user', text: message || 'Sent a photo to log.', at: new Date().toISOString() },
-        { role: 'assistant', text: answer.text, at: new Date().toISOString() },
-      ])
       let updatedPlan = null
       let sources = cache.sources
       let model = answer.model
@@ -98,6 +94,13 @@ export async function handleMealPlan(req, res) {
         sources = generated.sources
         model = generated.model
       }
+      // A regenerated plan simply arrives as the next message in the thread.
+      const additions = [
+        { role: 'user', text: message || 'Sent a photo to log.', at: new Date().toISOString() },
+        { role: 'assistant', text: answer.text, at: new Date().toISOString() },
+      ]
+      if (updatedPlan) additions.push({ role: 'assistant', text: updatedPlan, at: new Date().toISOString(), kind: 'plan' })
+      const messages = appendMessages(cache.messages, additions)
       const saved = await saveCachedPlan(userId, {
         foodFingerprint,
         plan,
@@ -125,13 +128,15 @@ export async function handleMealPlan(req, res) {
         await saveCachedPlan(userId, {
           foodFingerprint: cache.food_fingerprint,
           plan: cache.plan,
-          messages: [],
+          // Reset the thread to the current plan so the chat restarts from it.
+          messages: cache.plan ? [{ role: 'assistant', text: cache.plan, at: new Date().toISOString(), kind: 'plan' }] : [],
           sources: cache.sources,
           model: cache.model,
           generatedAt: cache.generated_at || new Date(),
         })
       }
-      sendJson(res, 200, { ...responseBase(state, validCache ? cache : null), messages: [], cleared: true }, cookie ? [cookie] : [])
+      const clearedMessages = cache?.plan ? keepRecentMessages([{ role: 'assistant', text: cache.plan, at: new Date().toISOString(), kind: 'plan' }]) : []
+      sendJson(res, 200, { ...responseBase(state, validCache ? cache : null), messages: clearedMessages, cleared: true }, cookie ? [cookie] : [])
       return
     }
 
@@ -146,12 +151,12 @@ export async function handleMealPlan(req, res) {
     const localTime = limitedText(body.localTime, 100) || new Date().toString()
     const timeZone = limitedText(body.timeZone, 100) || TIME_ZONE
     const generated = await generateMealPlan({ state, location, localTime, timeZone })
-    // A newly generated plan keeps the existing conversation (most recent
-    // MAX_MESSAGES); generating a plan is not a reason to wipe chat history.
+    // A newly generated plan keeps the existing conversation and is appended to it as
+    // the newest message, rather than being pinned above the thread.
     const saved = await saveCachedPlan(userId, {
       foodFingerprint: state.foodFingerprint,
       plan: generated.text,
-      messages: keepRecentMessages(cache?.messages),
+      messages: appendMessages(cache?.messages, [{ role: 'assistant', text: generated.text, at: new Date().toISOString(), kind: 'plan' }]),
       sources: generated.sources,
       model: generated.model,
       generatedAt: new Date(),
@@ -774,6 +779,9 @@ function normalizeMessages(value) {
     role: item?.role === 'assistant' ? 'assistant' : 'user',
     text: limitedText(item?.text, 12000),
     at: item?.at || null,
+    // Marks a message that IS a generated day plan, so the client renders it with the
+    // plan styling. Plans are ordinary messages in the thread, not a pinned header.
+    ...(item?.kind === 'plan' ? { kind: 'plan' } : {}),
   })).filter((item) => item.text)
 }
 

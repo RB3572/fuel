@@ -248,7 +248,10 @@ function BrandAvatar({user}:{user:SessionUser|null}){
 // One nav bar used on every in-app view (dashboard + lifting). The static pages
 // (recipes.html, meal-plan.html) render the same markup so the bar never changes.
 function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting'|'compare'|'charts';user:SessionUser|null;goDashboard:()=>void;goLifting:()=>void;goCompare:()=>void;goCharts:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
-  return <header className="topbar"><div className="brand"><BrandAvatar user={user}/><div className="brand-text"><h1>Fuel</h1><p className="brand-date"><span className="date-long">{navDateLong()}</span><span className="date-short">{navDateShort()}</span></p></div></div><nav className="user" aria-label="Fuel navigation">
+  const navRef=useRef<HTMLElement|null>(null)
+  // On narrow screens the pill row scrolls; make sure the current page is visible.
+  useEffect(()=>{const nav=navRef.current;if(!nav)return;const active=nav.querySelector<HTMLElement>('.nav-active');if(!active)return;if(nav.scrollWidth<=nav.clientWidth+1){nav.scrollLeft=0;return}nav.scrollLeft=Math.max(0,active.offsetLeft-(nav.clientWidth-active.offsetWidth)/2)},[current])
+  return <header className="topbar"><div className="brand"><BrandAvatar user={user}/><div className="brand-text"><h1>Fuel</h1><p className="brand-date"><span className="date-long">{navDateLong()}</span><span className="date-short">{navDateShort()}</span></p></div></div><nav className="user" ref={navRef} aria-label="Fuel navigation">
     <button className={`nav-icon-button${current==='dashboard'?' nav-active':''}`} onClick={goDashboard} aria-current={current==='dashboard'?'page':undefined} aria-label="Dashboard" title="Dashboard"><Home size={18}/><span className="nav-label">Home</span></button>
     <a className="nav-icon-button" href="/meal-plan.html" aria-label="Fuel AI" title="Fuel AI"><Sparkles size={18}/><span className="nav-label">AI</span></a>
     <a className="nav-icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><BookOpen size={18}/><span className="nav-label">Recipes</span></a>
