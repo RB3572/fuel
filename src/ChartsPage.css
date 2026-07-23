@@ -1,0 +1,60 @@
+.charts-page .charts-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:4px 0 16px}
+.charts-page .charts-head .eyebrow{display:block;color:#777;font-size:11px;font-weight:800;letter-spacing:.12em}
+.charts-page .charts-head h1{margin:2px 0 4px;font-size:30px;letter-spacing:-.04em}
+.charts-page .charts-head p{margin:0;color:#666;font-size:13px}
+.charts-page .charts-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.charts-page .seg{display:inline-flex;background:#f0f0f0;border-radius:11px;padding:3px}
+.charts-page .seg button{border:0;background:transparent;padding:7px 12px;border-radius:9px;font:inherit;font-size:12.5px;font-weight:700;color:#555;cursor:pointer}
+.charts-page .seg button.on{background:#111;color:#fff}
+
+.charts-page .chart-panel-wrap{padding:14px 16px 10px;margin-bottom:12px}
+.charts-page .charts-empty{padding:60px 20px;text-align:center;color:#999;font-size:13px}
+.charts-page .charts-note,.charts-page .charts-warn{margin:6px 4px 2px;font-size:11.5px;line-height:1.45;color:#999}
+.charts-page .charts-warn{color:#7a5200}
+
+.charts-page .multi-chart{position:relative}
+.charts-page .multi-chart svg{width:100%;height:auto;display:block;overflow:visible;cursor:crosshair;touch-action:pan-y}
+.charts-page .chart-grid line{stroke:#eee;stroke-width:1}
+.charts-page .chart-grid text,.charts-page .chart-dates text{fill:#999;font-size:11px;font-weight:600}
+.charts-page .chart-zero{stroke:#bbb;stroke-width:1.5;stroke-dasharray:5 4}
+.charts-page .chart-line{fill:none;stroke-width:2.4;stroke-linejoin:round;stroke-linecap:round}
+.charts-page .chart-cursor{stroke:#bbb;stroke-width:1;stroke-dasharray:4 4}
+
+.charts-page .chart-tip{position:absolute;top:6px;transform:translateX(10px);z-index:5;min-width:170px;padding:9px 11px;background:#fff;border:1px solid #e2e2e2;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.13);pointer-events:none;font-size:12px}
+.charts-page .chart-tip.flip{transform:translateX(calc(-100% - 10px))}
+.charts-page .chart-tip strong{display:block;margin-bottom:5px;font-size:12px}
+.charts-page .chart-tip div{display:flex;align-items:center;gap:6px;padding:2px 0;color:#555}
+.charts-page .chart-tip b{margin-left:auto;color:#111}
+.charts-page .tip-chip{width:8px;height:8px;border-radius:2px;flex:none}
+
+.charts-page .legend-panel{padding:10px 16px;margin-bottom:12px;display:grid;gap:2px}
+.charts-page .legend-row{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:12.5px}
+.charts-page .legend-row+.legend-row{border-top:1px solid #f0f0f0}
+.charts-page .legend-chip{width:11px;height:11px;border-radius:3px;flex:none}
+.charts-page .legend-label{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.charts-page .legend-stat{color:#333;font-weight:700;white-space:nowrap}
+.charts-page .legend-stat small{color:#aaa;font-weight:700;font-size:10px;margin-right:3px;text-transform:uppercase}
+.charts-page .legend-unit{color:#aaa;font-size:11px;min-width:38px}
+.charts-page .legend-remove{border:0;background:transparent;color:#bbb;font-size:18px;line-height:1;cursor:pointer;padding:0 2px}
+.charts-page .legend-remove:hover{color:#d92d20}
+
+.charts-page .picker-panel{padding:0 16px 14px;margin-bottom:40px}
+.charts-page .picker-head{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;padding:14px 0;font:inherit;cursor:pointer;text-align:left}
+.charts-page .picker-head strong{font-size:14px}
+.charts-page .picker-head span{color:#888;font-size:12px}
+.charts-page .picker-toggle{margin-left:auto;font-weight:700;color:#111!important}
+.charts-page .picker-group{border-top:1px solid #f0f0f0;padding:10px 0}
+.charts-page .picker-group h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#888}
+.charts-page .picker-chips{display:flex;flex-wrap:wrap;gap:7px}
+.charts-page .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #e0e0e0;background:#fff;color:#333;border-radius:999px;padding:7px 13px;font:inherit;font-size:12.5px;font-weight:650;cursor:pointer}
+.charts-page .chip:hover:not(:disabled){border-color:#aaa}
+.charts-page .chip.on{background:#111;border-color:#111;color:#fff}
+.charts-page .chip:disabled{opacity:.4;cursor:not-allowed}
+.charts-page .chip-dot{width:8px;height:8px;border-radius:50%;box-shadow:0 0 0 1.5px #fff}
+
+@media(max-width:600px){
+  .charts-page .charts-head h1{font-size:25px}
+  .charts-page .charts-controls{width:100%}
+  .charts-page .legend-stat:nth-of-type(4),.charts-page .legend-unit{display:none}
+  .charts-page .chart-tip{min-width:150px}
+}

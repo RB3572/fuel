@@ -37,5 +37,7 @@
 }
 @media (max-width: 560px) {
   .edit-banner { font-size: 12px; padding: 10px 12px; }
-  .topbar .user .nav-icon-button { width: 36px; height: 36px; }
+  /* Nav button sizing lives solely in public/fuel-nav.css. Duplicating it here won
+     the cascade (the bundled CSS loads after fuel-nav.css) and silently overrode the
+     narrow-phone breakpoint. */
 }

@@ -54,6 +54,7 @@
 .activity-rings.is-visible .rings-graphic { opacity: 1 !important; transform: scale(1) !important; }
 
 @media (max-width: 560px) {
+  .topbar .brand h1 { white-space: nowrap; }
   .topbar .user .nav-icon-button { width: 36px; height: 36px; }
   .topbar .brand h1 { font-size: 20px; }
   .topbar { gap: 8px; }
@@ -64,4 +65,16 @@
   /* The full weekday/month date cannot fit beside five nav buttons on a phone. */
   .topbar .brand-date .date-long { display: none; }
   .topbar .brand-date .date-short { display: inline; }
+}
+
+/* Must stay AFTER the 560px block: both match on a phone and they have equal
+   specificity, so the later rule wins.
+   With seven destinations the bar is tight on a phone. Shrink the buttons rather
+   than dropping the date, so the brand never gets clipped. */
+@media (max-width: 430px) {
+  .topbar .user .nav-icon-button { width: 34px; height: 34px; }
+  .topbar .user .nav-icon-button svg { width: 17px; height: 17px; }
+  .topbar .user { gap: 3px; }
+  .topbar .brand { gap: 7px; }
+  .topbar .brand h1 { font-size: 19px; }
 }

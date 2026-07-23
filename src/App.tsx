@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { Activity, Bike, BookOpen, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, Users, X } from 'lucide-react'
+import { Activity, Bike, BookOpen, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LineChart, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, Users, X } from 'lucide-react'
 import type { LiftPlan } from './workouts'
 // Code-split: the workout dataset and its stylesheet only download when the user
 // actually opens the Lifting tab, keeping them out of the dashboard's first paint.
 const LiftingPage = lazy(() => import('./LiftingPage'))
 const ComparePage = lazy(() => import('./ComparePage'))
+const ChartsPage = lazy(() => import('./ChartsPage'))
 import './App.css'
 import './ChartLabels.css'
 import './ProfileMenu.css'
@@ -182,7 +183,7 @@ export default function App(){
   const[editMode,setEditMode]=useState(false)
   const[layout,setLayout]=useState<Layout>(DEFAULT_LAYOUT)
   const[dragKey,setDragKey]=useState<SectionKey|null>(null)
-  const[page,setPage]=useState<'dashboard'|'lifting'|'compare'>(()=>{const v=typeof window!=='undefined'?new URLSearchParams(window.location.search).get('view'):null;return v==='lifting'?'lifting':v==='compare'?'compare':'dashboard'})
+  const[page,setPage]=useState<'dashboard'|'lifting'|'compare'|'charts'>(()=>{const v=typeof window!=='undefined'?new URLSearchParams(window.location.search).get('view'):null;return v==='lifting'?'lifting':v==='compare'?'compare':v==='charts'?'charts':'dashboard'})
   const[selectedLift,setSelectedLift]=useState<LiftPlan|null>(null)
   const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await fetch('/api/mlog',{cache:'no-store',headers:{Accept:'application/json'}});if(r.status===401){setSession({loading:false,authenticated:false,user:null});setData(null);return}const p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to load Fuel');setData(p);publishDashboard(p)}catch(e){setError(e instanceof Error?e.message:'Unable to load Fuel')}finally{setLoading(false)}},[])
   // Fire the session check, the dashboard payload, and the saved layout together on
@@ -204,9 +205,10 @@ export default function App(){
   if(session.loading)return <Centered title="Fuel" text="Loading your dashboard."/>
   if(!session.authenticated)return <SignIn/>
   const menu=<DashMenu editMode={editMode} loading={loading} onEdit={()=>{setEditMode(v=>!v);setMenuOpen(false)}} onRefresh={()=>{setMenuOpen(false);void load()}} onGoals={()=>{setMenuOpen(false);setGoalsOpen(true)}} onSync={()=>{setMenuOpen(false);setSyncOpen(true)}} onLogout={logout}/>
-  const navFor=(current:'dashboard'|'lifting'|'compare')=><TopNav current={current} user={session.user} goDashboard={()=>{setPage('dashboard');window.scrollTo({top:0})}} goLifting={()=>{setSelectedLift(null);setPage('lifting')}} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
+  const navFor=(current:'dashboard'|'lifting'|'compare'|'charts')=><TopNav current={current} user={session.user} goDashboard={()=>{setPage('dashboard');window.scrollTo({top:0})}} goLifting={()=>{setSelectedLift(null);setPage('lifting')}} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
   if(page==='lifting')return <Suspense fallback={<Centered title="Fuel" text="Loading lifting plans."/>}><LiftingPage selected={selectedLift} onSelect={setSelectedLift} nav={navFor('lifting')}/></Suspense>
   if(page==='compare')return <Suspense fallback={<Centered title="Fuel" text="Loading comparison."/>}><ComparePage data={data} nav={navFor('compare')}/></Suspense>
+  if(page==='charts')return <Suspense fallback={<Centered title="Fuel" text="Loading charts."/>}><ChartsPage data={data} nav={navFor('charts')}/></Suspense>
   const s=data?.today.summary
   const workoutDetail=s?.exerciseMinutes!=null?`${fmt(s.exerciseMinutes)} total exercise minutes`:`${data?.today.workouts.length||0} activity summaries`
   const sectionNodes:Record<SectionKey,{title:string;detail:string;node:ReactNode}>={
@@ -220,7 +222,7 @@ export default function App(){
     recovery:{title:'Recovery',detail:`Sleep target ${fmt(goalTarget(data?.goals,'sleepHours',8),1)} hours`,node:<section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1} chartTitle="Sleep duration" yLabel="Hours"/></section></section>},
   }
   return <main className={`app-shell${editMode?' edit-mode':''}`}>
-    <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
+    <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
     <VitalsSignal trends={data?.trends||[]} summary={s}/>
     {editMode&&<div className="edit-banner panel"><LayoutGrid size={16}/><span>Editing your dashboard — drag to reorder, hide sections, and toggle energy metrics.</span><button className="edit-done" onClick={()=>setEditMode(false)}><Check size={15}/>Done</button></div>}
     {error&&<div className="error">{error}</div>}
@@ -245,13 +247,14 @@ function BrandAvatar({user}:{user:SessionUser|null}){
 
 // One nav bar used on every in-app view (dashboard + lifting). The static pages
 // (recipes.html, meal-plan.html) render the same markup so the bar never changes.
-function TopNav({current,user,goDashboard,goLifting,goCompare,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting'|'compare';user:SessionUser|null;goDashboard:()=>void;goLifting:()=>void;goCompare:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
+function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting'|'compare'|'charts';user:SessionUser|null;goDashboard:()=>void;goLifting:()=>void;goCompare:()=>void;goCharts:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
   return <header className="topbar"><div className="brand"><BrandAvatar user={user}/><div className="brand-text"><h1>Fuel</h1><p className="brand-date"><span className="date-long">{navDateLong()}</span><span className="date-short">{navDateShort()}</span></p></div></div><nav className="user" aria-label="Fuel navigation">
     <button className={`nav-icon-button${current==='dashboard'?' nav-active':''}`} onClick={goDashboard} aria-current={current==='dashboard'?'page':undefined} aria-label="Dashboard" title="Dashboard"><Home size={18}/></button>
     <a className="nav-icon-button" href="/meal-plan.html" aria-label="Fuel AI" title="Fuel AI"><Sparkles size={18}/></a>
     <a className="nav-icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><BookOpen size={18}/></a>
     <button className={`nav-icon-button${current==='lifting'?' nav-active':''}`} onClick={goLifting} aria-current={current==='lifting'?'page':undefined} aria-label="Lifting" title="Lifting"><Dumbbell size={18}/></button>
     <button className={`nav-icon-button${current==='compare'?' nav-active':''}`} onClick={goCompare} aria-current={current==='compare'?'page':undefined} aria-label="Compare" title="Compare to your age group"><Users size={18}/></button>
+    <button className={`nav-icon-button${current==='charts'?' nav-active':''}`} onClick={goCharts} aria-current={current==='charts'?'page':undefined} aria-label="Charts" title="Plot metrics over time"><LineChart size={18}/></button>
     <div className="profile-shell"><button className="nav-icon-button" onClick={onMenu} aria-expanded={menuOpen} aria-label="Menu" title="Menu"><SlidersHorizontal size={18}/></button>{menuOpen&&menu}</div>
   </nav></header>
 }
