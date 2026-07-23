@@ -1,0 +1,44 @@
+/* Skinny, space-efficient daily vitals health-signal bar at the very top of the page. */
+.vitals-signal{border:1px solid #e5e5e5;border-radius:12px;margin:0 0 12px;background:#f6f6f6;overflow:hidden}
+.vitals-signal .vs-head{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;padding:9px 14px;cursor:pointer;text-align:left;font:inherit;color:inherit;min-width:0}
+.vitals-signal .vs-dot{flex:none;width:9px;height:9px;border-radius:50%;background:#9a9a9a}
+.vitals-signal .vs-score{flex:none;font-weight:800;font-size:14px;letter-spacing:-.02em;color:#111}
+.vitals-signal .vs-score small{font-weight:700;font-size:11px;color:#999;margin-left:1px}
+.vitals-signal .vs-text{flex:1;min-width:0;font-size:13px;font-weight:600;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vitals-signal .vs-toggle{flex:none;font-size:12px;font-weight:700;color:#777}
+.vitals-signal .vs-head:hover .vs-toggle{color:#111}
+
+/* States */
+.vitals-signal.is-healthy{background:#f0faf3;border-color:#bfe6cd}
+.vitals-signal.is-healthy .vs-dot{background:#14894e;box-shadow:0 0 0 3px rgba(20,137,78,.15)}
+.vitals-signal.is-healthy .vs-text{color:#14653a}
+.vitals-signal.is-watch{background:#fff8ec;border-color:#f0dcb4}
+.vitals-signal.is-watch .vs-dot{background:#b7791f}
+.vitals-signal.is-watch .vs-text{color:#7a5200}
+.vitals-signal.is-flag{background:#fef2f2;border-color:#f4c9c9}
+.vitals-signal.is-flag .vs-dot{background:#d92d20;box-shadow:0 0 0 3px rgba(217,45,32,.14)}
+.vitals-signal.is-flag .vs-text{color:#a62016}
+.vitals-signal.is-flag .vs-score{color:#a62016}
+.vitals-signal.is-baseline{display:flex;align-items:center;gap:10px;padding:9px 14px}
+.vitals-signal.is-baseline .vs-text{font-size:13px;font-weight:600;color:#666;white-space:normal}
+
+/* Expanded detail */
+.vitals-signal .vs-panel{padding:2px 14px 12px}
+.vitals-signal .vs-rows{display:grid;gap:2px;border-top:1px solid rgba(0,0,0,.07);padding-top:8px}
+.vitals-signal .vs-row{display:grid;grid-template-columns:1.4fr auto auto auto;align-items:center;gap:10px;padding:5px 0;font-size:12.5px}
+.vitals-signal .vs-row+.vs-row{border-top:1px solid rgba(0,0,0,.045)}
+.vitals-signal .vs-label{font-weight:700;color:#222}
+.vitals-signal .vs-today{font-weight:700;color:#111;text-align:right}
+.vitals-signal .vs-typ{color:#888;text-align:right;font-size:11.5px}
+.vitals-signal .vs-badge{justify-self:end;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:#e9efe9;color:#3a6a44;white-space:nowrap}
+.vitals-signal .vs-row.is-watch .vs-badge{background:#fbecd0;color:#7a5200}
+.vitals-signal .vs-row.is-flag .vs-badge{background:#f9d8d5;color:#a62016}
+.vitals-signal .vs-note{grid-column:2/-1;justify-self:end;color:#999;font-size:11.5px}
+.vitals-signal .vs-method{margin:10px 0 0;font-size:11px;line-height:1.45;color:#8a8a8a}
+
+@media(max-width:560px){
+  .vitals-signal .vs-toggle{display:none}
+  .vitals-signal .vs-row{grid-template-columns:1fr auto;row-gap:1px}
+  .vitals-signal .vs-typ{grid-column:1;text-align:left}
+  .vitals-signal .vs-badge{grid-row:1;grid-column:2}
+}

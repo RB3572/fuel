@@ -9,6 +9,7 @@ import './App.css'
 import './ChartLabels.css'
 import './ProfileMenu.css'
 import './DashEdit.css'
+import './VitalsSignal.css'
 
 type N = number | null
 type RangeKey = 'day' | 'week' | 'month'
@@ -73,6 +74,99 @@ function publishDashboard(payload:DashboardData){(window as unknown as{__fuelDas
 
 function useInView<T extends HTMLElement>(){const ref=useRef<T|null>(null);const[visible,setVisible]=useState(false);useEffect(()=>{const node=ref.current;if(!node)return;if(typeof IntersectionObserver==='undefined'){setVisible(true);return}const observer=new IntersectionObserver(([entry])=>{if(entry.isIntersecting){setVisible(true);observer.disconnect()}},{threshold:.18,rootMargin:'0px 0px -6% 0px'});observer.observe(node);return()=>observer.disconnect()},[]);return{ref,visible}}
 
+// ---- Daily vitals health signal -------------------------------------------------
+// Compares TODAY's vital signs against the user's OWN history and flags days that are
+// statistically unusual — an early, personalized "are you coming down with something"
+// signal. Method (kept honest and defensible, not a black box):
+//  * Per vital: a modified z-score z = (today − median)/(1.4826·MAD). Median/MAD is the
+//    Iglewicz–Hoaglin robust estimator, so one or two odd past days don't distort the
+//    baseline the way mean/SD would. (Falls back to mean/SD if MAD is 0.)
+//  * Two-tailed p = erfc(|z|/√2): the chance a normal day would look this extreme.
+//  * A vital is FLAGGED only when p < 0.05/N (Bonferroni across the N vitals tested),
+//    so checking many vitals doesn't manufacture false alarms.
+//  * Score 1–10 from combined surprise −log10(p): the single most unusual vital drives
+//    it, and additional deviating vitals compound it (multiple off-signals are less
+//    likely to be chance). 10 = today looks just like your history, 1 = highly unusual.
+// Informational only — this is not a medical diagnosis.
+type VitalKey='restingHeartRate'|'hrv'|'respiratoryRate'|'bloodOxygen'|'walkingHeartRateAverage'|'cardioRecovery'
+type VitalDef={key:VitalKey;label:string;unit:string;decimals:number}
+const VITAL_DEFS:VitalDef[]=[
+  {key:'restingHeartRate',label:'Resting heart rate',unit:'bpm',decimals:0},
+  {key:'hrv',label:'HRV',unit:'ms',decimals:0},
+  {key:'respiratoryRate',label:'Respiratory rate',unit:'/min',decimals:1},
+  {key:'bloodOxygen',label:'Blood oxygen',unit:'%',decimals:1},
+  {key:'walkingHeartRateAverage',label:'Walking heart rate',unit:'bpm',decimals:0},
+  {key:'cardioRecovery',label:'Cardio recovery',unit:'bpm',decimals:0},
+]
+const VITALS_MIN_HISTORY=7
+type VitalItem=VitalDef&{today:number;center?:number;z?:number;p?:number;direction?:'up'|'down';insufficient?:boolean;flagged?:boolean;watch?:boolean}
+type VitalsSignalResult={status:'healthy'|'watch'|'flag'|'baseline';score:number|null;evaluated:number;flags:VitalItem[];items:VitalItem[]}
+// Abramowitz & Stegun 7.1.26 complementary error function (x ≥ 0), |error| < 1.5e-7.
+function erfc(x:number){const t=1/(1+0.3275911*x);const y=((((1.061405429*t-1.453152027)*t+1.421413741)*t-0.284496736)*t+0.254829592)*t;return y*Math.exp(-x*x)}
+function median(values:number[]){const s=[...values].sort((a,b)=>a-b);const n=s.length;return n%2?s[(n-1)/2]:(s[n/2-1]+s[n/2])/2}
+function computeVitalsSignal(trends:TrendPoint[],summary:Summary|undefined):VitalsSignalResult{
+  if(!summary)return{status:'baseline',score:null,evaluated:0,flags:[],items:[]}
+  const today=summary.date
+  const items:VitalItem[]=[]
+  for(const def of VITAL_DEFS){
+    const todayVal=summary[def.key]
+    if(todayVal==null||!Number.isFinite(todayVal))continue
+    const baseline=(trends||[]).filter(t=>t.date!==today).map(t=>t[def.key]).filter((v):v is number=>v!=null&&Number.isFinite(v))
+    if(baseline.length<VITALS_MIN_HISTORY){items.push({...def,today:todayVal,insufficient:true});continue}
+    const m=median(baseline)
+    const mad=median(baseline.map(v=>Math.abs(v-m)))
+    let sigma=1.4826*mad
+    if(!(sigma>0)){const mean=baseline.reduce((a,b)=>a+b,0)/baseline.length;sigma=Math.sqrt(baseline.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(1,baseline.length-1))}
+    if(!(sigma>0)){items.push({...def,today:todayVal,center:m,insufficient:true});continue}
+    const z=(todayVal-m)/sigma
+    const p=Math.min(1,erfc(Math.abs(z)/Math.SQRT2))
+    items.push({...def,today:todayVal,center:m,z,p,direction:z>=0?'up':'down'})
+  }
+  const evaluated=items.filter(i=>i.z!=null)
+  if(!evaluated.length)return{status:'baseline',score:null,evaluated:0,flags:[],items}
+  const alpha=0.05/evaluated.length
+  for(const i of evaluated){i.flagged=(i.p as number)<alpha;i.watch=!i.flagged&&Math.abs(i.z as number)>=2}
+  const surprises=evaluated.map(i=>-Math.log10(Math.max(i.p as number,1e-12)))
+  const primary=Math.max(...surprises)
+  const primaryIdx=surprises.indexOf(primary)
+  const extra=evaluated.reduce((sum,i,idx)=>idx!==primaryIdx&&Math.abs(i.z as number)>=2?sum-Math.log10(Math.max(i.p as number,1e-12)):sum,0)
+  const combined=primary+0.5*extra
+  const score=Math.max(1,Math.min(10,Math.round(10-2.2*Math.max(0,combined-1))))
+  const flags=evaluated.filter(i=>i.flagged).sort((a,b)=>(a.p as number)-(b.p as number))
+  const status:VitalsSignalResult['status']=flags.length?'flag':evaluated.some(i=>i.watch)?'watch':'healthy'
+  return{status,score,evaluated:evaluated.length,flags,items}
+}
+function VitalsSignal({trends,summary}:{trends:TrendPoint[];summary:Summary|undefined}){
+  const[open,setOpen]=useState(false)
+  const signal=computeVitalsSignal(trends,summary)
+  if(signal.status==='baseline')return <div className="vitals-signal is-baseline"><span className="vs-dot"/><span className="vs-text">Building your vitals baseline — a few more days of synced history unlocks the daily health signal.</span></div>
+  const{status,score,flags,items,evaluated}=signal
+  const headline=status==='flag'
+    ?`Heads up — ${flags.slice(0,3).map(f=>`${f.label.toLowerCase()} ${f.direction==='up'?'↑':'↓'}`).join(', ')} vs your usual`
+    :status==='watch'
+      ?'Vitals mostly on track — one is drifting from your usual'
+      :'Vitals aligned with your baseline'
+  return <div className={`vitals-signal is-${status}`}>
+    <button className="vs-head" onClick={()=>setOpen(v=>!v)} aria-expanded={open}>
+      <span className="vs-dot"/>
+      <span className="vs-score" aria-label={`Vitals alignment score ${score} out of 10`}>{score}<small>/10</small></span>
+      <span className="vs-text">{headline}</span>
+      <span className="vs-toggle">{open?'Hide':'Details'}</span>
+    </button>
+    {open&&<div className="vs-panel">
+      <div className="vs-rows">
+        {items.map(it=><div className={`vs-row${it.flagged?' is-flag':it.watch?' is-watch':''}`} key={it.key}>
+          <span className="vs-label">{it.label}</span>
+          {it.insufficient
+            ?<span className="vs-note">Not enough history yet</span>
+            :<><span className="vs-today">{fmt(it.today,it.decimals)} {it.unit}</span><span className="vs-typ">usually ~{fmt(it.center,it.decimals)}</span><span className="vs-badge">{it.flagged||it.watch?`${it.direction==='up'?'High ↑':'Low ↓'} · z ${fmt(Math.abs(it.z as number),1)}`:'Typical'}</span></>}
+        </div>)}
+      </div>
+      <p className="vs-method">Today vs. your own history using a modified z-score (median/MAD), Bonferroni-corrected across {evaluated} vital{evaluated===1?'':'s'}. 10 = typical for you, 1 = highly unusual. Informational only — not a medical diagnosis.</p>
+    </div>}
+  </div>
+}
+
 export default function App(){
   const[session,setSession]=useState<{loading:boolean;authenticated:boolean;user:SessionUser|null}>({loading:true,authenticated:false,user:null})
   const[data,setData]=useState<DashboardData|null>(null)
@@ -124,6 +218,7 @@ export default function App(){
   }
   return <main className={`app-shell${editMode?' edit-mode':''}`}>
     <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
+    <VitalsSignal trends={data?.trends||[]} summary={s}/>
     {editMode&&<div className="edit-banner panel"><LayoutGrid size={16}/><span>Editing your dashboard — drag to reorder, hide sections, and toggle energy metrics.</span><button className="edit-done" onClick={()=>setEditMode(false)}><Check size={15}/>Done</button></div>}
     {error&&<div className="error">{error}</div>}
     <EnergyHero summary={s} trends={data?.trends||[]} energyAverages={data?.energyAverages} range={range} setRange={setRange} boxes={layout.energyBoxes} editMode={editMode} onToggleBox={toggleBox}/>
