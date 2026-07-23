@@ -1,80 +1,201 @@
-/* Canonical Fuel top nav — identical on every page (dashboard, lifting, recipes,
-   meal planner). Linked by index.html and the static pages; React uses the same
-   class names. High-specificity selectors so it wins over per-page button styles. */
-.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 18px; }
+/* Canonical Fuel navigation — identical markup on every surface (React dashboard,
+   lifting, compare, explore + the static recipes and meal-plan pages).
+
+   Three responsive states, all from the same DOM:
+     >= 1000px  top bar, icon + label pills
+     820-999px  top bar, icon-only pills (labels hidden)
+     <  820px   brand-only top bar + a fixed bottom tab bar (icon over label)
+
+   The bottom bar is the mobile pattern that actually works: thumb-reachable, every
+   target well over the 44px minimum, and each destination is labelled instead of
+   being an unexplained icon. */
+
+:root {
+  --fuel-nav-bg: #f7f7f5;
+  --fuel-nav-panel: #ffffff;
+  --fuel-nav-ink: #111111;
+  --fuel-nav-muted: #83837e;
+  --fuel-nav-border: #e3e3df;
+  --fuel-nav-hover: #ececea;
+  --fuel-bottom-nav-h: 0px;
+}
+
+/* ---------- Top bar ---------------------------------------------------------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 18px;
+  padding: 12px 0 13px;
+  background: var(--fuel-nav-bg);
+}
 .topbar .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
-.topbar .brand h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; color: #111; line-height: 1.1; }
+.topbar .brand h1 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.03em; line-height: 1.1; color: var(--fuel-nav-ink); white-space: nowrap; }
 .topbar .brand-text { display: grid; gap: 1px; min-width: 0; }
-.topbar .brand-date { margin: 0; font-size: 12px; font-weight: 600; color: #6b6b6b; white-space: nowrap; }
+.topbar .brand-date { margin: 0; font-size: 12px; font-weight: 600; color: var(--fuel-nav-muted); white-space: nowrap; }
 .topbar .brand-date .date-short { display: none; }
 
 /* Signed-in Google account picture */
 .topbar .brand-avatar {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 36px; height: 36px;
   border-radius: 50%;
   object-fit: cover;
-  border: 1px solid #e2e2e2;
-  background: #f2f2f2;
+  border: 1px solid var(--fuel-nav-border);
+  background: #f0f0ee;
 }
-.topbar .brand-avatar-fallback { display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #444; }
-.topbar .user { display: flex; align-items: center; gap: 8px; margin-left: auto; position: relative; }
+.topbar .brand-avatar-fallback { display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #4a4a46; }
+
+/* ---------- Nav items -------------------------------------------------------- */
+.topbar .user { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: 0 0 auto; }
 .topbar .user .nav-icon-button {
-  display: inline-grid;
-  place-items: center;
-  width: 38px;
+  position: relative;
+  /* Must not shrink: the labels are nowrap, so a shrinking pill overflows its text
+     onto the neighbouring item instead of getting narrower. */
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  /* App.css pins `.user button { width: 38px }`, which squashed the <button> items to
+     icon-only while the <a> items sized naturally. Set it back explicitly. */
+  width: auto;
   height: 38px;
-  padding: 0;
-  border: 1px solid #dcdcdc;
+  padding: 0 11px;
+  border: 0;
   border-radius: 11px;
-  background: #fff;
-  color: #111;
+  background: transparent;
+  color: var(--fuel-nav-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  white-space: nowrap;
   cursor: pointer;
   text-decoration: none;
   box-shadow: none;
+  transition: background-color .15s ease, color .15s ease;
 }
-.topbar .user .nav-icon-button:hover { border-color: #b6b6b6; }
-.topbar .user .nav-icon-button.nav-active { background: #111; border-color: #111; color: #fff; }
-.topbar .user .nav-icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.topbar .user .nav-icon-button svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* Specific enough to beat App.css's generic `.user span` rule, which loads later. */
+.topbar .user .nav-icon-button .nav-label { font-size: 13px; font-weight: 650; color: inherit; letter-spacing: -.01em; }
+.topbar .user .nav-icon-button:hover { background: var(--fuel-nav-hover); color: var(--fuel-nav-ink); }
+.topbar .user .nav-icon-button.nav-active { background: var(--fuel-nav-ink); color: #fff; }
+.topbar .user .nav-icon-button:focus-visible { outline: 2px solid var(--fuel-nav-ink); outline-offset: 2px; }
 
-/* Menu dropdown (static pages; React renders its own richer menu with the same trigger) */
+/* Tablet: keep the top bar but drop labels so seven items still fit comfortably. */
+@media (max-width: 999px) {
+  .topbar .user .nav-icon-button { padding: 0; width: 40px; justify-content: center; }
+  .topbar .user .nav-label { display: none; }
+  .topbar .user { gap: 4px; }
+}
+
+/* ---------- Menus ------------------------------------------------------------ */
 .fuel-nav-shell { position: relative; display: grid; }
-.fuel-menu { position: absolute; right: 0; top: 46px; z-index: 60; min-width: 184px; padding: 6px; display: grid; gap: 2px; background: #fff; border: 1px solid #e5e5e5; border-radius: 14px; box-shadow: 0 16px 40px rgba(0,0,0,.14); }
+/* Scoped under .topbar .user so these beat ProfileMenu.css, which loads later in the
+   bundle and would otherwise win on equal specificity. */
+.topbar .user .fuel-menu, .topbar .user .profile-menu {
+  position: absolute; right: 0; left: auto; top: 46px; bottom: auto; z-index: 100;
+  min-width: 208px; padding: 6px;
+  display: grid; gap: 2px;
+  background: var(--fuel-nav-panel);
+  border: 1px solid var(--fuel-nav-border);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(0,0,0,.15);
+}
 .fuel-menu[hidden] { display: none; }
-.fuel-menu button, .fuel-menu a { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: 0; background: transparent; color: #111; font-size: 13px; font-weight: 600; text-align: left; text-decoration: none; border-radius: 9px; cursor: pointer; }
-.fuel-menu button:hover, .fuel-menu a:hover { background: #f4f4f4; }
-.fuel-menu svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.topbar .user .fuel-menu button, .topbar .user .fuel-menu a,
+.topbar .user .profile-menu button, .topbar .user .profile-menu a {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 11px 12px; border: 0; background: transparent; color: var(--fuel-nav-ink);
+  font-size: 13.5px; font-weight: 650; text-align: left; text-decoration: none;
+  border-radius: 10px; cursor: pointer;
+}
+.topbar .user .fuel-menu button:hover, .topbar .user .fuel-menu a:hover,
+.topbar .user .profile-menu button:hover, .topbar .user .profile-menu a:hover { background: var(--fuel-nav-hover); }
+.topbar .user .fuel-menu svg, .topbar .user .profile-menu svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- Mobile: fixed bottom tab bar ------------------------------------- */
+@media (max-width: 819px) {
+  :root { --fuel-bottom-nav-h: 60px; }
+
+  .topbar { padding: 10px 0 11px; margin-bottom: 14px; }
+  .topbar .brand h1 { font-size: 19px; }
+  .topbar .brand-avatar { width: 34px; height: 34px; }
+  .topbar .brand-date .date-long { display: none; }
+  .topbar .brand-date .date-short { display: inline; }
+
+  .topbar .user {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 90;
+    margin: 0;
+    gap: 0;
+    display: flex;
+    align-items: stretch;
+    background: rgba(255, 255, 255, .93);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--fuel-nav-border);
+    padding: 5px 4px calc(5px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -6px 24px rgba(17,17,17,.06);
+  }
+  /* Every destination is an equal-width, full-height target. */
+  .topbar .user .nav-icon-button,
+  .topbar .user .fuel-nav-shell,
+  .topbar .user .profile-shell { flex: 1 1 0; min-width: 0; }
+  .topbar .user .nav-icon-button {
+    width: auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    height: auto;
+    min-height: 50px;
+    padding: 6px 2px 4px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .topbar .user .nav-icon-button svg { width: 21px; height: 21px; }
+  .topbar .user .nav-icon-button .nav-label { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; font-weight: 700; letter-spacing: -.02em; color: inherit; }
+  .topbar .user .nav-icon-button:hover { background: transparent; }
+  /* Active tab reads as selected without a heavy filled pill. */
+  .topbar .user .nav-icon-button.nav-active { background: rgba(17,17,17,.065); color: var(--fuel-nav-ink); }
+  .topbar .user .nav-icon-button.nav-active svg { stroke-width: 2.4; }
+  .topbar .user .fuel-nav-shell,
+  .topbar .user .profile-shell { position: static; display: flex; }
+  .topbar .user .fuel-nav-shell > .nav-icon-button,
+  .topbar .user .profile-shell > .nav-icon-button { flex: 1 1 0; }
+
+  /* Menus open upward, above the bar, as sheets. */
+  .topbar .user .fuel-menu, .topbar .user .profile-menu {
+    position: fixed; left: 12px; right: 12px; top: auto;
+    bottom: calc(var(--fuel-bottom-nav-h) + env(safe-area-inset-bottom, 0px) + 10px);
+    width: auto; min-width: 0; max-height: 60vh; overflow-y: auto;
+    box-shadow: 0 -10px 44px rgba(0,0,0,.18);
+  }
+  .topbar .user .fuel-menu button, .topbar .user .fuel-menu a,
+  .topbar .user .profile-menu button, .topbar .user .profile-menu a { padding: 13px 12px; font-size: 14.5px; }
+
+  /* Reserve room so the bar never covers page content. Higher specificity than the
+     per-page shells, which set their own padding after this file loads. */
+  body .app-shell,
+  body .recipe-shell { padding-bottom: calc(var(--fuel-bottom-nav-h) + env(safe-area-inset-bottom, 0px) + 26px); }
+  body .meal-shell { padding-bottom: calc(var(--fuel-bottom-nav-h) + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Very narrow phones: seven labels still fit, just tighter. */
+@media (max-width: 400px) {
+  .topbar .user .nav-icon-button { padding: 6px 0 4px; }
+  .topbar .user .nav-icon-button .nav-label { font-size: 9px; letter-spacing: -.03em; }
+  .topbar .user .nav-icon-button svg { width: 20px; height: 20px; }
+}
 
 /* Carried over from the retired recipe-nav.css (its nav classes are no longer
-   rendered; these two rules are still load-bearing). */
-.profile-menu { z-index: 100; }
+   rendered; these rules are still load-bearing). */
 .activity-rings .fitness-track,
 .activity-rings .fitness-progress { display: block !important; visibility: visible !important; opacity: 1 !important; }
 .activity-rings.is-visible .rings-graphic { opacity: 1 !important; transform: scale(1) !important; }
-
-@media (max-width: 560px) {
-  .topbar .brand h1 { white-space: nowrap; }
-  .topbar .user .nav-icon-button { width: 36px; height: 36px; }
-  .topbar .brand h1 { font-size: 20px; }
-  .topbar { gap: 8px; }
-  .topbar .user { gap: 5px; }
-  .topbar .brand { gap: 8px; }
-  .topbar .brand-avatar { width: 30px; height: 30px; }
-  .topbar .brand-date { font-size: 11px; }
-  /* The full weekday/month date cannot fit beside five nav buttons on a phone. */
-  .topbar .brand-date .date-long { display: none; }
-  .topbar .brand-date .date-short { display: inline; }
-}
-
-/* Must stay AFTER the 560px block: both match on a phone and they have equal
-   specificity, so the later rule wins.
-   With seven destinations the bar is tight on a phone. Shrink the buttons rather
-   than dropping the date, so the brand never gets clipped. */
-@media (max-width: 430px) {
-  .topbar .user .nav-icon-button { width: 34px; height: 34px; }
-  .topbar .user .nav-icon-button svg { width: 17px; height: 17px; }
-  .topbar .user { gap: 3px; }
-  .topbar .brand { gap: 7px; }
-  .topbar .brand h1 { font-size: 19px; }
-}
