@@ -1,6 +1,7 @@
 /* The unified top-nav styles live in public/fuel-nav.css (shared with the static
-   pages). This file adds only the dashboard-edit and lifting-subhead styles. */
-.topbar .user .profile-shell { display: grid; position: relative; }
+   pages). This file adds only the dashboard-edit and lifting-subhead styles.
+   The profile-shell/nav sizing lives ONLY in fuel-nav.css — duplicating it here won
+   the cascade (this bundle loads after fuel-nav.css) and broke the mobile nav. */
 
 /* Edit banner */
 .edit-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; margin-bottom: 14px; border-radius: 14px; background: #111; color: #fff; font-size: 13px; box-shadow: none; }
@@ -32,9 +33,6 @@
 .lifting-subhead h1, .lifting-subhead p { margin: 0; }
 .lifting-subhead p { color: #707070; font-size: 12px; }
 
-@media (max-width: 850px) {
-  .topbar .user .profile-shell { display: grid; }
-}
 @media (max-width: 560px) {
   .edit-banner { font-size: 12px; padding: 10px 12px; }
   /* Nav button sizing lives solely in public/fuel-nav.css. Duplicating it here won

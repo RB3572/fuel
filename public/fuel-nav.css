@@ -84,7 +84,10 @@
 .topbar .user .nav-icon-button:focus-visible { outline: 2px solid var(--fuel-nav-ink); outline-offset: 2px; }
 
 /* ---------- Menus ------------------------------------------------------------ */
-.fuel-nav-shell { position: relative; display: grid; }
+/* Wrapper around the config ("More") button + its dropdown. The React app uses
+   .profile-shell, the static pages .fuel-nav-shell; keep them identical here so this
+   file is the single source of truth (DashEdit.css used to redeclare these and win). */
+.fuel-nav-shell, .topbar .user .profile-shell { position: relative; display: grid; }
 /* Scoped under .topbar .user so these beat ProfileMenu.css, which loads later in the
    bundle and would otherwise win on equal specificity. */
 .topbar .user .fuel-menu, .topbar .user .profile-menu {
@@ -160,6 +163,24 @@
     background: var(--fuel-nav-ink);
     border-color: var(--fuel-nav-ink);
     color: #fff;
+  }
+
+  /* Pin the config ("More") pill to the right so it is ALWAYS reachable while the
+     destination pills scroll under it. Without this it scrolled off the right edge on
+     the dashboard — the row rests scrolled fully left on the active Home pill — which
+     hid the whole config menu. Sticky within the horizontal scroll container keeps it
+     glued to the right edge; the gradient fades incoming pills out behind it. */
+  .topbar .user .profile-shell,
+  .topbar .user .fuel-nav-shell {
+    position: sticky;
+    right: -1px;
+    z-index: 3;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    margin-left: 2px;
+    padding-left: 16px;
+    background: linear-gradient(to right, transparent, var(--fuel-nav-bg) 16px);
   }
 
   /* The pill row is an overflow container, so an absolutely-positioned dropdown
