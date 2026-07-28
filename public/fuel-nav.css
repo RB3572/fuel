@@ -184,12 +184,29 @@
   }
 
   /* The pill row is an overflow container, so an absolutely-positioned dropdown
-     inside it would be clipped. On these widths the menu becomes a sheet instead. */
+     inside it would be clipped by it. `fixed` escapes that clipping — but fixed
+     coordinates are viewport-relative, so they have to be measured: whoever opens the
+     menu writes the trigger's position into these two custom properties (the React
+     TopNav for the dashboard, anchorFuelMenu in fuel-nav.js for the static pages).
+     The fallbacks below match a default two-row header, so the panel still lands under
+     the "More" pill if that measurement has not run yet.
+
+     This used to be a sheet pinned to the bottom of the screen, which read as the
+     button doing nothing: you tap at the top of the page and the panel appears 450px
+     away, behind the Safari toolbar. */
   .topbar .user .fuel-menu, .topbar .user .profile-menu {
-    position: fixed; left: 12px; right: 12px; top: auto;
-    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-    width: auto; min-width: 0; max-height: 62vh; overflow-y: auto;
-    box-shadow: 0 -10px 44px rgba(0,0,0,.18);
+    position: fixed;
+    top: var(--fuel-menu-top, 124px);
+    right: var(--fuel-menu-right, 12px);
+    left: auto;
+    bottom: auto;
+    width: min(268px, calc(100vw - 24px));
+    min-width: 0;
+    /* Never taller than the space left below the trigger. */
+    max-height: calc(100vh - var(--fuel-menu-top, 124px) - 16px);
+    max-height: calc(100dvh - var(--fuel-menu-top, 124px) - 16px);
+    overflow-y: auto;
+    box-shadow: 0 18px 44px rgba(0,0,0,.18);
   }
   .topbar .user .fuel-menu button, .topbar .user .fuel-menu a,
   .topbar .user .profile-menu button, .topbar .user .profile-menu a { padding: 13px 12px; font-size: 14.5px; }

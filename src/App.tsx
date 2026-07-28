@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { Activity, Bike, BookOpen, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LineChart, MapPin, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, Users, X } from 'lucide-react'
 import type { LiftPlan } from './workouts'
@@ -316,8 +316,32 @@ function BrandAvatar({user}:{user:SessionUser|null}){
 // (recipes.html, meal-plan.html) render the same markup so the bar never changes.
 function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,goPlaces,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting'|'compare'|'charts'|'places';user:SessionUser|null;goDashboard:()=>void;goLifting:()=>void;goCompare:()=>void;goCharts:()=>void;goPlaces:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
   const navRef=useRef<HTMLElement|null>(null)
+  const shellRef=useRef<HTMLDivElement|null>(null)
   // On narrow screens the pill row scrolls; make sure the current page is visible.
   useEffect(()=>{const nav=navRef.current;if(!nav)return;const active=nav.querySelector<HTMLElement>('.nav-active');if(!active)return;if(nav.scrollWidth<=nav.clientWidth+1){nav.scrollLeft=0;return}nav.scrollLeft=Math.max(0,active.offsetLeft-(nav.clientWidth-active.offsetWidth)/2)},[current])
+  // On narrow screens the menu is positioned `fixed` to escape the scrolling pill
+  // row's clipping, so its coordinates have to be measured — anchor it under the
+  // "More" pill. See the matching block in fuel-nav.css.
+  useLayoutEffect(()=>{
+    if(!menuOpen)return
+    const shell=shellRef.current;if(!shell)return
+    const trigger=shell.querySelector('button');const panel=shell.querySelector<HTMLElement>('.profile-menu')
+    if(!trigger||!panel)return
+    const place=()=>{const box=trigger.getBoundingClientRect();panel.style.setProperty('--fuel-menu-top',`${Math.round(box.bottom+8)}px`);panel.style.setProperty('--fuel-menu-right',`${Math.max(12,Math.round(window.innerWidth-box.right))}px`)}
+    place()
+    window.addEventListener('resize',place)
+    return()=>window.removeEventListener('resize',place)
+  },[menuOpen])
+  // Dismiss like any dropdown. Both the trigger and the panel live inside the shell,
+  // so a pointerdown anywhere else is genuinely outside.
+  useEffect(()=>{
+    if(!menuOpen)return
+    const away=(event:PointerEvent)=>{if(!shellRef.current?.contains(event.target as Node))onMenu()}
+    const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')onMenu()}
+    document.addEventListener('pointerdown',away)
+    document.addEventListener('keydown',escape)
+    return()=>{document.removeEventListener('pointerdown',away);document.removeEventListener('keydown',escape)}
+  },[menuOpen,onMenu])
   return <header className="topbar"><div className="brand"><BrandAvatar user={user}/><div className="brand-text"><h1>Fuel</h1><p className="brand-date"><span className="date-long">{navDateLong()}</span><span className="date-short">{navDateShort()}</span></p></div></div><nav className="user" ref={navRef} aria-label="Fuel navigation">
     <button className={`nav-icon-button${current==='dashboard'?' nav-active':''}`} onClick={goDashboard} aria-current={current==='dashboard'?'page':undefined} aria-label="Dashboard" title="Dashboard"><Home size={18}/><span className="nav-label">Home</span></button>
     <a className="nav-icon-button" href="/meal-plan.html" aria-label="Fuel AI" title="Fuel AI"><Sparkles size={18}/><span className="nav-label">AI</span></a>
@@ -326,7 +350,7 @@ function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,goPlaces,
     <button className={`nav-icon-button${current==='compare'?' nav-active':''}`} onClick={goCompare} aria-current={current==='compare'?'page':undefined} aria-label="Compare" title="Compare to your age group"><Users size={18}/><span className="nav-label">Compare</span></button>
     <button className={`nav-icon-button${current==='charts'?' nav-active':''}`} onClick={goCharts} aria-current={current==='charts'?'page':undefined} aria-label="Charts" title="Plot metrics over time"><LineChart size={18}/><span className="nav-label">Explore</span></button>
     <button className={`nav-icon-button${current==='places'?' nav-active':''}`} onClick={goPlaces} aria-current={current==='places'?'page':undefined} aria-label="Places" title="Where you spend your day"><MapPin size={18}/><span className="nav-label">Places</span></button>
-    <div className="profile-shell"><button className="nav-icon-button" onClick={onMenu} aria-expanded={menuOpen} aria-label="Menu" title="Menu"><SlidersHorizontal size={18}/><span className="nav-label">More</span></button>{menuOpen&&menu}</div>
+    <div className="profile-shell" ref={shellRef}><button className="nav-icon-button" onClick={onMenu} aria-expanded={menuOpen} aria-label="Menu" title="Menu"><SlidersHorizontal size={18}/><span className="nav-label">More</span></button>{menuOpen&&menu}</div>
   </nav></header>
 }
 function DashMenu({editMode,loading,onEdit,onRefresh,onGoals,onSync,onHistory,onContext,onLogout}:{editMode:boolean;loading:boolean;onEdit:()=>void;onRefresh:()=>void;onGoals:()=>void;onSync:()=>void;onHistory:()=>void;onContext:()=>void;onLogout:()=>void}){return <div className="profile-menu panel" role="menu"><button onClick={onEdit} role="menuitem"><LayoutGrid size={17}/><span>{editMode?'Finish editing':'Edit dashboard'}</span></button><button onClick={onRefresh} role="menuitem"><RefreshCw size={17} className={loading?'spin':''}/><span>Refresh</span></button><button onClick={onHistory} role="menuitem"><Pencil size={17}/><span>Edit daily history</span></button><button onClick={onGoals} role="menuitem"><Target size={17}/><span>Goals</span></button><button onClick={onContext} role="menuitem"><ShieldCheck size={17}/><span>Preferences & context</span></button><button onClick={onSync} role="menuitem"><Settings size={17}/><span>Sync setup</span></button><button className="logout-menu-button" onClick={onLogout} role="menuitem"><LogOut size={17}/><span>Log out</span></button></div>}

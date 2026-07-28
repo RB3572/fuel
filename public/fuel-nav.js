@@ -52,3 +52,22 @@ function centreActiveNavItem() {
 }
 centreActiveNavItem()
 addEventListener('resize', centreActiveNavItem, { passive: true })
+
+// On narrow screens that pill row is an overflow container, so the config ("More")
+// dropdown is positioned `fixed` to escape its clipping — which means its coordinates
+// have to be measured. Anchor the panel under its trigger whenever it opens. The pages
+// that own this menu toggle it by flipping `hidden`, so watch that attribute rather
+// than reaching into their click handlers.
+function anchorFuelMenu() {
+  const trigger = document.getElementById('fuel-menu-btn')
+  const menu = document.getElementById('fuel-menu')
+  if (!trigger || !menu || menu.hidden) return
+  const box = trigger.getBoundingClientRect()
+  menu.style.setProperty('--fuel-menu-top', `${Math.round(box.bottom + 8)}px`)
+  menu.style.setProperty('--fuel-menu-right', `${Math.max(12, Math.round(window.innerWidth - box.right))}px`)
+}
+const fuelMenuNode = document.getElementById('fuel-menu')
+if (fuelMenuNode) {
+  new MutationObserver(anchorFuelMenu).observe(fuelMenuNode, { attributes: true, attributeFilter: ['hidden'] })
+  addEventListener('resize', anchorFuelMenu, { passive: true })
+}
