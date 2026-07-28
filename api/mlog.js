@@ -285,6 +285,7 @@ async function handleRecipeNutrition(req, res) {
     const updated = []
     const failed = []
     let quotaError = ''
+    let quotaRetryable = false
     for (const recipe of batch) {
       try {
         const estimate = await estimateRecipeNutrition(recipe)
@@ -295,6 +296,7 @@ async function handleRecipeNutrition(req, res) {
           // Every remaining call would fail the same way, so stop and say why
           // rather than reporting a pile of identical per-recipe failures.
           quotaError = error.message
+          quotaRetryable = Boolean(error.retryable)
           break
         }
         console.error(`Recipe nutrition estimate failed for ${recipe.name}`, error)
@@ -302,7 +304,9 @@ async function handleRecipeNutrition(req, res) {
       }
     }
     if (quotaError && !updated.length) {
-      sendJson(res, 503, { error: quotaError, quotaExhausted: true }, auth.cookie ? [auth.cookie] : [])
+      // 429 for "slow down", 503 for "this key cannot call Gemini at all". Only the
+      // first is worth retrying, and the client says something different for each.
+      sendJson(res, quotaRetryable ? 429 : 503, { error: quotaError, quotaExhausted: true, retryable: quotaRetryable }, auth.cookie ? [auth.cookie] : [])
       return
     }
     sendJson(res, 200, {
@@ -310,6 +314,7 @@ async function handleRecipeNutrition(req, res) {
       updated,
       failed,
       quotaExhausted: Boolean(quotaError),
+      quotaRetryable,
       ...(quotaError ? { error: quotaError } : {}),
       remaining: Math.max(0, pending.length - updated.length),
     }, auth.cookie ? [auth.cookie] : [])
@@ -364,6 +369,7 @@ async function handleFoodNutrition(req, res) {
     const updated = []
     const failed = []
     let quotaError = ''
+    let quotaRetryable = false
     for (const entry of batch) {
       try {
         const estimate = await estimateFoodNutrition({
@@ -399,6 +405,7 @@ async function handleFoodNutrition(req, res) {
         if (error instanceof NutritionQuotaError) {
           // Every remaining call fails identically; stop rather than burning them.
           quotaError = error.message
+          quotaRetryable = Boolean(error.retryable)
           break
         }
         console.error(`Food nutrition estimate failed for ${entry.description}`, error)
@@ -406,7 +413,9 @@ async function handleFoodNutrition(req, res) {
       }
     }
     if (quotaError && !updated.length) {
-      sendJson(res, 503, { error: quotaError, quotaExhausted: true }, auth.cookie ? [auth.cookie] : [])
+      // 429 for "slow down", 503 for "this key cannot call Gemini at all". Only the
+      // first is worth retrying, and the client says something different for each.
+      sendJson(res, quotaRetryable ? 429 : 503, { error: quotaError, quotaExhausted: true, retryable: quotaRetryable }, auth.cookie ? [auth.cookie] : [])
       return
     }
     sendJson(res, 200, {
@@ -414,6 +423,7 @@ async function handleFoodNutrition(req, res) {
       updated,
       failed,
       quotaExhausted: Boolean(quotaError),
+      quotaRetryable,
       ...(quotaError ? { error: quotaError } : {}),
       remaining: Math.max(0, pending.length - updated.length),
     }, auth.cookie ? [auth.cookie] : [])

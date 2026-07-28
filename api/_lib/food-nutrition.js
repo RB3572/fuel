@@ -1,5 +1,5 @@
-import { callGemini } from './meal-plan.js'
-import { NutritionQuotaError } from './recipe-nutrition.js'
+import { callGemini, DEFAULT_MODEL } from './meal-plan.js'
+import { asNutritionQuotaError, NutritionQuotaError } from './recipe-nutrition.js'
 import { NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients } from './nutrients.js'
 
 // Estimates the full nutrition breakdown for a single logged food entry from its
@@ -7,7 +7,7 @@ import { NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients } from './nutrients
 // "Fill missing nutrients with AI" action, which back-fills the micronutrients (and
 // any absent macros) for today's diary without touching values the user already has.
 
-const MODEL = process.env.GEMINI_FOOD_MODEL || process.env.GEMINI_MODEL || 'gemini-flash-latest'
+const MODEL = process.env.GEMINI_FOOD_MODEL || process.env.GEMINI_MODEL || DEFAULT_MODEL
 const TIMEOUT_MS = 20000
 
 const RESPONSE_SCHEMA = {
@@ -61,16 +61,16 @@ export async function estimateFoodNutrition(entry) {
         maxOutputTokens: 1200,
         responseMimeType: 'application/json',
         responseSchema: RESPONSE_SCHEMA,
-        // gemini-flash-latest is a thinking model and thinking tokens are drawn from
+        // The Flash models are thinking models and thinking tokens are drawn from
         // maxOutputTokens; leaving this unset truncates the JSON before it closes.
         thinkingConfig: { thinkingBudget: 0 },
       },
     }, false, TIMEOUT_MS)
   } catch (error) {
-    const status = error?.status || error?.statusCode
-    if (status === 429 || /quota|rate limit|high demand|RESOURCE_EXHAUSTED/i.test(String(error?.message || ''))) {
-      throw new NutritionQuotaError('The Gemini API key is out of quota, so nutrition could not be estimated. Check the key’s billing or try again later.')
-    }
+    // Separate a transient rate limit from a key that cannot call Gemini at all, and
+    // keep Gemini's own wording either way — the batch caller decides what to do.
+    const quota = asNutritionQuotaError(error)
+    if (quota) throw quota
     throw error
   }
 

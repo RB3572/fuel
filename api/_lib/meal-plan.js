@@ -7,10 +7,26 @@ import { saveUserGoals } from './goals.js'
 import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientSummaryText } from './nutrients.js'
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
-// Rolling alias for the current Gemini Flash model. Pinned versions like
-// gemini-2.5-flash get retired for new API keys; this alias tracks the latest and
-// stays multimodal (needed for photo food logging). Override with GEMINI_MODEL.
-const DEFAULT_MODEL = 'gemini-flash-latest'
+// Models to try, in order, all multimodal (needed for photo food logging) and all
+// carrying a free tier.
+//
+// This used to be the rolling `gemini-flash-latest` alias. Google points that alias at
+// its newest Flash model, and free-tier keys are currently allocated a quota of ZERO on
+// it — so every call came back 429 RESOURCE_EXHAUSTED on the very first request of the
+// day, with no usage at all. That reads exactly like an exhausted key, which is why
+// this looked like a billing problem when it never was one.
+//
+// A pinned model with a settled free-tier allocation fixes it today; walking a list
+// means the next alias or quota reshuffle degrades to the next model instead of taking
+// every AI feature down at once. Override the whole order with GEMINI_MODEL.
+export const GEMINI_MODEL_FALLBACKS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite']
+export const DEFAULT_MODEL = GEMINI_MODEL_FALLBACKS[0]
+// Free-tier keys are rate-limited per minute, so a burst (the "fill missing nutrients"
+// batch is the obvious one) legitimately gets a retryable 429. Wait and retry when
+// Google says the wait is short; anything longer is not worth holding a request open
+// for, so it falls through to the next model instead.
+const GEMINI_MAX_RETRIES = 1
+const GEMINI_MAX_RETRY_DELAY_MS = 6000
 const TIME_ZONE = 'America/Los_Angeles'
 const MAX_MESSAGES = 10 // Chat history is always the most recent 10 messages.
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -343,7 +359,7 @@ async function generateMealPlan({ state, location, localTime, timeZone }) {
       maxOutputTokens: 1800,
       responseMimeType: 'application/json',
       responseSchema: PLAN_RESPONSE_SCHEMA,
-      // gemini-flash-latest is a thinking model whose reasoning tokens count against
+      // The Flash models are thinking models whose reasoning tokens count against
       // maxOutputTokens. Left on, thinking consumes the entire budget and the JSON
       // output is truncated (finishReason MAX_TOKENS) — every plan comes back
       // incomplete. Disable thinking so the whole budget goes to the response.
@@ -590,6 +606,39 @@ export async function callGemini(model, requestBody, allowMapsFallback = false, 
   }
   const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey }
 
+  // The requested model first, then the fallbacks, deduped.
+  const candidates = []
+  for (const name of [model, ...GEMINI_MODEL_FALLBACKS]) {
+    const trimmed = String(name || '').trim()
+    if (trimmed && !candidates.includes(trimmed)) candidates.push(trimmed)
+  }
+
+  let lastError = null
+  const unavailable = []
+  for (const candidate of candidates) {
+    try {
+      return await callGeminiModel(candidate, requestBody, { headers, timeoutMs, allowMapsFallback })
+    } catch (error) {
+      if (!error?.tryNextModel) throw error
+      lastError = error
+      unavailable.push(`${candidate}: ${error.providerReason || error.code}`)
+      console.warn(`Gemini model ${candidate} is unavailable for this key; trying the next one.`, error.providerReason || '')
+    }
+  }
+  // Every candidate refused. If they all refused for lack of quota, the key's project
+  // has no allocation at all rather than one model being unlucky — say so, because the
+  // fix is a new key, not waiting or paying.
+  if (lastError?.code === 'gemini_no_quota') {
+    throw geminiError(
+      'Gemini reports no free-tier quota for this API key on any Fuel model. That usually means the key’s Google Cloud project has no Generative Language allocation — creating a fresh key in Google AI Studio normally fixes it.',
+      429, 'gemini_no_quota',
+    )
+  }
+  console.error('Every Gemini model failed', unavailable.join(' | '))
+  throw lastError || geminiError('Fuel AI is temporarily unavailable. Please try again.', 502, 'gemini_request_failed')
+}
+
+async function callGeminiModel(model, requestBody, { headers, timeoutMs, allowMapsFallback }) {
   const invoke = async (body) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -607,24 +656,90 @@ export async function callGemini(model, requestBody, allowMapsFallback = false, 
     }
   }
 
-  let result = await invoke(requestBody)
-  if (!result.response.ok && allowMapsFallback && requestBody.tools) {
-    const fallback = { ...requestBody }
-    delete fallback.tools
-    delete fallback.toolConfig
-    result = await invoke(fallback)
-  }
-  if (!result.response.ok) {
-    const providerMessage = String(result.payload?.error?.message || result.payload?.error || `Gemini request failed with status ${result.response.status}.`)
-    console.error('Gemini provider error', providerMessage)
-    if (/Invalid JSON payload|response_schema|Unknown name \"additionalProperties\"|Cannot find field/i.test(providerMessage)) {
-      throw geminiError('Fuel AI response formatting was rejected. Please try again.', 502, 'gemini_schema_rejected')
+  for (let attempt = 0; ; attempt += 1) {
+    let result = await invoke(requestBody)
+    if (!result.response.ok && allowMapsFallback && requestBody.tools) {
+      const fallback = { ...requestBody }
+      delete fallback.tools
+      delete fallback.toolConfig
+      result = await invoke(fallback)
     }
-    const code = result.response.status === 403 ? 'gemini_permission_denied' : 'gemini_request_failed'
-    const publicMessage = result.response.status >= 400 && result.response.status < 500 ? 'Fuel AI could not process that request. Please try again.' : 'Fuel AI is temporarily unavailable. Please try again.'
-    throw geminiError(publicMessage, result.response.status >= 400 && result.response.status < 500 ? result.response.status : 502, code)
+    if (result.response.ok) return result.payload
+
+    const failure = classifyGeminiFailure(model, result)
+    if (failure.retryAfterMs != null && attempt < GEMINI_MAX_RETRIES) {
+      console.warn(`Gemini rate-limited ${model}; retrying in ${failure.retryAfterMs}ms.`)
+      await new Promise((resolve) => setTimeout(resolve, failure.retryAfterMs))
+      continue
+    }
+    throw failure.error
   }
-  return result.payload
+}
+
+// Turns a Gemini error body into a decision: retry this model, move to the next one, or
+// give up. The provider's own words are kept on the error so a failure is diagnosable
+// instead of guessed at — the previous code logged them and reported "please try again"
+// to everything, which is how a zero-quota model passed for an exhausted account.
+function classifyGeminiFailure(model, { response, payload }) {
+  const providerReason = String(payload?.error?.message || payload?.error || `Gemini returned ${response.status}.`)
+  const details = Array.isArray(payload?.error?.details) ? payload.error.details : []
+  const status = response.status
+  console.error(`Gemini provider error (${model}, ${status})`, providerReason)
+
+  // Our own malformed request: every model would reject it identically.
+  if (/Invalid JSON payload|response_schema|Unknown name \\"additionalProperties\\"|Cannot find field/i.test(providerReason)) {
+    return { error: geminiError('Fuel AI response formatting was rejected. Please try again.', 502, 'gemini_schema_rejected') }
+  }
+
+  if (status === 429) {
+    // A quota violation reporting a limit of zero is an allocation problem, not usage:
+    // no amount of waiting helps, so move on to the next model immediately.
+    const violations = details.flatMap((detail) => (Array.isArray(detail?.violations) ? detail.violations : []))
+    const zeroQuota = violations.some((violation) => Number(violation?.quotaValue) === 0) || /limit:\s*0\b/i.test(providerReason)
+    if (zeroQuota) {
+      return { error: tagged(geminiError(`No free-tier Gemini quota is allocated for ${model}.`, 429, 'gemini_no_quota'), providerReason) }
+    }
+    const retryAfterMs = retryDelayMs(details)
+    if (retryAfterMs != null && retryAfterMs <= GEMINI_MAX_RETRY_DELAY_MS) return { retryAfterMs, error: rateLimited(providerReason) }
+    return { error: tagged(rateLimited(providerReason), providerReason) }
+  }
+
+  // 404 is a model this key cannot see; 5xx is an overloaded one. Either way, next.
+  if (status === 404 || status >= 500) {
+    return { error: tagged(geminiError('Fuel AI is temporarily unavailable. Please try again.', 502, 'gemini_request_failed'), providerReason) }
+  }
+
+  const code = status === 403 ? 'gemini_permission_denied' : 'gemini_request_failed'
+  const publicMessage = status === 400 && /API key not valid|API_KEY_INVALID/i.test(providerReason)
+    ? 'The Gemini API key is not valid. Create a new key in Google AI Studio and set GEMINI_API_KEY.'
+    : status === 403
+      ? 'Gemini refused this key. Check that the Generative Language API is enabled for its project.'
+      : 'Fuel AI could not process that request. Please try again.'
+  const error = geminiError(publicMessage, status, code)
+  error.providerReason = providerReason
+  return { error }
+}
+
+// Rate limiting is transient by definition, so this stays separate from a zero
+// allocation: the user should be told to wait, not to go looking at billing.
+function rateLimited(providerReason) {
+  const error = geminiError('Fuel AI hit the free Gemini rate limit. Wait a minute and try again.', 429, 'gemini_rate_limited')
+  error.providerReason = providerReason
+  return error
+}
+function tagged(error, providerReason) {
+  error.tryNextModel = true
+  error.providerReason = providerReason
+  return error
+}
+// Google returns RetryInfo as a duration string such as "31s".
+function retryDelayMs(details) {
+  for (const detail of details) {
+    const raw = String(detail?.retryDelay || '')
+    const match = raw.match(/^([\d.]+)s$/)
+    if (match) return Math.round(Number(match[1]) * 1000)
+  }
+  return null
 }
 
 function buildPlanPrompt({ dashboard, context, budget, location, localTime, timeZone }) {

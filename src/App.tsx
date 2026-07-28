@@ -250,16 +250,23 @@ export default function App(){
     setFillingNutrients(true);setFillNote('');setError('')
     try{
       let filled=0
+      let note=''
       for(let pass=0;pass<6;pass+=1){
         const r=await fetch('/api/mlog?fuel_route=food-nutrition',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({limit:6})})
         const p=await r.json().catch(()=>({}))
-        if(!r.ok)throw new Error(p.error||'Could not fill in nutrition.')
+        // A rate limit part-way through is not a failure: keep whatever was filled and
+        // say it is worth retrying, rather than throwing away the successful passes.
+        if(!r.ok){
+          if(r.status===429&&filled){note=`Filled in ${filled} ${filled===1?'entry':'entries'}, then hit the free Gemini rate limit. Try again in a minute for the rest.`;break}
+          throw new Error(p.error||'Could not fill in nutrition.')
+        }
         filled+=(p.updated||[]).length
+        if(p.quotaExhausted&&p.quotaRetryable){note=filled?`Filled in ${filled} ${filled===1?'entry':'entries'}, then hit the free Gemini rate limit. Try again in a minute for the rest.`:'Hit the free Gemini rate limit. Try again in a minute.';break}
         // Stop on no progress so entries the model can't estimate don't loop forever.
         if(!(p.updated||[]).length||p.quotaExhausted||!p.remaining)break
       }
       await load()
-      setFillNote(filled?`Filled in ${filled} ${filled===1?'entry':'entries'}.`:'Nothing left to fill in.')
+      setFillNote(note||(filled?`Filled in ${filled} ${filled===1?'entry':'entries'}.`:'Nothing left to fill in.'))
     }catch(e){setError(e instanceof Error?e.message:'Could not fill in nutrition.')}
     finally{setFillingNutrients(false)}
   }
