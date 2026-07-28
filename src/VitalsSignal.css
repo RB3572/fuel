@@ -42,3 +42,32 @@
   .vitals-signal .vs-typ{grid-column:1;text-align:left}
   .vitals-signal .vs-badge{grid-row:1;grid-column:2}
 }
+
+/* ---- Rolling 24-hour energy balance (sits under the vitals bar) ---------------- */
+.rolling24{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;border:1px solid #e5e5e5;border-radius:12px;margin:0 0 12px;padding:9px 14px;background:#f6f6f6}
+.rolling24 .r24-label{flex:none;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#8a8a8a}
+.rolling24 .r24-value{font-size:17px;font-weight:800;letter-spacing:-.02em;color:#111}
+.rolling24 .r24-value small{font-size:12px;font-weight:700;color:#666;margin-left:3px}
+.rolling24 .r24-detail{margin-left:auto;font-size:12px;font-weight:600;color:#777;white-space:nowrap}
+.rolling24 .r24-note{flex:none;font-size:10px;font-weight:700;color:#999;border:1px solid #ddd;border-radius:999px;padding:1px 7px;cursor:help}
+.rolling24.is-deficit{background:#f0faf3;border-color:#bfe6cd}
+.rolling24.is-deficit .r24-value{color:#14653a}
+.rolling24.is-deficit .r24-value small{color:#2b7a52}
+.rolling24.is-surplus{background:#fff8ec;border-color:#f0dcb4}
+.rolling24.is-surplus .r24-value{color:#7a5200}
+.rolling24.is-surplus .r24-value small{color:#946a2a}
+@media(max-width:560px){
+  .rolling24{gap:6px 10px;padding:9px 12px}
+  .rolling24 .r24-detail{margin-left:0;flex-basis:100%}
+}
+
+/* ---- AI fill-in for incomplete food entries ----------------------------------- */
+.food-tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0;padding:12px 20px;border-bottom:1px solid #eee;background:#fff8ec}
+.food-tools .ft-text{flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#7a5200}
+.food-tools .ft-button{display:inline-flex;align-items:center;gap:7px;flex:none;border:0;border-radius:10px;background:#111;color:#fff;font:inherit;font-size:12.5px;font-weight:700;padding:9px 14px;cursor:pointer}
+.food-tools .ft-button:hover:not(:disabled){background:#333}
+.food-tools .ft-button:disabled{opacity:.6;cursor:wait}
+@media(max-width:560px){
+  .food-tools{padding:11px 14px}
+  .food-tools .ft-button{width:100%;justify-content:center;min-height:44px}
+}

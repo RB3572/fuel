@@ -27,7 +27,8 @@ type EditableGoalKey = Exclude<GoalKey,'calories'>
 type GoalValues = Record<EditableGoalKey,number>
 type GoalProfile = { heightIn:number|null;weightLb:number|null;age:number|null;objective:'maintenance'|'deficit'|'gain' }
 type EnergyAverages = { totalExpenditure:N; restingEnergy:N; activeEnergy:N; energyBalance:N; expenditureDays:number; balanceDays:number }
-type DashboardData = { generatedAt:string; energyAverages?:EnergyAverages; today:{summary:Summary;foodEntries:FoodEntry[];workouts:WorkoutEntry[];supplements:Array<{name:string;dose:string}>}; goals:Partial<Record<GoalKey,GoalRange>>; goalProfile?:GoalProfile; trends:TrendPoint[]; coverage:{days:number;workouts:number;foodEntries:number}; storage?:string }
+type Rolling24h = { consumed:number; burned:number|null; balance:number|null; foodCount:number; method:'measured'|'estimated'|'none' }
+type DashboardData = { generatedAt:string; energyAverages?:EnergyAverages; rolling24h?:Rolling24h|null; today:{summary:Summary;foodEntries:FoodEntry[];workouts:WorkoutEntry[];supplements:Array<{name:string;dose:string}>}; goals:Partial<Record<GoalKey,GoalRange>>; goalProfile?:GoalProfile; trends:TrendPoint[]; coverage:{days:number;workouts:number;foodEntries:number}; storage?:string }
 type SyncToken = { token:string; tokenPrefix?:string; createdAt?:string; lastUsedAt?:string|null; endpoint:string; shortcutUrl:string; instructions:string }
 
 type GoalApiResponse = GoalValues & { calories:number; averageExpenditure:number; averageExpenditureDays:number; averageEnergyBalance:N; averageBalanceDays:number; profile?:GoalProfile; autoSet?:{objective:string;averageExpenditure:number;historyDays:number;usedFallback:boolean;note:string} }
@@ -75,6 +76,22 @@ function normalizeLayout(raw:unknown):Layout{
 function publishDashboard(payload:DashboardData){(window as unknown as{__fuelDashboard?:DashboardData}).__fuelDashboard=payload;dispatchEvent(new CustomEvent('fuel:dashboard'))}
 
 function useInView<T extends HTMLElement>(){const ref=useRef<T|null>(null);const[visible,setVisible]=useState(false);useEffect(()=>{const node=ref.current;if(!node)return;if(typeof IntersectionObserver==='undefined'){setVisible(true);return}const observer=new IntersectionObserver(([entry])=>{if(entry.isIntersecting){setVisible(true);observer.disconnect()}},{threshold:.18,rootMargin:'0px 0px -6% 0px'});observer.observe(node);return()=>observer.disconnect()},[]);return{ref,visible}}
+
+// ---- Rolling 24-hour energy balance ---------------------------------------------
+// Calories eaten minus calories burned over the trailing 24 hours from right now,
+// rather than since local midnight. Late meals and overnight burn stay in view here
+// even just after midnight, when the calendar-day figure resets to near zero.
+function Rolling24hBar({data}:{data:Rolling24h|null|undefined}){
+  if(!data||data.balance==null)return null
+  const deficit=data.balance<0
+  const magnitude=Math.abs(data.balance)
+  return <div className={`rolling24${deficit?' is-deficit':' is-surplus'}`}>
+    <span className="r24-label">Last 24 hours</span>
+    <strong className="r24-value">{fmt(magnitude)}<small> kcal {deficit?'deficit':'surplus'}</small></strong>
+    <span className="r24-detail">{fmt(data.consumed)} in · {fmt(data.burned)} out</span>
+    {data.method==='estimated'&&<span className="r24-note" title="Computed from daily totals because intraday snapshots were unavailable">approx.</span>}
+  </div>
+}
 
 // ---- Daily vitals health signal -------------------------------------------------
 // Compares TODAY's vital signs against the user's OWN history and flags days that are
@@ -175,6 +192,8 @@ export default function App(){
   const[loading,setLoading]=useState(false)
   const[deletingFoodId,setDeletingFoodId]=useState<string|null>(null)
   const[editingFood,setEditingFood]=useState<FoodEntry|null>(null)
+  const[fillingNutrients,setFillingNutrients]=useState(false)
+  const[fillNote,setFillNote]=useState('')
   const[error,setError]=useState('')
   const[range,setRange]=useState<RangeKey>('day')
   const[menuOpen,setMenuOpen]=useState(false)
@@ -198,6 +217,27 @@ export default function App(){
   useEffect(()=>{if(!session.authenticated)return;const id=setInterval(load,30000);const focus=()=>void load();addEventListener('focus',focus);return()=>{clearInterval(id);removeEventListener('focus',focus)}},[session.authenticated,load])
   const logout=async()=>{await fetch('/api/auth/logout',{method:'POST'});setSession({loading:false,authenticated:false,user:null});setData(null)}
   const deleteFood=async(entry:FoodEntry)=>{if(!entry.id||deletingFoodId)return;const label=entry.food||entry.meal||'this food entry';if(!window.confirm(`Delete "${label}" from Fuel? This cannot be undone.`))return;setDeletingFoodId(entry.id);setError('');try{const r=await fetch('/api/mlog',{method:'DELETE',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({entryId:entry.id})}),p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to delete this food entry.');await load()}catch(e){setError(e instanceof Error?e.message:'Unable to delete this food entry.')}finally{setDeletingFoodId(null)}}
+  // Fills in missing macros/micronutrients for today's food using Fuel AI. The server
+  // only writes columns that are still null, so a user's own numbers are never
+  // overwritten and this is safe to re-run.
+  const fillNutrients=async()=>{
+    if(fillingNutrients)return
+    setFillingNutrients(true);setFillNote('');setError('')
+    try{
+      let filled=0
+      for(let pass=0;pass<6;pass+=1){
+        const r=await fetch('/api/mlog?fuel_route=food-nutrition',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({limit:6})})
+        const p=await r.json().catch(()=>({}))
+        if(!r.ok)throw new Error(p.error||'Could not fill in nutrition.')
+        filled+=(p.updated||[]).length
+        // Stop on no progress so entries the model can't estimate don't loop forever.
+        if(!(p.updated||[]).length||p.quotaExhausted||!p.remaining)break
+      }
+      await load()
+      setFillNote(filled?`Filled in ${filled} ${filled===1?'entry':'entries'}.`:'Nothing left to fill in.')
+    }catch(e){setError(e instanceof Error?e.message:'Could not fill in nutrition.')}
+    finally{setFillingNutrients(false)}
+  }
   const saveLayout=useCallback((next:Layout)=>{setLayout(next);fetch('/api/mlog?fuel_route=dashboard-layout',{method:'PUT',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({layout:next})}).catch(()=>{})},[])
   const toggleHidden=(key:SectionKey)=>saveLayout({...layout,hidden:layout.hidden.includes(key)?layout.hidden.filter(k=>k!==key):[...layout.hidden,key]})
   const reorder=(target:SectionKey)=>{if(!dragKey||dragKey===target){setDragKey(null);return}const order=layout.order.filter(k=>k!==dragKey);order.splice(order.indexOf(target),0,dragKey);saveLayout({...layout,order});setDragKey(null)}
@@ -214,7 +254,7 @@ export default function App(){
   const sectionNodes:Record<SectionKey,{title:string;detail:string;node:ReactNode}>={
     nutrition:{title:'Nutrition',detail:`Calculated calorie target · ${balanceLabel(goalTarget(data?.goals,'calorieBalancePercent',0))} relative to average burn`,node:<section className="panel nutrition-panel"><GoalRing label="Calculated calories" value={s?.caloriesConsumed} target={goalTarget(data?.goals,'calories',2000)} unit="kcal"/><GoalBar label="Protein" value={s?.protein} target={goalTarget(data?.goals,'protein',112)} unit="g"/><GoalBar label="Carbohydrates" value={s?.carbs} target={goalTarget(data?.goals,'carbs',300)} unit="g"/><GoalBar label="Fat" value={s?.fat} target={goalTarget(data?.goals,'fat',60)} unit="g"/><GoalBar label="Fiber" value={s?.fiber} target={goalTarget(data?.goals,'fiber',30)} unit="g"/></section>},
     detailedNutrition:{title:'Detailed nutrition',detail:'Totals from logged food; unavailable nutrients remain blank rather than being guessed',node:<NutrientGrid nutrients={s?.nutrients}/>},
-    foodConsumed:{title:'Food consumed',detail:`${data?.today.foodEntries.length||0} entries today`,node:<section className="panel"><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={e.id||i} e={e} deleting={deletingFoodId===e.id} onDelete={()=>void deleteFood(e)} onEdit={()=>setEditingFood(e)}/>)}</EntryList></section>},
+    foodConsumed:{title:'Food consumed',detail:`${data?.today.foodEntries.length||0} entries today`,node:<section className="panel"><FoodTools entries={data?.today.foodEntries||[]} busy={fillingNutrients} note={fillNote} onFill={()=>void fillNutrients()}/><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={e.id||i} e={e} deleting={deletingFoodId===e.id} onDelete={()=>void deleteFood(e)} onEdit={()=>setEditingFood(e)}/>)}</EntryList></section>},
     fitness:{title:'Fitness',detail:'Daily activity totals from Apple Health',node:<><ActivityRings summary={s} goals={data?.goals}/><section className="metric-grid fitness-metrics"><Metric icon={<Activity/>} label="Active energy" value={s?.activeEnergy} unit="kcal"/><Metric icon={<Clock3/>} label="Exercise" value={s?.exerciseMinutes} unit="min"/><Metric icon={<Route/>} label="Walking + running" value={s?.distanceMiles} unit="mi" decimals={2}/>{positive(s?.runningStrideLength)&&<Metric icon={<Route/>} label="Running stride length" value={s?.runningStrideLength} unit="m" decimals={2}/>}<Metric icon={<Footprints/>} label="Steps" value={s?.stepCount} unit=""/>{positive(s?.standMinutes)&&<Metric icon={<Clock3/>} label="Stand time" value={s?.standMinutes} unit="min"/>}{positive(s?.flightsClimbed)&&<Metric icon={<Activity/>} label="Flights climbed" value={s?.flightsClimbed} unit="flights"/>}{positive(s?.cyclingDistanceMiles)&&<Metric icon={<Bike/>} label="Cycling distance" value={s?.cyclingDistanceMiles} unit="mi" decimals={2}/>}</section></>},
     workouts:{title:'Workouts',detail:workoutDetail,node:<section className="panel"><EntryList empty="No workout activity logged today.">{(data?.today.workouts||[]).map((e,i)=><WorkoutRow key={i} e={e}/>)}</EntryList></section>},
     steps:{title:'Steps',detail:`Interactive 30-day movement trend · goal ${fmt(goalTarget(data?.goals,'steps',10000))}`,node:<section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="stepCount" unit="steps" chartTitle="Daily steps" yLabel="Steps"/></section>},
@@ -224,6 +264,7 @@ export default function App(){
   return <main className={`app-shell${editMode?' edit-mode':''}`}>
     <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
     <VitalsSignal trends={data?.trends||[]} summary={s}/>
+    <Rolling24hBar data={data?.rolling24h}/>
     {editMode&&<div className="edit-banner panel"><LayoutGrid size={16}/><span>Editing your dashboard — drag to reorder, hide sections, and toggle energy metrics.</span><button className="edit-done" onClick={()=>setEditMode(false)}><Check size={15}/>Done</button></div>}
     {error&&<div className="error">{error}</div>}
     <EnergyHero summary={s} trends={data?.trends||[]} energyAverages={data?.energyAverages} range={range} setRange={setRange} boxes={layout.energyBoxes} editMode={editMode} onToggleBox={toggleBox}/>
@@ -347,6 +388,22 @@ function GoalBar({label,value,target,unit}:{label:string;value:N|undefined;targe
 function Metric({icon,label,value,unit,decimals=0,display}:{icon:ReactNode;label:string;value:N|undefined;unit:string;decimals?:number;display?:string}){return <section className="metric-card panel"><span>{icon}</span><div><p>{label}</p><strong>{display||fmt(value,decimals)}</strong>{value!=null&&!display&&<small>{unit}</small>}</div></section>}
 function Section({title,detail}:{title:string;detail:string}){return <div className="section-title"><h2>{title}</h2><p>{detail}</p></div>}
 function EntryList({children,empty}:{children:ReactNode;empty:string}){const a=Array.isArray(children)?children:[children];return a.length?<div className="entry-list">{children}</div>:<div className="empty">{empty}</div>}
+// Offers the AI fill-in only when today's diary actually has gaps: an entry missing a
+// core macro, or carrying no micronutrient detail at all.
+function foodEntryIncomplete(e:FoodEntry){
+  if(e.calories==null||e.protein==null||e.carbs==null||e.fat==null||e.fiber==null)return true
+  return !e.nutrients||Object.keys(e.nutrients).length===0
+}
+function FoodTools({entries,busy,note,onFill}:{entries:FoodEntry[];busy:boolean;note:string;onFill:()=>void}){
+  const missing=entries.filter(foodEntryIncomplete).length
+  if(!entries.length)return null
+  if(!missing&&!note)return null
+  return <div className="food-tools">
+    <span className="ft-text">{missing?`${missing} ${missing===1?'entry is':'entries are'} missing nutrition detail.`:note}</span>
+    {missing>0&&<button className="ft-button" onClick={onFill} disabled={busy}><Sparkles size={15}/>{busy?'Filling in…':'Fill in with AI'}</button>}
+  </div>
+}
+
 function FoodRow({e,deleting,onDelete,onEdit}:{e:FoodEntry;deleting:boolean;onDelete:()=>void;onEdit:()=>void}){const details=[e.nutrients?.sugarsG!=null?`${fmt(e.nutrients.sugarsG,1)}g sugar`:'',e.nutrients?.sodiumMg!=null?`${fmt(e.nutrients.sodiumMg)}mg sodium`:'',e.nutrients?.caffeineMg!=null?`${fmt(e.nutrients.caffeineMg)}mg caffeine`:''].filter(Boolean).join(' · ');return <article className="entry food-entry"><div><strong>{e.food||e.meal}</strong><span>{[e.time,e.meal,e.portion].filter(Boolean).join(' · ')}</span>{details&&<span className="food-micro">{details}</span>}</div><div className="entry-actions"><div className="entry-nutrition"><strong>{fmt(e.calories)} kcal</strong><span>{fmt(e.protein,1)}g protein · {fmt(e.carbs,1)}g carbs · {fmt(e.fat,1)}g fat · {fmt(e.fiber,1)}g fiber</span></div><div className="entry-buttons"><button className="edit-entry-button" disabled={deleting||!e.id} onClick={onEdit} aria-label={`Edit ${e.food||'food entry'}`} title="Edit food entry"><Pencil size={15}/><span>Edit</span></button><button className="delete-entry-button" disabled={deleting} onClick={onDelete} aria-label={`Delete ${e.food||'food entry'}`} title="Delete food entry"><Trash2 size={15}/><span>{deleting?'Deleting…':'Delete'}</span></button></div></div></article>}
 
 function EditFoodModal({entry,onClose,onSaved}:{entry:FoodEntry;onClose:()=>void;onSaved:()=>Promise<void>|void}){
