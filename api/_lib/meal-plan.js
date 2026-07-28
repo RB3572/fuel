@@ -2,7 +2,7 @@ import { ensureUserFromSession, sql } from './db.js'
 import { appUrl, authenticatedSession } from './google.js'
 import { methodNotAllowed, sendJson } from './http.js'
 import { getNeonDashboard } from './neon-dashboard.js'
-import { appendUserContext, getUserContext, saveUserContext } from './user-context.js'
+import { appendUserContext, getUserContext } from './user-context.js'
 import { saveUserGoals } from './goals.js'
 import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientSummaryText } from './nutrients.js'
 
@@ -67,11 +67,11 @@ export async function handleMealPlan(req, res) {
       const answer = await answerChat({ state, cache, message, image })
       if (answer.foods.length) await logFoods(userId, answer.foods)
       let contextResult = null
-      if (answer.contextUpdate) {
-        contextResult = answer.contextUpdate.mode === 'replace'
-? await saveUserContext(userId, answer.contextUpdate.context)
-: await appendUserContext(userId, answer.contextUpdate.context)
-      }
+      // Append only. Fuel AI can add a newly learned preference but can never edit or
+      // remove one: a model rewriting the whole context silently drops facts the user
+      // mentioned once and never sees again. Editing stays with the user, in the
+      // Preferences & context screen.
+      if (answer.contextUpdate) contextResult = await appendUserContext(userId, answer.contextUpdate.context)
       let goalsResult = null
       if (Object.keys(answer.goalUpdates).length) goalsResult = await saveUserGoals(userId, { goals: answer.goalUpdates })
       const dataChanged = Boolean(answer.foods.length || contextResult || goalsResult)
@@ -415,9 +415,10 @@ calories: { type: 'number' }, protein: { type: 'number' }, carbs: { type: 'numbe
         required: ['description', 'calories'],
       },
     },
+    // Append-only: there is deliberately no mode here. See the write in handleMealPlan.
     contextUpdate: {
       type: 'object',
-      properties: { context: { type: 'string' }, mode: { type: 'string', enum: ['append', 'replace'] } },
+      properties: { context: { type: 'string' } },
       required: ['context'],
     },
     goalUpdates: {
@@ -527,7 +528,8 @@ function stripCodeFence(value) { return String(value || '').replace(/^```(?:json
 function normalizeContextUpdate(value) {
   if (!value || typeof value !== 'object') return null
   const context = limitedText(value.context, 20000)
-  return context ? { context, mode: value.mode === 'replace' ? 'replace' : 'append' } : null
+  // No mode: any 'replace' a model invents is dropped here rather than honoured.
+  return context ? { context } : null
 }
 function normalizeGoalUpdates(value) {
   if (!value || typeof value !== 'object') return {}
@@ -720,7 +722,8 @@ REGENERATING THE PLAN
 
 CONTEXT AND GOALS
 - You may read the saved context below.
-- When explicitly asked to remember or change a durable preference, return contextUpdate with append or replace.
+- When explicitly asked to remember a durable preference, return contextUpdate with ONLY the new fact. Saved context is append-only: what you send is added to it and nothing can be edited or removed, so never restate or rewrite context that is already there.
+- If the user wants saved context changed or deleted, tell them to edit it themselves under Preferences & context. You cannot do it for them.
 - When explicitly asked to change goals, return goalUpdates. calorieBalancePercent is negative for deficit, positive for surplus, and zero for maintenance. Never set a fixed calorie number.
 
 RESPONSE FORMAT

@@ -2,7 +2,7 @@ import { sql } from './_lib/db.js'
 import { automaticallySetGoals, getUserGoals, saveUserGoals } from './_lib/goals.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { bearerToken, oauthChallenge, verifyAccessToken } from './_lib/mcp-auth.js'
-import { appendUserContext, getUserContext, saveUserContext } from './_lib/user-context.js'
+import { appendUserContext, getUserContext } from './_lib/user-context.js'
 import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 import { getRecipe, listRecipes, saveRecipe } from './_lib/recipes.js'
 import { deleteFoodEntry, logRecipeAsFood, normalizeFoodRow, updateFoodEntry } from './_lib/food-entries.js'
@@ -211,15 +211,14 @@ const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'update_user_context',
-    title: 'Update Fuel preferences and context',
-    description: 'Append new durable user preferences or replace the complete Fuel context. Use append for newly learned facts so existing context is preserved.',
+    name: 'add_user_context',
+    title: 'Add to Fuel preferences and context',
+    description: 'Append a newly learned durable preference to the signed-in user’s Fuel context. This only ever adds: existing context cannot be edited, replaced, or removed through this tool, so send just the new fact rather than a rewritten version of everything. Only the user can edit or delete their saved context, from the Preferences & context screen in Fuel.',
     inputSchema: {
       type: 'object',
       required: ['context'],
       properties: {
-        context: { type: 'string', minLength: 1, maxLength: 20000, description: 'Preference or context text to save.' },
-        mode: { type: 'string', enum: ['append', 'replace'], description: 'Defaults to append. Replace overwrites the complete saved context.' },
+        context: { type: 'string', minLength: 1, maxLength: 20000, description: 'The new preference or fact to append. Do not restate context that is already saved.' },
       },
       additionalProperties: false,
     },
@@ -453,6 +452,7 @@ async function handleMessage(req, message) {
         'The recipe bank is shared by every Fuel user, so a recipe added or changed through add_recipe is visible to all of them. Everything else is private to the signed-in user.',
         'Energy: get_energy_balance covers both today so far and the trailing 24 hours; prefer the rolling figure late at night or early in the morning. update_daily_history fixes a whole day’s totals, update_food_entry fixes one meal.',
         'Location: get_place_heatmap returns when the user is usually at each place and never returns coordinates. Places are unnamed until the user names them, so ask before assuming which is home or work, and only pass rename_place a name the user actually gave you.',
+        'Saved context is append-only through add_user_context: it adds a fact and can never edit or remove one, so send only what is new. If the user wants something changed or removed, tell them to edit it themselves on the Preferences & context screen.',
         'Context, goal, food, recipe, history, and place updates all require the write scope.',
       ].join(' '),
     })
@@ -738,12 +738,13 @@ async function executeTool(name, userId, args) {
 
   if (name === 'get_user_context') return getUserContext(userId)
 
-  if (name === 'update_user_context') {
+  // Append-only by construction. There is no replace path here on purpose: a model
+  // rewriting the whole context can silently drop facts the user told it once, months
+  // ago, and never notice. Editing and deleting stay with the user.
+  if (name === 'add_user_context') {
     const context = text(args.context, 20000)
     if (!context) throw new Error('context is required.')
-    return args.mode === 'replace'
-      ? saveUserContext(userId, context)
-      : appendUserContext(userId, context)
+    return appendUserContext(userId, context)
   }
 
   // The recipe bank is shared across every Fuel user, so these three tools
@@ -837,7 +838,7 @@ function summarize(name, data) {
   }
   if (name === 'rename_place') return data.place?.label ? `That place is now called ${data.place.label}.` : 'That place’s name was cleared.'
   if (name === 'set_goals' || name === 'automatically_set_goals') return 'Fuel goals were updated.'
-  if (name === 'update_user_context') return 'Fuel preferences and context were updated.'
+  if (name === 'add_user_context') return 'That was added to the user\u2019s saved Fuel context.'
   if (name === 'get_user_context') return data.context ? 'Fuel preferences and context were retrieved.' : 'No Fuel preferences or context are saved yet.'
   if (name === 'list_food_entries') return `Found ${data.count} food entries from ${data.startDate} through ${data.endDate}.`
   if (name === 'get_health_data') return `Found ${data.count} daily health records from ${data.startDate} through ${data.endDate}.`

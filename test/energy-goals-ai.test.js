@@ -36,5 +36,6 @@ test('Gemini and MCP can access health, context, goals, and automatic replanning
   for (const token of ['runningStrideLength','cardioRecovery','bloodOxygen','walkingHeartRateAverage']) assert.match(dashboardSource, new RegExp(token))
   for (const token of ['contextUpdate','goalUpdates','updatedPlan']) assert.match(mealPlan, new RegExp(token))
   assert.match(client, /payload\.updatedPlan/)
-  for (const token of ['running_stride_length_m','cardio_recovery_bpm','raw_payload','get_user_context','update_user_context','get_goals','set_goals','calorie_balance_percent']) assert.match(mcp, new RegExp(token))
+  // Context is append-only for the model: add_user_context replaced update_user_context.
+  for (const token of ['running_stride_length_m','cardio_recovery_bpm','raw_payload','get_user_context','add_user_context','get_goals','set_goals','calorie_balance_percent']) assert.match(mcp, new RegExp(token))
 })

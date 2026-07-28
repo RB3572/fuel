@@ -84,15 +84,34 @@
 .topbar .user .nav-icon-button:focus-visible { outline: 2px solid var(--fuel-nav-ink); outline-offset: 2px; }
 
 /* ---------- Menus ------------------------------------------------------------ */
-/* Wrapper around the config ("More") button + its dropdown. The React app uses
-   .profile-shell, the static pages .fuel-nav-shell; keep them identical here so this
-   file is the single source of truth (DashEdit.css used to redeclare these and win). */
-.fuel-nav-shell, .topbar .user .profile-shell { position: relative; display: grid; }
-/* Scoped under .topbar .user so these beat ProfileMenu.css, which loads later in the
-   bundle and would otherwise win on equal specificity. */
-.topbar .user .fuel-menu, .topbar .user .profile-menu {
-  position: absolute; right: 0; left: auto; top: 46px; bottom: auto; z-index: 100;
-  min-width: 208px; padding: 6px;
+/* Wrapper around the config ("More") button. The React app uses .profile-shell, the
+   static pages .fuel-nav-shell; keep them identical here so this file is the single
+   source of truth (DashEdit.css used to redeclare these and win). */
+.fuel-nav-shell, .topbar .user .profile-shell { display: grid; }
+
+/* The dropdown is a SIBLING of the pill row, not a child of it, and hangs off the
+   header at every width.
+
+   It cannot live inside .topbar .user: below 900px that row is a horizontal overflow
+   container, which clips an absolutely-positioned child. Positioning the panel `fixed`
+   escapes that clipping on desktop but not on a real phone — iOS Safari mispositions
+   and clips `fixed` descendants of a touch-scrolling container (the row also carries
+   -webkit-overflow-scrolling: touch), so the menu opened somewhere off-screen.
+
+   Anchoring to .topbar instead solves it outright: .topbar is sticky, so it is the
+   containing block, and it has visible overflow, so nothing clips. No viewport
+   measurement, no custom properties, no JS, and one rule for every screen size. */
+.topbar .fuel-menu, .topbar .profile-menu {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: 0;
+  left: auto;
+  bottom: auto;
+  z-index: 100;
+  width: min(268px, calc(100vw - 24px));
+  max-height: 68vh;
+  overflow-y: auto;
+  padding: 6px;
   display: grid; gap: 2px;
   background: var(--fuel-nav-panel);
   border: 1px solid var(--fuel-nav-border);
@@ -100,16 +119,16 @@
   box-shadow: 0 18px 44px rgba(0,0,0,.15);
 }
 .fuel-menu[hidden] { display: none; }
-.topbar .user .fuel-menu button, .topbar .user .fuel-menu a,
-.topbar .user .profile-menu button, .topbar .user .profile-menu a {
+.topbar .fuel-menu button, .topbar .fuel-menu a,
+.topbar .profile-menu button, .topbar .profile-menu a {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 11px 12px; border: 0; background: transparent; color: var(--fuel-nav-ink);
   font-size: 13.5px; font-weight: 650; text-align: left; text-decoration: none;
   border-radius: 10px; cursor: pointer;
 }
-.topbar .user .fuel-menu button:hover, .topbar .user .fuel-menu a:hover,
-.topbar .user .profile-menu button:hover, .topbar .user .profile-menu a:hover { background: var(--fuel-nav-hover); }
-.topbar .user .fuel-menu svg, .topbar .user .profile-menu svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.topbar .fuel-menu button:hover, .topbar .fuel-menu a:hover,
+.topbar .profile-menu button:hover, .topbar .profile-menu a:hover { background: var(--fuel-nav-hover); }
+.topbar .fuel-menu svg, .topbar .profile-menu svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---------- Mobile / narrow: the nav moves to its own row under the brand -----
    Still a top navigation, just given a full-width row of its own so every pill keeps
@@ -183,33 +202,9 @@
     background: linear-gradient(to right, transparent, var(--fuel-nav-bg) 16px);
   }
 
-  /* The pill row is an overflow container, so an absolutely-positioned dropdown
-     inside it would be clipped by it. `fixed` escapes that clipping — but fixed
-     coordinates are viewport-relative, so they have to be measured: whoever opens the
-     menu writes the trigger's position into these two custom properties (the React
-     TopNav for the dashboard, anchorFuelMenu in fuel-nav.js for the static pages).
-     The fallbacks below match a default two-row header, so the panel still lands under
-     the "More" pill if that measurement has not run yet.
-
-     This used to be a sheet pinned to the bottom of the screen, which read as the
-     button doing nothing: you tap at the top of the page and the panel appears 450px
-     away, behind the Safari toolbar. */
-  .topbar .user .fuel-menu, .topbar .user .profile-menu {
-    position: fixed;
-    top: var(--fuel-menu-top, 124px);
-    right: var(--fuel-menu-right, 12px);
-    left: auto;
-    bottom: auto;
-    width: min(268px, calc(100vw - 24px));
-    min-width: 0;
-    /* Never taller than the space left below the trigger. */
-    max-height: calc(100vh - var(--fuel-menu-top, 124px) - 16px);
-    max-height: calc(100dvh - var(--fuel-menu-top, 124px) - 16px);
-    overflow-y: auto;
-    box-shadow: 0 18px 44px rgba(0,0,0,.18);
-  }
-  .topbar .user .fuel-menu button, .topbar .user .fuel-menu a,
-  .topbar .user .profile-menu button, .topbar .user .profile-menu a { padding: 13px 12px; font-size: 14.5px; }
+  /* Bigger targets on touch; the panel's placement is width-independent (see above). */
+  .topbar .fuel-menu button, .topbar .fuel-menu a,
+  .topbar .profile-menu button, .topbar .profile-menu a { padding: 13px 12px; font-size: 14.5px; }
 }
 
 @media (max-width: 420px) {
