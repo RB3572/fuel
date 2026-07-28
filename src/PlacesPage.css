@@ -1,0 +1,61 @@
+.places-page .places-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:4px 0 16px}
+.places-page .places-head .eyebrow{display:block;color:#777;font-size:11px;font-weight:800;letter-spacing:.12em}
+.places-page .places-head h1{margin:2px 0 4px;font-size:30px;letter-spacing:-.04em}
+.places-page .places-head p{margin:0;color:#666;font-size:13px}
+.places-page .track-toggle{display:inline-flex;align-items:center;gap:7px;border:1px solid #ddd;background:#fff;color:#666;border-radius:999px;padding:9px 15px;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
+.places-page .track-toggle.on{border-color:#2f6f4e;background:#f0faf3;color:#14653a}
+
+.places-page .places-status{padding:11px 14px;margin-bottom:12px;border-radius:12px;background:#fff8ec;border:1px solid #f0dcb4;color:#7a5200;font-size:13px;font-weight:600}
+.places-page .places-empty{padding:26px 22px;margin-bottom:14px}
+.places-page .places-empty h2{margin:0 0 8px;font-size:17px}
+.places-page .places-empty p{margin:0 0 10px;color:#666;font-size:13.5px;line-height:1.55}
+.places-page .places-fine{color:#999;font-size:11.5px;line-height:1.5}
+
+/* ---- Vertical 24-hour gradient ------------------------------------------------- */
+.places-page .places-panel{padding:22px;margin-bottom:14px}
+/* Capped so the label column stays visually tied to the bar instead of stranding the
+   times at the far edge of a wide window. */
+.places-page .timeline{position:relative;display:grid;grid-template-columns:48px 62px minmax(0,1fr);gap:14px;height:560px;max-width:620px}
+.places-page .tl-hours{position:relative}
+.places-page .tl-hours span{position:absolute;right:0;transform:translateY(-50%);font-size:11px;font-weight:700;color:#9a9a95;white-space:nowrap}
+.places-page .tl-bar{border-radius:14px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06)}
+.places-page .tl-spans{position:relative}
+.places-page .tl-span{position:absolute;left:0;right:0;display:flex;align-items:center;gap:9px;padding:0 4px;min-height:0;overflow:hidden;font-size:12.5px}
+.places-page .tl-dot{flex:none;width:9px;height:9px;border-radius:50%}
+.places-page .tl-name{font-weight:700;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.places-page .tl-time{margin-left:auto;color:#8a8a85;font-size:11.5px;font-weight:600;white-space:nowrap}
+
+/* ---- Legend -------------------------------------------------------------------- */
+.places-page .places-legend{padding:18px 20px;margin-bottom:14px}
+.places-page .places-legend h2{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#555}
+.places-page .legend-place{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #f0f0f0;font-size:13px}
+.places-page .legend-place:first-of-type{border-top:0}
+.places-page .lp-dot{flex:none;width:11px;height:11px;border-radius:50%}
+.places-page .lp-name{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.places-page .lp-hint{flex:none;font-size:10px;font-weight:800;color:#14653a;background:#e8f6ed;border-radius:999px;padding:2px 8px}
+.places-page .lp-count{margin-left:auto;color:#999;font-size:11.5px;font-weight:600;white-space:nowrap}
+.places-page .lp-rename{flex:none;border:1px solid #ddd;background:#fff;color:#111;border-radius:9px;padding:6px 11px;font:inherit;font-size:11.5px;font-weight:700;cursor:pointer}
+.places-page .lp-rename:hover{border-color:#aaa}
+.places-page .lp-input{flex:1;min-width:0;border:1px solid #111;border-radius:9px;padding:8px 10px;font:inherit;font-size:13px;outline:none}
+.places-page .lp-save,.places-page .lp-cancel{flex:none;border-radius:9px;padding:8px 12px;font:inherit;font-size:11.5px;font-weight:700;cursor:pointer}
+.places-page .lp-save{border:0;background:#111;color:#fff}
+.places-page .lp-cancel{border:1px solid #ddd;background:#fff;color:#111}
+
+/* ---- Privacy ------------------------------------------------------------------- */
+.places-page .places-privacy{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:18px 20px;margin-bottom:40px}
+.places-page .places-privacy h2{margin:0 0 5px;font-size:14px}
+.places-page .places-privacy p{margin:0;color:#777;font-size:12.5px;line-height:1.55;max-width:62ch}
+.places-page .clear-history{display:inline-flex;align-items:center;gap:7px;flex:none;border:1px solid #f0cfca;background:#fff;color:#b42318;border-radius:10px;padding:10px 15px;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
+.places-page .clear-history:hover:not(:disabled){border-color:#d98a80;background:#fff6f5}
+.places-page .clear-history:disabled{opacity:.6;cursor:wait}
+
+@media(max-width:640px){
+  .places-page .places-head h1{font-size:25px}
+  .places-page .places-panel{padding:16px 14px}
+  .places-page .timeline{grid-template-columns:42px 44px minmax(0,1fr);gap:10px;height:520px}
+  .places-page .tl-time{display:none}
+  .places-page .tl-span{font-size:12px}
+  .places-page .lp-count{display:none}
+  .places-page .clear-history{width:100%;justify-content:center;min-height:44px}
+  .places-page .lp-rename{min-height:36px}
+}

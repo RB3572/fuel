@@ -1,12 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { Activity, Bike, BookOpen, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LineChart, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, Users, X } from 'lucide-react'
+import { Activity, Bike, BookOpen, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LineChart, MapPin, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, Users, X } from 'lucide-react'
 import type { LiftPlan } from './workouts'
 // Code-split: the workout dataset and its stylesheet only download when the user
 // actually opens the Lifting tab, keeping them out of the dashboard's first paint.
 const LiftingPage = lazy(() => import('./LiftingPage'))
 const ComparePage = lazy(() => import('./ComparePage'))
 const ChartsPage = lazy(() => import('./ChartsPage'))
+const PlacesPage = lazy(() => import('./PlacesPage'))
 import './App.css'
 import './ChartLabels.css'
 import './ProfileMenu.css'
@@ -77,6 +78,41 @@ function normalizeLayout(raw:unknown):Layout{
 // public/intraday-energy.js renders the intraday chart from this payload instead of
 // issuing its own /api/mlog request, which previously doubled every dashboard fetch.
 function publishDashboard(payload:DashboardData){(window as unknown as{__fuelDashboard?:DashboardData}).__fuelDashboard=payload;dispatchEvent(new CustomEvent('fuel:dashboard'))}
+
+// Records one location fix per app load for the Places heatmap. Deliberately quiet:
+// it never blocks or reports to the user, only runs when the browser has already
+// granted permission (or will prompt once), and stops permanently once denied so a
+// declined prompt is never re-asked on every visit.
+const LOCATION_GAP_MS = 10 * 60 * 1000
+function useLocationCapture(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled || typeof navigator === 'undefined' || !navigator.geolocation) return
+    let cancelled = false
+    const read = (key: string) => { try { return localStorage.getItem(key) } catch { return null } }
+    const write = (key: string, value: string) => { try { localStorage.setItem(key, value) } catch { /* ignore */ } }
+    if (read('fuel-location-off') === '1' || read('fuel-location-denied') === '1') return
+    const last = Number(read('fuel-location-at') || 0)
+    if (Number.isFinite(last) && Date.now() - last < LOCATION_GAP_MS) return
+
+    const timer = window.setTimeout(() => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          if (cancelled) return
+          write('fuel-location-at', String(Date.now()))
+          void fetch('/api/mlog?fuel_route=places', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy }),
+          }).catch(() => {})
+        },
+        (error) => { if (error?.code === 1) write('fuel-location-denied', '1') },
+        { enableHighAccuracy: false, timeout: 12000, maximumAge: 5 * 60 * 1000 },
+      )
+      // Let the dashboard paint before the permission prompt appears.
+    }, 1200)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [enabled])
+}
 
 function useInView<T extends HTMLElement>(){const ref=useRef<T|null>(null);const[visible,setVisible]=useState(false);useEffect(()=>{const node=ref.current;if(!node)return;if(typeof IntersectionObserver==='undefined'){setVisible(true);return}const observer=new IntersectionObserver(([entry])=>{if(entry.isIntersecting){setVisible(true);observer.disconnect()}},{threshold:.18,rootMargin:'0px 0px -6% 0px'});observer.observe(node);return()=>observer.disconnect()},[]);return{ref,visible}}
 
@@ -190,7 +226,7 @@ export default function App(){
   const[editMode,setEditMode]=useState(false)
   const[layout,setLayout]=useState<Layout>(DEFAULT_LAYOUT)
   const[dragKey,setDragKey]=useState<SectionKey|null>(null)
-  const[page,setPage]=useState<'dashboard'|'lifting'|'compare'|'charts'>(()=>{const v=typeof window!=='undefined'?new URLSearchParams(window.location.search).get('view'):null;return v==='lifting'?'lifting':v==='compare'?'compare':v==='charts'?'charts':'dashboard'})
+  const[page,setPage]=useState<'dashboard'|'lifting'|'compare'|'charts'|'places'>(()=>{const v=typeof window!=='undefined'?new URLSearchParams(window.location.search).get('view'):null;return v==='lifting'?'lifting':v==='compare'?'compare':v==='charts'?'charts':v==='places'?'places':'dashboard'})
   const[selectedLift,setSelectedLift]=useState<LiftPlan|null>(null)
   const load=useCallback(async()=>{setLoading(true);setError('');try{const r=await fetch('/api/mlog',{cache:'no-store',headers:{Accept:'application/json'}});if(r.status===401){setSession({loading:false,authenticated:false,user:null});setData(null);return}const p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to load Fuel');setData(p);publishDashboard(p)}catch(e){setError(e instanceof Error?e.message:'Unable to load Fuel')}finally{setLoading(false)}},[])
   // Fire the session check, the dashboard payload, and the saved layout together on
@@ -203,6 +239,7 @@ export default function App(){
     fetch('/api/mlog?fuel_route=dashboard-layout',{cache:'no-store',headers:{Accept:'application/json'}}).then(r=>r.json()).then(p=>{if(p?.layout)setLayout(normalizeLayout(p.layout))}).catch(()=>{})
   },[load])
   useEffect(()=>{if(!session.authenticated)return;const id=setInterval(load,30000);const focus=()=>void load();addEventListener('focus',focus);return()=>{clearInterval(id);removeEventListener('focus',focus)}},[session.authenticated,load])
+  useLocationCapture(session.authenticated)
   const logout=async()=>{await fetch('/api/auth/logout',{method:'POST'});setSession({loading:false,authenticated:false,user:null});setData(null)}
   const deleteFood=async(entry:FoodEntry)=>{if(!entry.id||deletingFoodId)return;const label=entry.food||entry.meal||'this food entry';if(!window.confirm(`Delete "${label}" from Fuel? This cannot be undone.`))return;setDeletingFoodId(entry.id);setError('');try{const r=await fetch('/api/mlog',{method:'DELETE',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({entryId:entry.id})}),p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to delete this food entry.');await load()}catch(e){setError(e instanceof Error?e.message:'Unable to delete this food entry.')}finally{setDeletingFoodId(null)}}
   // Fills in missing macros/micronutrients for today's food using Fuel AI. The server
@@ -233,10 +270,11 @@ export default function App(){
   if(session.loading)return <Centered title="Fuel" text="Loading your dashboard."/>
   if(!session.authenticated)return <SignIn/>
   const menu=<DashMenu editMode={editMode} loading={loading} onEdit={()=>{setEditMode(v=>!v);setMenuOpen(false)}} onRefresh={()=>{setMenuOpen(false);void load()}} onGoals={()=>{setMenuOpen(false);setGoalsOpen(true)}} onSync={()=>{setMenuOpen(false);setSyncOpen(true)}} onHistory={()=>{setMenuOpen(false);setHistoryOpen(true)}} onContext={()=>{setMenuOpen(false);void openContextModal()}} onLogout={logout}/>
-  const navFor=(current:'dashboard'|'lifting'|'compare'|'charts')=><TopNav current={current} user={session.user} goDashboard={()=>{setPage('dashboard');window.scrollTo({top:0})}} goLifting={()=>{setSelectedLift(null);setPage('lifting')}} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
+  const navFor=(current:'dashboard'|'lifting'|'compare'|'charts'|'places')=><TopNav current={current} user={session.user} goDashboard={()=>{setPage('dashboard');window.scrollTo({top:0})}} goLifting={()=>{setSelectedLift(null);setPage('lifting')}} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} goPlaces={()=>{setPage('places');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
   if(page==='lifting')return <Suspense fallback={<Centered title="Fuel" text="Loading lifting plans."/>}><LiftingPage selected={selectedLift} onSelect={setSelectedLift} nav={navFor('lifting')}/></Suspense>
   if(page==='compare')return <Suspense fallback={<Centered title="Fuel" text="Loading comparison."/>}><ComparePage data={data} nav={navFor('compare')}/></Suspense>
   if(page==='charts')return <Suspense fallback={<Centered title="Fuel" text="Loading charts."/>}><ChartsPage data={data} nav={navFor('charts')}/></Suspense>
+  if(page==='places')return <Suspense fallback={<Centered title="Fuel" text="Loading places."/>}><PlacesPage nav={navFor('places')}/></Suspense>
   const s=data?.today.summary
   const workoutDetail=s?.exerciseMinutes!=null?`${fmt(s.exerciseMinutes)} total exercise minutes`:`${data?.today.workouts.length||0} activity summaries`
   const sectionNodes:Record<SectionKey,{title:string;detail:string;node:ReactNode}>={
@@ -250,7 +288,7 @@ export default function App(){
     recovery:{title:'Recovery',detail:`Sleep target ${fmt(goalTarget(data?.goals,'sleepHours',8),1)} hours`,node:<section className="recovery-grid"><Metric icon={<Moon/>} label="Sleep" value={s?.sleepHours} unit="h" display={duration(s?.sleepHours)}/><section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="sleepHours" unit="h" decimals={1} chartTitle="Sleep duration" yLabel="Hours"/></section></section>},
   }
   return <main className={`app-shell${editMode?' edit-mode':''}`}>
-    <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
+    <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} goPlaces={()=>{setPage('places');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
     <VitalsSignal trends={data?.trends||[]} summary={s}/>
     {editMode&&<div className="edit-banner panel"><LayoutGrid size={16}/><span>Editing your dashboard — drag to reorder, hide sections, and toggle energy metrics.</span><button className="edit-done" onClick={()=>setEditMode(false)}><Check size={15}/>Done</button></div>}
     {error&&<div className="error">{error}</div>}
@@ -276,7 +314,7 @@ function BrandAvatar({user}:{user:SessionUser|null}){
 
 // One nav bar used on every in-app view (dashboard + lifting). The static pages
 // (recipes.html, meal-plan.html) render the same markup so the bar never changes.
-function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting'|'compare'|'charts';user:SessionUser|null;goDashboard:()=>void;goLifting:()=>void;goCompare:()=>void;goCharts:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
+function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,goPlaces,menuOpen,onMenu,menu}:{current:'dashboard'|'lifting'|'compare'|'charts'|'places';user:SessionUser|null;goDashboard:()=>void;goLifting:()=>void;goCompare:()=>void;goCharts:()=>void;goPlaces:()=>void;menuOpen:boolean;onMenu:()=>void;menu:ReactNode}){
   const navRef=useRef<HTMLElement|null>(null)
   // On narrow screens the pill row scrolls; make sure the current page is visible.
   useEffect(()=>{const nav=navRef.current;if(!nav)return;const active=nav.querySelector<HTMLElement>('.nav-active');if(!active)return;if(nav.scrollWidth<=nav.clientWidth+1){nav.scrollLeft=0;return}nav.scrollLeft=Math.max(0,active.offsetLeft-(nav.clientWidth-active.offsetWidth)/2)},[current])
@@ -287,6 +325,7 @@ function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,menuOpen,
     <button className={`nav-icon-button${current==='lifting'?' nav-active':''}`} onClick={goLifting} aria-current={current==='lifting'?'page':undefined} aria-label="Lifting" title="Lifting"><Dumbbell size={18}/><span className="nav-label">Lifting</span></button>
     <button className={`nav-icon-button${current==='compare'?' nav-active':''}`} onClick={goCompare} aria-current={current==='compare'?'page':undefined} aria-label="Compare" title="Compare to your age group"><Users size={18}/><span className="nav-label">Compare</span></button>
     <button className={`nav-icon-button${current==='charts'?' nav-active':''}`} onClick={goCharts} aria-current={current==='charts'?'page':undefined} aria-label="Charts" title="Plot metrics over time"><LineChart size={18}/><span className="nav-label">Explore</span></button>
+    <button className={`nav-icon-button${current==='places'?' nav-active':''}`} onClick={goPlaces} aria-current={current==='places'?'page':undefined} aria-label="Places" title="Where you spend your day"><MapPin size={18}/><span className="nav-label">Places</span></button>
     <div className="profile-shell"><button className="nav-icon-button" onClick={onMenu} aria-expanded={menuOpen} aria-label="Menu" title="Menu"><SlidersHorizontal size={18}/><span className="nav-label">More</span></button>{menuOpen&&menu}</div>
   </nav></header>
 }

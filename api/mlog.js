@@ -12,6 +12,7 @@ import { getRecipe, recipesNeedingNutrition, saveEstimatedNutrition } from './_l
 import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
 import { estimateFoodNutrition } from './_lib/food-nutrition.js'
 import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
+import { clearLocationHistory, getPlaceHeatmap, recordLocation, renamePlace } from './_lib/places.js'
 import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
@@ -86,6 +87,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'daily-history') {
     await handleDailyHistory(req, res)
+    return
+  }
+  if (integrationRoute === 'places') {
+    await handlePlaces(req, res)
     return
   }
   if (integrationRoute === 'meal-plan') {
@@ -471,6 +476,41 @@ async function handleDailyHistory(req, res) {
   } catch (error) {
     console.error('Daily history request failed', error)
     sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to save that day.' })
+  }
+}
+
+// Location history for the Places heatmap. GET returns the aggregated day, POST
+// records one fix, PUT renames a place, DELETE erases everything.
+async function handlePlaces(req, res) {
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'PUT', 'DELETE'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to use place tracking.' })
+      return
+    }
+    if (req.method === 'GET') {
+      const url = new URL(req.url, appUrl())
+      sendJson(res, 200, await getPlaceHeatmap(auth.id, Number(url.searchParams.get('days')) || 30), auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    if (req.method === 'DELETE') {
+      sendJson(res, 200, { ok: true, ...(await clearLocationHistory(auth.id)) }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    const body = unwrap(req.body)
+    if (req.method === 'PUT') {
+      sendJson(res, 200, { ok: true, place: await renamePlace(auth.id, body.placeId, body.label) }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    sendJson(res, 200, { ok: true, ...(await recordLocation(auth.id, body)) }, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Places request failed', error)
+    sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to handle that place request.' })
   }
 }
 
