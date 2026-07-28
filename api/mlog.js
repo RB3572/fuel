@@ -8,12 +8,14 @@ import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
-import { getRecipe, recipesNeedingNutrition, saveEstimatedNutrition } from './_lib/recipes.js'
+import { recipesNeedingNutrition, saveEstimatedNutrition } from './_lib/recipes.js'
 import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
 import { estimateFoodNutrition } from './_lib/food-nutrition.js'
 import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
 import { clearLocationHistory, getPlaceHeatmap, recordLocation, renamePlace } from './_lib/places.js'
-import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
+import { ensureNutrientSchema } from './_lib/nutrients.js'
+import { logRecipeAsFood } from './_lib/food-entries.js'
+import { getRolling24h } from './_lib/rolling-energy.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -229,58 +231,29 @@ async function handleLogRecipe(req, res) {
     }
     await ensureNutrientSchema()
     const body = unwrap(req.body)
-    const recipeId = text(body.recipeId ?? body.recipe_id) || ''
-    const recipeName = text(body.name) || ''
-    if (!recipeId && !recipeName) {
-      sendJson(res, 422, { error: 'A recipe is required.' }, auth.cookie ? [auth.cookie] : [])
+    const cookie = auth.cookie ? [auth.cookie] : []
+    // Shared with the MCP server's log_recipe tool \u2014 see api/_lib/food-entries.js.
+    const result = await logRecipeAsFood(auth.id, {
+      recipeId: text(body.recipeId ?? body.recipe_id) || '',
+      name: text(body.name) || '',
+      servings: body.servings,
+      meal: text(body.meal) || '',
+    })
+    if (!result.ok) {
+      if (result.reason === 'missing_recipe') {
+        sendJson(res, 422, { error: 'A recipe is required.' }, cookie)
+      } else if (result.reason === 'not_found') {
+        sendJson(res, 404, { error: 'That recipe is no longer in the recipe bank.' }, cookie)
+      } else {
+        sendJson(res, 409, {
+          error: `${result.recipe.name} has no nutrition breakdown yet, so logging it would count as zero calories.`,
+          needsNutrition: true,
+          recipeId: result.recipe.id,
+        }, cookie)
+      }
       return
     }
-    const recipe = await getRecipe({ recipeId, name: recipeName })
-    if (!recipe) {
-      sendJson(res, 404, { error: 'That recipe is no longer in the recipe bank.' }, auth.cookie ? [auth.cookie] : [])
-      return
-    }
-    if (recipe.nutrition?.calories == null) {
-      sendJson(res, 409, {
-        error: `${recipe.name} has no nutrition breakdown yet, so logging it would count as zero calories.`,
-        needsNutrition: true,
-        recipeId: recipe.id,
-      }, auth.cookie ? [auth.cookie] : [])
-      return
-    }
-
-    const servings = servingCount(body.servings)
-    const scale = (value) => (value == null ? null : Math.round(value * servings * 10) / 10)
-    const nutrients = normalizeNutrients(recipe.nutrition?.nutrients)
-    const scaled = {}
-    for (const [key, value] of Object.entries(nutrients)) scaled[key] = Math.round(value * servings * 1000) / 1000
-    const cols = nutrientColumns(scaled)
-
-    const portion = servings === 1
-      ? (recipe.serving || '1 serving')
-      : `${formatServings(servings)} \u00d7 ${recipe.serving || 'serving'}`
-    const noteParts = [`Logged from the Fuel recipe bank: ${recipe.name}.`]
-    if (recipe.nutritionEstimated) noteParts.push('Nutrition for this recipe was estimated by Fuel AI.')
-
-    const db = sql()
-    const rows = await db`
-      INSERT INTO food_entries (
-        user_id, occurred_at, meal, description, portion,
-        calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
-        sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients,
-        confidence, notes, source, updated_at
-      ) VALUES (
-        ${auth.id}, ${new Date().toISOString()}, ${text(body.meal) || ''}, ${recipe.name}, ${portion},
-        ${scale(recipe.nutrition.calories)}, ${scale(recipe.nutrition.protein)},
-        ${scale(recipe.nutrition.carbs)}, ${scale(recipe.nutrition.fat)}, ${scale(recipe.nutrition.fiber)},
-        ${cols.sugarsG}, ${cols.addedSugarsG}, ${cols.sodiumMg}, ${cols.caffeineMg},
-        ${JSON.stringify(scaled)}::jsonb,
-        ${recipe.nutritionEstimated ? 'estimated' : 'recipe'}, ${noteParts.join(' ')},
-        ${`Fuel recipe:${recipe.id}`}, now()
-      )
-      RETURNING id, occurred_at, meal, description, portion, calories_kcal, protein_g, carbs_g, fat_g, fiber_g
-    `
-    sendJson(res, 201, { ok: true, entry: rows[0], recipe: { id: recipe.id, name: recipe.name }, servings }, auth.cookie ? [auth.cookie] : [])
+    sendJson(res, 201, { ok: true, entry: result.entry, recipe: result.recipe, servings: result.servings }, cookie)
   } catch (error) {
     console.error('Recipe logging failed', error)
     sendJson(res, 500, { error: 'That recipe could not be logged.' })
@@ -514,14 +487,6 @@ async function handlePlaces(req, res) {
   }
 }
 
-function servingCount(value) {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) return 1
-  return Math.min(20, Math.round(parsed * 4) / 4)
-}
-function formatServings(value) {
-  return Number.isInteger(value) ? String(value) : String(value)
-}
 function batchSize(value) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) return 6
@@ -569,89 +534,6 @@ async function handleUserContext(req, res) {
     console.error('Fuel user context request failed', error)
     sendJson(res, 500, { error: error instanceof Error ? error.message : 'Unable to update Fuel context.' })
   }
-}
-
-// Rolling 24-hour energy balance: calories eaten minus calories burned across the
-// trailing 24 hours from right now, rather than since local midnight. A negative
-// balance is a deficit, matching the rest of the app.
-async function getRolling24h(userId) {
-  try {
-    return await readRolling24h(userId)
-  } catch (error) {
-    console.error('Rolling 24h energy unavailable', error)
-    return null
-  }
-}
-
-async function readRolling24h(userId) {
-  const db = sql()
-  const tz = TIME_ZONE
-  // Consumed is exact — food entries carry timestamps, so we just sum the window.
-  const consumedRows = await db`
-    SELECT coalesce(sum(calories_kcal), 0)::double precision AS consumed, count(calories_kcal)::int AS n
-    FROM food_entries
-    WHERE user_id = ${userId}
-      AND occurred_at > now() - interval '24 hours'
-      AND occurred_at <= now()
-  `
-  const consumed = Math.max(0, finite(consumedRows[0]?.consumed) || 0)
-  const foodCount = consumedRows[0]?.n || 0
-
-  // Burned is harder: expenditure accrues continuously and health_energy_snapshots
-  // store the running WITHIN-DAY total (reset at local midnight). A 24h window crosses
-  // one midnight, so burned = today's total so far + (yesterday's final − yesterday's
-  // total at this same clock time). If snapshots are too sparse, fall back to
-  // pro-rating the daily health_daily totals across the window.
-  let burned = null
-  let method = 'none'
-  try {
-    const snap = await db`
-      WITH p AS (SELECT (now() AT TIME ZONE ${tz})::date AS today, ((now() AT TIME ZONE ${tz})::date - 1) AS yday)
-      SELECT
-        (SELECT s.total_expenditure_kcal FROM health_energy_snapshots s, p
-           WHERE s.user_id = ${userId} AND s.date = p.today AND s.total_expenditure_kcal IS NOT NULL
-           ORDER BY s.collected_at DESC LIMIT 1) AS today_latest,
-        (SELECT s.total_expenditure_kcal FROM health_energy_snapshots s, p
-           WHERE s.user_id = ${userId} AND s.date = p.yday AND s.total_expenditure_kcal IS NOT NULL
-           ORDER BY s.collected_at DESC LIMIT 1) AS yday_final,
-        (SELECT s.total_expenditure_kcal FROM health_energy_snapshots s, p
-           WHERE s.user_id = ${userId} AND s.date = p.yday AND s.total_expenditure_kcal IS NOT NULL
-           ORDER BY abs(extract(epoch FROM (s.collected_at - (now() - interval '24 hours')))) ASC LIMIT 1) AS yday_at_cutoff
-    `
-    const todayLatest = finite(snap[0]?.today_latest)
-    const ydayFinal = finite(snap[0]?.yday_final)
-    const ydayAtCutoff = finite(snap[0]?.yday_at_cutoff)
-    if (todayLatest != null && ydayFinal != null && ydayAtCutoff != null) {
-      burned = todayLatest + Math.max(0, ydayFinal - ydayAtCutoff)
-      method = 'measured'
-    }
-  } catch (error) {
-    // The snapshots table is optional; fall through to the daily-total estimate.
-    console.warn('Rolling 24h snapshot path unavailable', error?.message || error)
-  }
-
-  if (burned == null) {
-    const daily = await db`
-      WITH p AS (SELECT (now() AT TIME ZONE ${tz})::date AS today, ((now() AT TIME ZONE ${tz})::date - 1) AS yday)
-      SELECT
-        (SELECT total_expenditure_kcal FROM health_daily h, p WHERE h.user_id = ${userId} AND h.date = p.today) AS today_total,
-        (SELECT total_expenditure_kcal FROM health_daily h, p WHERE h.user_id = ${userId} AND h.date = p.yday) AS yday_total,
-        extract(epoch FROM (now() - ((now() AT TIME ZONE ${tz})::date::timestamp AT TIME ZONE ${tz}))) AS secs_today
-    `
-    const todayTotal = finite(daily[0]?.today_total)
-    const ydayTotal = finite(daily[0]?.yday_total)
-    const fracToday = Math.min(1, Math.max(0, (finite(daily[0]?.secs_today) || 0) / 86400))
-    if (todayTotal != null || ydayTotal != null) {
-      // Today's total is the actual amount burned since midnight; yesterday's is
-      // pro-rated to the portion of yesterday still inside the window.
-      burned = (todayTotal || 0) + (ydayTotal || 0) * (1 - fracToday)
-      method = 'estimated'
-    }
-  }
-
-  if (burned == null) return { consumed, burned: null, balance: null, foodCount, method: 'none' }
-  burned = Math.round(burned)
-  return { consumed: Math.round(consumed), burned, balance: Math.round(consumed - burned), foodCount, method }
 }
 
 async function getIntradayEnergy(userId) {

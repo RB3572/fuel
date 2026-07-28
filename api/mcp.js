@@ -3,10 +3,14 @@ import { automaticallySetGoals, getUserGoals, saveUserGoals } from './_lib/goals
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { bearerToken, oauthChallenge, verifyAccessToken } from './_lib/mcp-auth.js'
 import { appendUserContext, getUserContext, saveUserContext } from './_lib/user-context.js'
-import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientsFromRow } from './_lib/nutrients.js'
+import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 import { getRecipe, listRecipes, saveRecipe } from './_lib/recipes.js'
+import { deleteFoodEntry, logRecipeAsFood, normalizeFoodRow, updateFoodEntry } from './_lib/food-entries.js'
+import { getRolling24h } from './_lib/rolling-energy.js'
+import { getPlaceHeatmap, renamePlace } from './_lib/places.js'
+import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
 
-const SERVER_VERSION = '1.4.0'
+const SERVER_VERSION = '1.5.0'
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -88,6 +92,39 @@ const tools = [
         nutrients: { type: 'object', properties: NUTRIENT_JSON_SCHEMA_PROPERTIES, additionalProperties: false, description: 'Optional detailed nutrient values using the units encoded in each property name.' },
         confidence: { type: 'string', enum: ['exact', 'high', 'medium', 'low', 'estimated'] },
         notes: { type: 'string', maxLength: 1500 },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: WRITE_SECURITY,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'update_food_entry',
+    title: 'Update food entry',
+    description: 'Correct an already-logged food or drink entry — its description, portion, timing, macros, or micronutrients. Call list_food_entries first to obtain the exact entry_id. Only the fields you supply change; everything else is left as it is. Micronutrients merge into the entry’s existing profile, so you can fill in what you know without resending the rest.',
+    inputSchema: {
+      type: 'object',
+      required: ['entry_id'],
+      properties: {
+        entry_id: { type: 'string', minLength: 1, maxLength: 100, description: 'Exact food entry ID returned by list_food_entries.' },
+        occurred_at: { type: 'string', description: 'ISO 8601 timestamp to move the entry to.' },
+        meal: { type: ['string', 'null'], maxLength: 100, description: 'Meal category. Null clears it.' },
+        description: { type: 'string', minLength: 1, maxLength: 1000, description: 'What was eaten. Cannot be emptied.' },
+        portion: { type: ['string', 'null'], maxLength: 300 },
+        calories_kcal: { type: ['number', 'null'], minimum: 0 },
+        protein_g: { type: ['number', 'null'], minimum: 0 },
+        carbs_g: { type: ['number', 'null'], minimum: 0 },
+        fat_g: { type: ['number', 'null'], minimum: 0 },
+        fiber_g: { type: ['number', 'null'], minimum: 0 },
+        sugars_g: { type: ['number', 'null'], minimum: 0 },
+        added_sugars_g: { type: ['number', 'null'], minimum: 0 },
+        sodium_mg: { type: ['number', 'null'], minimum: 0 },
+        caffeine_mg: { type: ['number', 'null'], minimum: 0 },
+        nutrients: { type: 'object', properties: NUTRIENT_JSON_SCHEMA_PROPERTIES, additionalProperties: false, description: 'Micronutrients to merge into the entry’s existing profile.' },
+        replace_nutrients: { type: 'boolean', description: 'Replace the whole micronutrient profile with `nutrients` instead of merging. Defaults to false.' },
+        confidence: { type: 'string', enum: ['exact', 'high', 'medium', 'low', 'estimated'] },
+        notes: { type: ['string', 'null'], maxLength: 1500 },
       },
       additionalProperties: false,
     },
@@ -249,6 +286,102 @@ const tools = [
     securitySchemes: WRITE_SECURITY,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  {
+    name: 'log_recipe',
+    title: 'Log a recipe',
+    description: 'Log a recipe from the shared Fuel recipe bank straight into the signed-in user’s food diary, scaling its per-serving nutrition by the number of servings eaten. Prefer this over log_food whenever the food is a saved recipe — the stored breakdown is more accurate than an estimate. A recipe with no nutrition breakdown is refused rather than logged as zero calories.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recipe_id: { type: 'string', description: 'Recipe ID from list_recipes.' },
+        name: { type: 'string', maxLength: 300, description: 'Exact recipe name, if the ID is not known.' },
+        servings: { type: 'number', exclusiveMinimum: 0, maximum: 20, description: 'Servings eaten. Rounded to the nearest quarter. Defaults to 1.' },
+        meal: { type: 'string', maxLength: 100, description: 'Meal category such as Breakfast, Lunch, Dinner, or Snack.' },
+        occurred_at: { type: 'string', description: 'ISO 8601 timestamp. Defaults to now.' },
+      },
+      anyOf: [{ required: ['recipe_id'] }, { required: ['name'] }],
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: WRITE_SECURITY,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'get_energy_balance',
+    title: 'Get energy balance',
+    description: 'Read the signed-in user’s calorie balance both for today so far and across the trailing 24 hours from right now. A negative balance is a deficit. The rolling figure is the better read late at night or early in the morning, when a calendar day says little.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: READ_SECURITY,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'list_daily_history',
+    title: 'List daily history',
+    description: 'List the signed-in user’s day-level energy totals — calories burned, resting, active, and consumed — for recent days. Consumed is normally the sum of that day’s food entries; consumedOverridden marks a day whose intake was set manually instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', minimum: 1, maximum: 365, description: 'How many days back to include, ending today. Defaults to 30.' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: READ_SECURITY,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'update_daily_history',
+    title: 'Update daily history',
+    description: 'Correct one past day’s overall energy totals — for instance when a watch was not worn and the burn figures are wrong. Only the fields you supply change. Setting consumed overrides that day’s intake without touching its individual food entries; setting consumed to null removes the override so the day goes back to the sum of its food. To fix a single meal, use update_food_entry instead.',
+    inputSchema: {
+      type: 'object',
+      required: ['date'],
+      properties: {
+        date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'The day to edit, as YYYY-MM-DD.' },
+        total_expenditure_kcal: { type: ['number', 'null'], minimum: 0, description: 'Total calories burned that day.' },
+        resting_energy_kcal: { type: ['number', 'null'], minimum: 0 },
+        active_energy_kcal: { type: ['number', 'null'], minimum: 0 },
+        consumed_kcal: { type: ['number', 'null'], minimum: 0, description: 'Manual intake override. Null clears it.' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: WRITE_SECURITY,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'get_place_heatmap',
+    title: 'Get 24-hour place heatmap',
+    description: 'Read the pattern of where the signed-in user spends a typical day, built from location fixes taken when they open Fuel. Returns the day in half-hour slots with the place that usually dominates each one, plus readable spans such as "Place 1, 10pm–7:30am". Coordinates are deliberately never returned — only the pattern and whatever names the user gave their places. Places are unnamed until the user names them, so use rename_place before assuming which is home or work.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', minimum: 1, maximum: 365, description: 'How many days of history to build the pattern from. Defaults to 30.' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: READ_SECURITY,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'rename_place',
+    title: 'Rename a place',
+    description: 'Give one of the signed-in user’s places a name, such as Home, Work, or Gym, so the heatmap reads plainly. Call get_place_heatmap first for the exact place_id, and use the name the user actually gives you rather than one inferred from the pattern.',
+    inputSchema: {
+      type: 'object',
+      required: ['place_id', 'label'],
+      properties: {
+        place_id: { type: 'string', minLength: 1, maxLength: 100, description: 'Exact place ID from get_place_heatmap.' },
+        label: { type: 'string', maxLength: 60, description: 'The name for this place. An empty string clears it.' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: { type: 'object', additionalProperties: true },
+    securitySchemes: WRITE_SECURITY,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ]
 
 const toolByName = new Map(tools.map((tool) => [tool.name, tool]))
@@ -312,7 +445,16 @@ async function handleMessage(req, message) {
       protocolVersion: String(message.params?.protocolVersion || DEFAULT_PROTOCOL_VERSION),
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: 'Fuel', title: 'Fuel Health and Nutrition', version: SERVER_VERSION },
-      instructions: 'Fuel is a private per-user health and nutrition dashboard. Read get_user_context before interpreting health data, recommending food, or estimating food entries. Read current Fuel data before interpreting progress. Use user-supplied nutrition when available and clearly mark estimates. Never expose another user’s data. Context, goal, and food updates require the write scope. Before deleting food, list entries to obtain the exact entry ID and require explicit user confirmation.',
+      instructions: [
+        'Fuel is a private per-user health and nutrition dashboard.',
+        'Read get_user_context before interpreting health data, recommending food, or estimating food entries, and read current Fuel data before interpreting progress. Use user-supplied nutrition when available and clearly mark estimates. Never expose another user’s data.',
+        'Editing food: list_food_entries returns the entry IDs that update_food_entry and delete_food_entry need. Prefer update_food_entry over deleting and re-logging, so the original timestamp survives. Deleting is permanent — confirm with the user first.',
+        'Logging food: if the food is a saved recipe, use log_recipe rather than log_food, because the recipe bank’s stored breakdown beats an estimate.',
+        'The recipe bank is shared by every Fuel user, so a recipe added or changed through add_recipe is visible to all of them. Everything else is private to the signed-in user.',
+        'Energy: get_energy_balance covers both today so far and the trailing 24 hours; prefer the rolling figure late at night or early in the morning. update_daily_history fixes a whole day’s totals, update_food_entry fixes one meal.',
+        'Location: get_place_heatmap returns when the user is usually at each place and never returns coordinates. Places are unnamed until the user names them, so ask before assuming which is home or work, and only pass rename_place a name the user actually gave you.',
+        'Context, goal, food, recipe, history, and place updates all require the write scope.',
+      ].join(' '),
     })
   }
   if (message.method === 'ping') return rpcResult(id, {})
@@ -347,7 +489,7 @@ async function callTool(req, params) {
 }
 
 async function executeTool(name, userId, args) {
-  if (['get_fuel_dashboard', 'list_food_entries', 'log_food', 'delete_food_entry', 'list_recipes', 'get_recipe', 'add_recipe'].includes(name)) await ensureNutrientSchema()
+  if (['get_fuel_dashboard', 'list_food_entries', 'log_food', 'update_food_entry', 'delete_food_entry', 'log_recipe', 'get_energy_balance', 'list_recipes', 'get_recipe', 'add_recipe'].includes(name)) await ensureNutrientSchema()
   if (name === 'get_fuel_dashboard') {
     const [dashboard, userContext] = await Promise.all([
       getNeonDashboard(userId),
@@ -442,19 +584,132 @@ async function executeTool(name, userId, args) {
     return { ok: true, duplicatePrevented: false, entry: normalizeFoodRow(rows[0]) }
   }
 
+  if (name === 'update_food_entry') {
+    const entryId = text(args.entry_id, 100)
+    if (!entryId) throw new Error('entry_id is required. Call list_food_entries to obtain the exact ID.')
+    const { entry_id: _ignored, ...patch } = args
+    if (!Object.keys(patch).length) throw new Error('Supply at least one field to change.')
+    const result = await updateFoodEntry(userId, entryId, patch)
+    if (!result) throw new Error('That food entry was not found. Call list_food_entries to obtain the exact ID.')
+    return { ok: true, updated: true, entry: result.entry, previous: result.previous }
+  }
+
   if (name === 'delete_food_entry') {
     const entryId = text(args.entry_id, 100)
     if (!entryId) throw new Error('entry_id is required. Call list_food_entries to obtain the exact ID.')
     if (args.confirm !== true) throw new Error('confirm must be true before a food entry can be permanently deleted.')
-    const db = sql()
-    const rows = await db`
-      DELETE FROM food_entries
-      WHERE user_id = ${userId} AND id::text = ${entryId}
-      RETURNING id, occurred_at, meal, description, portion, calories_kcal, protein_g,
-        carbs_g, fat_g, fiber_g, sugars_g, added_sugars_g, sodium_mg, caffeine_mg, nutrients, confidence, notes, source
-    `
-    if (!rows.length) return { ok: true, deleted: false, entryId }
-    return { ok: true, deleted: true, entry: normalizeFoodRow(rows[0]) }
+    const entry = await deleteFoodEntry(userId, entryId)
+    if (!entry) return { ok: true, deleted: false, entryId }
+    return { ok: true, deleted: true, entry }
+  }
+
+  if (name === 'log_recipe') {
+    const result = await logRecipeAsFood(userId, {
+      recipeId: text(args.recipe_id, 100) || '',
+      name: text(args.name, 300) || '',
+      servings: args.servings,
+      meal: text(args.meal, 100) || '',
+      occurredAt: args.occurred_at,
+    })
+    if (result.ok) return { ok: true, entry: result.entry, recipe: result.recipe, servings: result.servings }
+    if (result.reason === 'missing_recipe') throw new Error('Provide recipe_id or name.')
+    if (result.reason === 'not_found') throw new Error('That recipe is not in the shared Fuel recipe bank.')
+    throw new Error(`${result.recipe.name} has no nutrition breakdown yet, so logging it would count as zero calories. Add one with add_recipe first.`)
+  }
+
+  if (name === 'get_energy_balance') {
+    // The rolling figure is the point of this tool and comes from its own query, so a
+    // failure anywhere in the much larger dashboard read must not take the whole tool
+    // down with it — degrade to the rolling window alone.
+    const [dashboard, rolling24h] = await Promise.all([
+      getNeonDashboard(userId).catch((error) => { console.error('Energy balance dashboard read failed', error); return null }),
+      getRolling24h(userId),
+    ])
+    const summary = dashboard?.today?.summary || {}
+    return {
+      today: {
+        date: summary.date ?? null,
+        consumed: summary.caloriesConsumed ?? null,
+        burned: summary.totalExpenditure ?? null,
+        restingEnergy: summary.restingEnergy ?? null,
+        activeEnergy: summary.activeEnergy ?? null,
+        balance: summary.energyBalance ?? null,
+        partialDay: summary.partialDay ?? null,
+      },
+      rolling24h,
+      averages: dashboard?.energyAverages ?? null,
+      note: 'A negative balance is a deficit. today covers local midnight until now, so it understates a full day; rolling24h covers the trailing 24 hours.',
+    }
+  }
+
+  if (name === 'list_daily_history') {
+    const days = integer(args.days, 1, 365) || 30
+    const history = await listDailyHistory(userId, days)
+    return { days, count: history.length, history }
+  }
+
+  if (name === 'update_daily_history') {
+    const date = validDate(args.date)
+    if (!date) throw new Error('date must be a valid YYYY-MM-DD day.')
+    // Absent keys are left alone by saveDailyHistory; explicit nulls clear the field.
+    const values = {}
+    const has = (key) => Object.prototype.hasOwnProperty.call(args, key)
+    if (has('total_expenditure_kcal')) values.totalExpenditure = args.total_expenditure_kcal
+    if (has('resting_energy_kcal')) values.restingEnergy = args.resting_energy_kcal
+    if (has('active_energy_kcal')) values.activeEnergy = args.active_energy_kcal
+    if (has('consumed_kcal')) values.consumed = args.consumed_kcal
+    if (!Object.keys(values).length) throw new Error('Supply at least one figure to change.')
+    const day = await saveDailyHistory(userId, date, values)
+    return { ok: true, day }
+  }
+
+  // Location is the most sensitive thing Fuel stores, so this returns the daily
+  // pattern and nothing that could place the user on a map: no coordinates, no
+  // accuracy, no individual fixes.
+  if (name === 'get_place_heatmap') {
+    const days = integer(args.days, 1, 365) || 30
+    const heatmap = await getPlaceHeatmap(userId, days)
+    const label = (id) => {
+      const index = heatmap.places.findIndex((place) => place.id === id)
+      if (index < 0) return 'Unknown'
+      return heatmap.places[index].label || `Place ${index + 1}`
+    }
+    const places = heatmap.places
+      .filter((place) => place.samples > 0)
+      .map(({ id, label: given, samples, likelyHome }, index) => ({
+        id,
+        label: given,
+        displayName: given || `Place ${index + 1}`,
+        named: Boolean(given),
+        samples,
+        shareOfDay: heatmap.totalSamples ? Math.round((samples / heatmap.totalSamples) * 1000) / 10 : 0,
+        likelyHome,
+      }))
+    return {
+      windowDays: heatmap.windowDays,
+      totalSamples: heatmap.totalSamples,
+      daysCovered: heatmap.daysCovered,
+      firstSampleAt: heatmap.firstSampleAt,
+      places,
+      spans: placeSpans(heatmap, label),
+      slots: heatmap.buckets.map(({ index, startMinute, placeId, samples, share }) => ({
+        index,
+        startsAt: clockLabel(startMinute),
+        placeId: samples ? placeId : null,
+        place: samples && placeId ? label(placeId) : null,
+        samples,
+        // 1 means that place wins the slot every time; lower means it varies.
+        consistency: Math.round(share * 100) / 100,
+      })),
+      note: 'Built from fixes taken when the user opens Fuel, so slots they are rarely awake or online for are thin. Coordinates are never returned.',
+    }
+  }
+
+  if (name === 'rename_place') {
+    const placeId = text(args.place_id, 100)
+    if (!placeId) throw new Error('place_id is required. Call get_place_heatmap to obtain the exact ID.')
+    const place = await renamePlace(userId, placeId, args.label ?? '')
+    return { ok: true, place }
   }
 
   if (name === 'get_goals') return getUserGoals(userId)
@@ -515,8 +770,39 @@ async function executeTool(name, userId, args) {
   throw new Error(`Tool is not implemented: ${name}`)
 }
 
-function normalizeFoodRow(row) {
-  return { ...row, nutrients: nutrientsFromRow(row) }
+// Collapses consecutive half-hour slots that share a dominant place into the readable
+// stretches a person actually thinks in ("Place 2, 9am–5pm"). Lone slots are dropped as
+// noise, matching what the Places tab draws.
+function placeSpans(heatmap, label) {
+  const spans = []
+  const slotMinutes = (24 * 60) / (heatmap.bucketsPerDay || 48)
+  for (const bucket of heatmap.buckets) {
+    const placeId = bucket.samples ? bucket.placeId : null
+    const last = spans[spans.length - 1]
+    if (last && last.placeId === placeId) {
+      last.endMinute = bucket.startMinute + slotMinutes
+      last.slots += 1
+    } else {
+      spans.push({ placeId, startMinute: bucket.startMinute, endMinute: bucket.startMinute + slotMinutes, slots: 1 })
+    }
+  }
+  return spans
+    .filter((span) => span.placeId && span.slots >= 2)
+    .map((span) => ({
+      placeId: span.placeId,
+      place: label(span.placeId),
+      from: clockLabel(span.startMinute),
+      to: clockLabel(span.endMinute),
+      hours: Math.round((span.slots * slotMinutes) / 6) / 10,
+    }))
+}
+
+function clockLabel(minute) {
+  const hour = Math.floor(minute / 60) % 24
+  const minutes = Math.round(minute % 60)
+  const suffix = hour < 12 ? 'am' : 'pm'
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12
+  return minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
 }
 
 
@@ -535,7 +821,21 @@ function toolError(message) {
 
 function summarize(name, data) {
   if (name === 'log_food') return data.duplicatePrevented ? 'This food entry was already logged, so no duplicate was created.' : 'Food was logged in Fuel.'
+  if (name === 'update_food_entry') return `Updated ${data.entry?.description || 'the food entry'} in Fuel.`
   if (name === 'delete_food_entry') return data.deleted ? `Deleted ${data.entry?.description || 'the food entry'} from Fuel.` : 'No matching food entry was found, so nothing was deleted.'
+  if (name === 'log_recipe') return `Logged ${data.servings === 1 ? '1 serving' : `${data.servings} servings`} of ${data.recipe?.name || 'the recipe'} to the Fuel diary.`
+  if (name === 'get_energy_balance') {
+    const rolling = data.rolling24h?.balance
+    if (rolling == null) return 'Fuel does not have enough expenditure data yet to compute an energy balance.'
+    return `Over the last 24 hours: ${Math.abs(rolling)} kcal ${rolling < 0 ? 'deficit' : 'surplus'}.`
+  }
+  if (name === 'list_daily_history') return `Returned day-level energy totals for the last ${data.days} days.`
+  if (name === 'update_daily_history') return `Updated the stored totals for ${data.day?.date}.`
+  if (name === 'get_place_heatmap') {
+    if (!data.totalSamples) return 'No location history has been recorded yet, so there is no pattern to read.'
+    return `Built a daily pattern from ${data.totalSamples} check-ins across ${data.daysCovered} ${data.daysCovered === 1 ? 'day' : 'days'}, covering ${data.places.length} ${data.places.length === 1 ? 'place' : 'places'}.`
+  }
+  if (name === 'rename_place') return data.place?.label ? `That place is now called ${data.place.label}.` : 'That place’s name was cleared.'
   if (name === 'set_goals' || name === 'automatically_set_goals') return 'Fuel goals were updated.'
   if (name === 'update_user_context') return 'Fuel preferences and context were updated.'
   if (name === 'get_user_context') return data.context ? 'Fuel preferences and context were retrieved.' : 'No Fuel preferences or context are saved yet.'

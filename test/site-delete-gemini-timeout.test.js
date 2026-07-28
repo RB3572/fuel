@@ -14,7 +14,7 @@ test('dashboard exposes confirmed food deletion for an exact authenticated entry
   assert.match(app, /method:'DELETE'/)
   assert.match(app, /entryId:entry\.id/)
   assert.match(app, /delete-entry-button/)
-  assert.match(api, /\['GET', 'POST', 'DELETE'\]/)
+  assert.match(api, /\['GET', 'POST', 'PUT', 'DELETE'\]/)
   assert.match(api, /DELETE FROM food_entries/)
   assert.match(api, /WHERE user_id = \$\{auth\.id\} AND id::text = \$\{entryId\}/)
 })
