@@ -7,11 +7,20 @@ type Place = { id: string; label: string | null; samples: number; likelyHome: bo
 type Bucket = { index: number; startMinute: number; placeId: string | null; samples: number; share: number }
 type Heatmap = { places: Place[]; buckets: Bucket[]; bucketsPerDay: number; windowDays: number; totalSamples: number; daysCovered: number; firstSampleAt: string | null }
 
-// Distinct hues so adjacent places never read as the same colour.
-const PLACE_COLORS = ['#2f6f4e', '#2f6ea8', '#b5651d', '#7a4fa3', '#0f8f8f', '#a83f5b', '#6b7a2f', '#8a5a2b']
-const NO_DATA = '#e6e6e3'
+// Volcanic ramp (obsidian -> violet -> plum -> ember -> lava -> sulfur), sampled off
+// the magma/inferno colormaps. Ordered by heat so the palette climbs in both hue and
+// lightness, which keeps adjacent places distinguishable rather than merely pretty.
+const PLACE_COLORS = ['#1b1035', '#4a1079', '#7d1e6d', '#a92e5e', '#cf4446', '#e96a25', '#f79711', '#f7c93e']
+// Places are handed colours in this order rather than straight down the ramp, so even
+// two or three places span obsidian-to-sulfur instead of all landing in the dark end.
+// A fixed order (rather than re-spreading by count) keeps a place's colour stable when
+// a new one appears.
+const COLOR_ORDER = [0, 7, 3, 5, 1, 6, 2, 4]
+const paletteAt = (index: number) => PLACE_COLORS[COLOR_ORDER[index]]
+// Warm ash rather than neutral grey, so empty slots sit in the same family.
+const NO_DATA = '#e5ded6'
 // Places past the palette collapse into one muted bucket, keeping the legend legible.
-const OTHER_COLOR = '#9a9a95'
+const OTHER_COLOR = '#9c8f84'
 
 const clockLabel = (minute: number) => {
   const h = Math.floor(minute / 60) % 24
@@ -56,7 +65,7 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
   const colorFor = useMemo(() => {
     const map = new Map<string, string>()
     ;(data?.places || []).forEach((place, index) => {
-      map.set(place.id, index < PLACE_COLORS.length ? PLACE_COLORS[index] : OTHER_COLOR)
+      map.set(place.id, index < COLOR_ORDER.length ? paletteAt(index) : OTHER_COLOR)
     })
     return (id: string | null) => (id && map.get(id)) || NO_DATA
   }, [data])
@@ -187,7 +196,7 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
           <h2>Your places</h2>
           {(data?.places || []).filter((p) => p.samples > 0).map((place, index) => (
             <div className="legend-place" key={place.id}>
-              <span className="lp-dot" style={{ background: index < PLACE_COLORS.length ? PLACE_COLORS[index] : OTHER_COLOR }} />
+              <span className="lp-dot" style={{ background: index < COLOR_ORDER.length ? paletteAt(index) : OTHER_COLOR }} />
               {editing === place.id ? (
                 <>
                   <input className="lp-input" value={draft} autoFocus maxLength={60} placeholder={`Place ${index + 1}`}
