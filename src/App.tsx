@@ -12,6 +12,9 @@ import './ChartLabels.css'
 import './ProfileMenu.css'
 import './DashEdit.css'
 import './VitalsSignal.css'
+// Rendered by React now: this used to be injected into the menu by a MutationObserver,
+// which put a foreign node inside React-owned DOM and closed the menu on every poll.
+import { openContextModal } from './dashboard-enhancer'
 
 type N = number | null
 type RangeKey = 'day' | 'week' | 'month'
@@ -55,12 +58,12 @@ const NUTRIENT_DISPLAY:Array<[string,string,string,number]>=[
 ]
 
 type SectionKey='nutrition'|'detailedNutrition'|'foodConsumed'|'fitness'|'workouts'|'steps'|'vitals'|'recovery'
-type EnergyBoxKey='totalBurned'|'consumed'|'active'|'resting'|'deficit'
+type EnergyBoxKey='totalBurned'|'consumed'|'active'|'resting'|'deficit'|'rolling24'
 type Layout={order:SectionKey[];hidden:SectionKey[];energyBoxes:EnergyBoxKey[]}
 const ALL_SECTIONS:SectionKey[]=['nutrition','detailedNutrition','foodConsumed','fitness','workouts','steps','vitals','recovery']
-const ALL_ENERGY_BOXES:EnergyBoxKey[]=['totalBurned','consumed','active','resting','deficit']
+const ALL_ENERGY_BOXES:EnergyBoxKey[]=['totalBurned','consumed','active','resting','deficit','rolling24']
 const DEFAULT_LAYOUT:Layout={order:[...ALL_SECTIONS],hidden:[],energyBoxes:[...ALL_ENERGY_BOXES]}
-const ENERGY_BOX_LABELS:Record<EnergyBoxKey,string>={totalBurned:'Total burned',consumed:'Consumed',active:'Active',resting:'Resting',deficit:'Deficit / Surplus'}
+const ENERGY_BOX_LABELS:Record<EnergyBoxKey,string>={totalBurned:'Total burned',consumed:'Consumed',active:'Active',resting:'Resting',deficit:'Deficit / Surplus',rolling24:'Last 24 hours'}
 function normalizeLayout(raw:unknown):Layout{
   const value=raw&&typeof raw==='object'?raw as Partial<Layout>:{}
   const order:SectionKey[]=[];const seen=new Set<string>()
@@ -76,22 +79,6 @@ function normalizeLayout(raw:unknown):Layout{
 function publishDashboard(payload:DashboardData){(window as unknown as{__fuelDashboard?:DashboardData}).__fuelDashboard=payload;dispatchEvent(new CustomEvent('fuel:dashboard'))}
 
 function useInView<T extends HTMLElement>(){const ref=useRef<T|null>(null);const[visible,setVisible]=useState(false);useEffect(()=>{const node=ref.current;if(!node)return;if(typeof IntersectionObserver==='undefined'){setVisible(true);return}const observer=new IntersectionObserver(([entry])=>{if(entry.isIntersecting){setVisible(true);observer.disconnect()}},{threshold:.18,rootMargin:'0px 0px -6% 0px'});observer.observe(node);return()=>observer.disconnect()},[]);return{ref,visible}}
-
-// ---- Rolling 24-hour energy balance ---------------------------------------------
-// Calories eaten minus calories burned over the trailing 24 hours from right now,
-// rather than since local midnight. Late meals and overnight burn stay in view here
-// even just after midnight, when the calendar-day figure resets to near zero.
-function Rolling24hBar({data}:{data:Rolling24h|null|undefined}){
-  if(!data||data.balance==null)return null
-  const deficit=data.balance<0
-  const magnitude=Math.abs(data.balance)
-  return <div className={`rolling24${deficit?' is-deficit':' is-surplus'}`}>
-    <span className="r24-label">Last 24 hours</span>
-    <strong className="r24-value">{fmt(magnitude)}<small> kcal {deficit?'deficit':'surplus'}</small></strong>
-    <span className="r24-detail">{fmt(data.consumed)} in · {fmt(data.burned)} out</span>
-    {data.method==='estimated'&&<span className="r24-note" title="Computed from daily totals because intraday snapshots were unavailable">approx.</span>}
-  </div>
-}
 
 // ---- Daily vitals health signal -------------------------------------------------
 // Compares TODAY's vital signs against the user's OWN history and flags days that are
@@ -192,6 +179,7 @@ export default function App(){
   const[loading,setLoading]=useState(false)
   const[deletingFoodId,setDeletingFoodId]=useState<string|null>(null)
   const[editingFood,setEditingFood]=useState<FoodEntry|null>(null)
+  const[historyOpen,setHistoryOpen]=useState(false)
   const[fillingNutrients,setFillingNutrients]=useState(false)
   const[fillNote,setFillNote]=useState('')
   const[error,setError]=useState('')
@@ -244,7 +232,7 @@ export default function App(){
   const toggleBox=(key:EnergyBoxKey)=>saveLayout({...layout,energyBoxes:layout.energyBoxes.includes(key)?layout.energyBoxes.filter(k=>k!==key):ALL_ENERGY_BOXES.filter(k=>k===key||layout.energyBoxes.includes(k))})
   if(session.loading)return <Centered title="Fuel" text="Loading your dashboard."/>
   if(!session.authenticated)return <SignIn/>
-  const menu=<DashMenu editMode={editMode} loading={loading} onEdit={()=>{setEditMode(v=>!v);setMenuOpen(false)}} onRefresh={()=>{setMenuOpen(false);void load()}} onGoals={()=>{setMenuOpen(false);setGoalsOpen(true)}} onSync={()=>{setMenuOpen(false);setSyncOpen(true)}} onLogout={logout}/>
+  const menu=<DashMenu editMode={editMode} loading={loading} onEdit={()=>{setEditMode(v=>!v);setMenuOpen(false)}} onRefresh={()=>{setMenuOpen(false);void load()}} onGoals={()=>{setMenuOpen(false);setGoalsOpen(true)}} onSync={()=>{setMenuOpen(false);setSyncOpen(true)}} onHistory={()=>{setMenuOpen(false);setHistoryOpen(true)}} onContext={()=>{setMenuOpen(false);void openContextModal()}} onLogout={logout}/>
   const navFor=(current:'dashboard'|'lifting'|'compare'|'charts')=><TopNav current={current} user={session.user} goDashboard={()=>{setPage('dashboard');window.scrollTo({top:0})}} goLifting={()=>{setSelectedLift(null);setPage('lifting')}} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
   if(page==='lifting')return <Suspense fallback={<Centered title="Fuel" text="Loading lifting plans."/>}><LiftingPage selected={selectedLift} onSelect={setSelectedLift} nav={navFor('lifting')}/></Suspense>
   if(page==='compare')return <Suspense fallback={<Centered title="Fuel" text="Loading comparison."/>}><ComparePage data={data} nav={navFor('compare')}/></Suspense>
@@ -264,15 +252,15 @@ export default function App(){
   return <main className={`app-shell${editMode?' edit-mode':''}`}>
     <TopNav current="dashboard" user={session.user} goDashboard={()=>window.scrollTo({top:0,behavior:'smooth'})} goLifting={()=>setPage('lifting')} goCompare={()=>{setPage('compare');window.scrollTo({top:0})}} goCharts={()=>{setPage('charts');window.scrollTo({top:0})}} menuOpen={menuOpen} onMenu={()=>setMenuOpen(v=>!v)} menu={menu}/>
     <VitalsSignal trends={data?.trends||[]} summary={s}/>
-    <Rolling24hBar data={data?.rolling24h}/>
     {editMode&&<div className="edit-banner panel"><LayoutGrid size={16}/><span>Editing your dashboard — drag to reorder, hide sections, and toggle energy metrics.</span><button className="edit-done" onClick={()=>setEditMode(false)}><Check size={15}/>Done</button></div>}
     {error&&<div className="error">{error}</div>}
-    <EnergyHero summary={s} trends={data?.trends||[]} energyAverages={data?.energyAverages} range={range} setRange={setRange} boxes={layout.energyBoxes} editMode={editMode} onToggleBox={toggleBox}/>
+    <EnergyHero summary={s} trends={data?.trends||[]} rolling24h={data?.rolling24h} energyAverages={data?.energyAverages} range={range} setRange={setRange} boxes={layout.energyBoxes} editMode={editMode} onToggleBox={toggleBox}/>
     {layout.order.filter(k=>editMode||!layout.hidden.includes(k)).map(key=>{const def=sectionNodes[key];return <DashSection key={key} title={def.title} detail={def.detail} editMode={editMode} hidden={layout.hidden.includes(key)} dragging={dragKey===key} onDragStart={()=>setDragKey(key)} onDragEnd={()=>setDragKey(null)} onDropSection={()=>reorder(key)} onToggleHide={()=>toggleHidden(key)}>{def.node}</DashSection>})}
     <footer><Database size={15}/><span>{data?.coverage.days||0} days · {data?.coverage.workouts||0} active days · {data?.coverage.foodEntries||0} food entries · Neon Postgres</span></footer>
     {syncOpen&&<SyncSetup onClose={()=>setSyncOpen(false)}/>}
     {goalsOpen&&<GoalsSetup initial={data} onClose={()=>setGoalsOpen(false)} onSaved={load}/>}
     {editingFood&&<EditFoodModal entry={editingFood} onClose={()=>setEditingFood(null)} onSaved={load}/>}
+    {historyOpen&&<HistoryModal onClose={()=>setHistoryOpen(false)} onSaved={load}/>}
   </main>
 }
 
@@ -302,7 +290,7 @@ function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,menuOpen,
     <div className="profile-shell"><button className="nav-icon-button" onClick={onMenu} aria-expanded={menuOpen} aria-label="Menu" title="Menu"><SlidersHorizontal size={18}/><span className="nav-label">More</span></button>{menuOpen&&menu}</div>
   </nav></header>
 }
-function DashMenu({editMode,loading,onEdit,onRefresh,onGoals,onSync,onLogout}:{editMode:boolean;loading:boolean;onEdit:()=>void;onRefresh:()=>void;onGoals:()=>void;onSync:()=>void;onLogout:()=>void}){return <div className="profile-menu panel" role="menu"><button onClick={onEdit} role="menuitem"><LayoutGrid size={17}/><span>{editMode?'Finish editing':'Edit dashboard'}</span></button><button onClick={onRefresh} role="menuitem"><RefreshCw size={17} className={loading?'spin':''}/><span>Refresh</span></button><button onClick={onGoals} role="menuitem"><Target size={17}/><span>Goals</span></button><button onClick={onSync} role="menuitem"><Settings size={17}/><span>Sync setup</span></button><button className="logout-menu-button" onClick={onLogout} role="menuitem"><LogOut size={17}/><span>Log out</span></button></div>}
+function DashMenu({editMode,loading,onEdit,onRefresh,onGoals,onSync,onHistory,onContext,onLogout}:{editMode:boolean;loading:boolean;onEdit:()=>void;onRefresh:()=>void;onGoals:()=>void;onSync:()=>void;onHistory:()=>void;onContext:()=>void;onLogout:()=>void}){return <div className="profile-menu panel" role="menu"><button onClick={onEdit} role="menuitem"><LayoutGrid size={17}/><span>{editMode?'Finish editing':'Edit dashboard'}</span></button><button onClick={onRefresh} role="menuitem"><RefreshCw size={17} className={loading?'spin':''}/><span>Refresh</span></button><button onClick={onHistory} role="menuitem"><Pencil size={17}/><span>Edit daily history</span></button><button onClick={onGoals} role="menuitem"><Target size={17}/><span>Goals</span></button><button onClick={onContext} role="menuitem"><ShieldCheck size={17}/><span>Preferences & context</span></button><button onClick={onSync} role="menuitem"><Settings size={17}/><span>Sync setup</span></button><button className="logout-menu-button" onClick={onLogout} role="menuitem"><LogOut size={17}/><span>Log out</span></button></div>}
 function DashSection({title,detail,editMode,hidden,dragging,onDragStart,onDragEnd,onDropSection,onToggleHide,children}:{title:string;detail:string;editMode:boolean;hidden:boolean;dragging:boolean;onDragStart:()=>void;onDragEnd:()=>void;onDropSection:()=>void;onToggleHide:()=>void;children:ReactNode}){
   if(!editMode)return <><Section title={title} detail={detail}/>{children}</>
   return <div className={`dash-section${dragging?' dragging':''}${hidden?' section-hidden':''}`} draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onDragOver={e=>e.preventDefault()} onDrop={onDropSection}>
@@ -328,8 +316,8 @@ function GoalsSetup({initial,onClose,onSaved}:{initial:DashboardData|null;onClos
 function SyncSetup({onClose}:{onClose:()=>void}){const[record,setRecord]=useState<SyncToken|null>(null),[busy,setBusy]=useState(true),[message,setMessage]=useState('');const fetchToken=useCallback(async(method:'GET'|'POST'='GET')=>{setBusy(true);setMessage('');try{const r=await fetch('/api/health/token',{method,headers:{Accept:'application/json'}}),p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to provide a health sync token.');setRecord(p)}catch(e){setMessage(e instanceof Error?e.message:'Unable to provide a health sync token.')}finally{setBusy(false)}},[]);useEffect(()=>{void fetchToken()},[fetchToken]);const copy=async()=>{if(!record?.token)return;await navigator.clipboard.writeText(record.token);setMessage('Token copied.')};return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="sync-modal panel" role="dialog" aria-modal="true"><div className="sync-modal-head"><div><h2>Apple Health sync</h2><p>Neon-backed private storage</p></div><button className="icon-button" onClick={onClose}><X size={20}/></button></div><ol><li><a href={record?.shortcutUrl||'https://www.icloud.com/shortcuts/0895a9a876fa454f8e2bc90daa555fc7'} target="_blank" rel="noreferrer">Install the Fuel Health Shortcut</a>.</li><li>Replace only the bearer token in the Shortcut with the token below.</li><li>Leave the endpoint and the word <strong>Bearer</strong> unchanged.</li></ol><label>Your bearer token</label><div className="token-box">{busy?'Loading token…':record?.token||'Token unavailable'}</div><button className="primary-sync-button" onClick={copy} disabled={!record?.token||busy}><Copy size={17}/>Copy token</button><div className="sync-actions"><a className="shortcut-button" href={record?.shortcutUrl||'https://www.icloud.com/shortcuts/0895a9a876fa454f8e2bc90daa555fc7'} target="_blank" rel="noreferrer">Get Shortcut</a><button className="resync-button" onClick={()=>void fetchToken('POST')} disabled={busy}><RefreshCw size={16}/>Re-sync token</button></div>{message&&<p className="sync-message">{message}</p>}<p className="sync-note">Re-syncing immediately revokes the previous token. Imports update one record per date and do not create duplicate daily entries.</p></section></div>}
 
 function ActivityRings({summary,goals}:{summary:Summary|undefined;goals:DashboardData['goals']|undefined}){const rings=[{label:'Move',value:summary?.activeEnergy||0,target:goalTarget(goals,'move',1000),unit:'CAL',radius:96,width:26,className:'move-ring'},{label:'Exercise',value:summary?.exerciseMinutes||0,target:goalTarget(goals,'exercise',80),unit:'MIN',radius:67,width:24,className:'exercise-ring'},{label:'Stand',value:summary?.standMinutes||0,target:goalTarget(goals,'stand',120),unit:'MIN',radius:40,width:22,className:'stand-ring'}],{ref,visible}=useInView<HTMLDivElement>();return <section ref={ref} className={`activity-rings panel ${visible?'is-visible':''}`}><div className="rings-graphic" role="img"><svg viewBox="0 0 240 240" aria-hidden="true">{rings.map(r=>{const c=2*Math.PI*r.radius,pct=Math.min(1,Math.max(0,r.value/r.target)),target=c*(1-pct);return <g key={r.label} className={r.className}><circle className="fitness-track" cx="120" cy="120" r={r.radius} strokeWidth={r.width}/><circle className="fitness-progress" cx="120" cy="120" r={r.radius} strokeWidth={r.width} strokeDasharray={c} style={{strokeDashoffset:visible?target:c} as CSSProperties}/></g>})}</svg></div><div className="rings-copy">{rings.map(r=><div className={`ring-stat ${r.className}`} key={r.label}><span>{r.label}</span><strong>{fmt(r.value)}/{fmt(r.target)}<small>{r.unit}</small></strong></div>)}</div></section>}
-function EnergyHero({summary,trends,energyAverages,range,setRange,boxes,editMode,onToggleBox}:{summary:Summary|undefined;trends:TrendPoint[];energyAverages:EnergyAverages|undefined;range:RangeKey;setRange:(r:RangeKey)=>void;boxes:EnergyBoxKey[];editMode:boolean;onToggleBox:(k:EnergyBoxKey)=>void}){const days=range==='day'?1:range==='week'?7:30,visible=trends.slice(-days),consumed=visible.reduce((a,p)=>a+(p.caloriesConsumed||0),0),expended=visible.reduce((a,p)=>a+(p.totalExpenditure||0),0),balance=consumed&&expended?consumed-expended:null;return <section className="hero panel"><div className="hero-head"><div><span className="eyebrow">ENERGY BALANCE</span><h2>{balance==null?'Incomplete data':balance>0?`${fmt(balance)} kcal surplus`:`${fmt(Math.abs(balance))} kcal deficit`}</h2><p>{range==='day'?'Today':range==='week'?'Last 7 days':'Last 30 days'} · intake versus total expenditure</p></div><div className="tabs">{(['day','week','month'] as RangeKey[]).map(r=><button className={range===r?'active':''} onClick={()=>setRange(r)} key={r}>{r==='day'?'Day':r==='week'?'Week':'Month'}</button>)}</div></div><EnergySummary summary={summary} boxes={boxes} editMode={editMode} onToggleBox={onToggleBox}/><NetBalanceChart data={trends.slice(-30)} allTimeAverage={energyAverages}/><EnergyInteractiveChart data={visible}/></section>}
-function EnergySummary({summary,boxes,editMode,onToggleBox}:{summary:Summary|undefined;boxes:EnergyBoxKey[];editMode:boolean;onToggleBox:(k:EnergyBoxKey)=>void}){
+function EnergyHero({summary,trends,rolling24h,energyAverages,range,setRange,boxes,editMode,onToggleBox}:{summary:Summary|undefined;trends:TrendPoint[];rolling24h?:Rolling24h|null;energyAverages:EnergyAverages|undefined;range:RangeKey;setRange:(r:RangeKey)=>void;boxes:EnergyBoxKey[];editMode:boolean;onToggleBox:(k:EnergyBoxKey)=>void}){const days=range==='day'?1:range==='week'?7:30,visible=trends.slice(-days),consumed=visible.reduce((a,p)=>a+(p.caloriesConsumed||0),0),expended=visible.reduce((a,p)=>a+(p.totalExpenditure||0),0),balance=consumed&&expended?consumed-expended:null;return <section className="hero panel"><div className="hero-head"><div><span className="eyebrow">ENERGY BALANCE</span><h2>{balance==null?'Incomplete data':balance>0?`${fmt(balance)} kcal surplus`:`${fmt(Math.abs(balance))} kcal deficit`}</h2><p>{range==='day'?'Today':range==='week'?'Last 7 days':'Last 30 days'} · intake versus total expenditure</p></div><div className="tabs">{(['day','week','month'] as RangeKey[]).map(r=><button className={range===r?'active':''} onClick={()=>setRange(r)} key={r}>{r==='day'?'Day':r==='week'?'Week':'Month'}</button>)}</div></div><EnergySummary summary={summary} rolling24h={rolling24h} boxes={boxes} editMode={editMode} onToggleBox={onToggleBox}/><NetBalanceChart data={trends.slice(-30)} allTimeAverage={energyAverages}/><EnergyInteractiveChart data={visible}/></section>}
+function EnergySummary({summary,rolling24h,boxes,editMode,onToggleBox}:{summary:Summary|undefined;rolling24h?:Rolling24h|null;boxes:EnergyBoxKey[];editMode:boolean;onToggleBox:(k:EnergyBoxKey)=>void}){
   const resting=summary?.restingEnergy||0,active=summary?.activeEnergy||0,total=summary?.totalExpenditure||resting+active,consumed=summary?.caloriesConsumed||0
   const balance=total-consumed,balanceWord=balance>=0?'Deficit':'Surplus',balanceClass=balance>=0?'deficit':'surplus',balanceAmount=Math.abs(balance)
   const max=Math.max(total,consumed,1),pct=(v:number)=>`${Math.max(0,v/max*100)}%`
@@ -342,9 +330,15 @@ function EnergySummary({summary,boxes,editMode,onToggleBox}:{summary:Summary|und
     {key:'resting',dot:'resting-dot',label:'Resting',value:resting,cls:''},
     {key:'deficit',dot:'balance-dot',label:balanceWord,value:balanceAmount,cls:`energy-balance-metric ${balanceClass}`},
   ]
+  // Rolling 24h is a trailing-window figure rather than a today-so-far one, so it is
+  // labelled distinctly and hidden entirely when there is no burn data to compare.
+  if(rolling24h&&rolling24h.balance!=null){
+    const r24Deficit=rolling24h.balance<0
+    boxDefs.push({key:'rolling24',dot:'balance-dot',label:`24h ${r24Deficit?'deficit':'surplus'}`,value:Math.abs(rolling24h.balance),cls:`energy-balance-metric ${r24Deficit?'deficit':'surplus'}`})
+  }
   const shown=boxDefs.filter(d=>boxes.includes(d.key))
   return <div className="energy-summary-bars">
-    {editMode&&<div className="energy-box-picker"><span className="picker-label">Metrics</span>{boxDefs.map(d=><button key={d.key} className={`box-chip${boxes.includes(d.key)?' on':''}`} onClick={()=>onToggleBox(d.key)}>{boxes.includes(d.key)?<Check size={13}/>:<Plus size={13}/>}{ENERGY_BOX_LABELS[d.key]}</button>)}</div>}
+    {editMode&&<div className="energy-box-picker"><span className="picker-label">Metrics</span>{ALL_ENERGY_BOXES.map(k=>({key:k})).map(d=><button key={d.key} className={`box-chip${boxes.includes(d.key)?' on':''}`} onClick={()=>onToggleBox(d.key)}>{boxes.includes(d.key)?<Check size={13}/>:<Plus size={13}/>}{ENERGY_BOX_LABELS[d.key]}</button>)}</div>}
     {shown.length>0&&<div className="energy-summary-metrics" data-count={shown.length}>{shown.map(d=><div key={d.key} className={d.cls||undefined}><span><i className={d.dot}/>{d.label}</span><strong>{fmt(d.value)} kcal</strong></div>)}</div>}
     <div className="energy-summary-plot">
       <div className="energy-summary-track"><div className="energy-summary-fill total-burned-fill" style={{width:pct(total)}}><span className="resting-segment" style={{width:`${restingShare}%`}}/><span className="active-segment" style={{width:`${activeShare}%`}}/></div></div>
@@ -405,6 +399,90 @@ function FoodTools({entries,busy,note,onFill}:{entries:FoodEntry[];busy:boolean;
 }
 
 function FoodRow({e,deleting,onDelete,onEdit}:{e:FoodEntry;deleting:boolean;onDelete:()=>void;onEdit:()=>void}){const details=[e.nutrients?.sugarsG!=null?`${fmt(e.nutrients.sugarsG,1)}g sugar`:'',e.nutrients?.sodiumMg!=null?`${fmt(e.nutrients.sodiumMg)}mg sodium`:'',e.nutrients?.caffeineMg!=null?`${fmt(e.nutrients.caffeineMg)}mg caffeine`:''].filter(Boolean).join(' · ');return <article className="entry food-entry"><div><strong>{e.food||e.meal}</strong><span>{[e.time,e.meal,e.portion].filter(Boolean).join(' · ')}</span>{details&&<span className="food-micro">{details}</span>}</div><div className="entry-actions"><div className="entry-nutrition"><strong>{fmt(e.calories)} kcal</strong><span>{fmt(e.protein,1)}g protein · {fmt(e.carbs,1)}g carbs · {fmt(e.fat,1)}g fat · {fmt(e.fiber,1)}g fiber</span></div><div className="entry-buttons"><button className="edit-entry-button" disabled={deleting||!e.id} onClick={onEdit} aria-label={`Edit ${e.food||'food entry'}`} title="Edit food entry"><Pencil size={15}/><span>Edit</span></button><button className="delete-entry-button" disabled={deleting} onClick={onDelete} aria-label={`Delete ${e.food||'food entry'}`} title="Delete food entry"><Trash2 size={15}/><span>{deleting?'Deleting…':'Delete'}</span></button></div></div></article>}
+
+type HistoryDay={date:string;totalExpenditure:N;restingEnergy:N;activeEnergy:N;consumed:N;consumedLogged:N;consumedOverridden:boolean}
+// Edits a past day's overall stats only — burn totals and total intake. Individual
+// meals are deliberately out of scope; an edited intake is stored as an override so
+// the underlying food entries are never rewritten.
+function HistoryModal({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}){
+  const[days,setDays]=useState<HistoryDay[]>([])
+  const[busy,setBusy]=useState(true)
+  const[savingDate,setSavingDate]=useState<string|null>(null)
+  const[message,setMessage]=useState('')
+  const[editing,setEditing]=useState<string|null>(null)
+  const[form,setForm]=useState<{totalExpenditure:string;restingEnergy:string;activeEnergy:string;consumed:string}>({totalExpenditure:'',restingEnergy:'',activeEnergy:'',consumed:''})
+  const loadDays=useCallback(async()=>{
+    setBusy(true)
+    try{
+      const r=await fetch('/api/mlog?fuel_route=daily-history&days=30',{cache:'no-store',headers:{Accept:'application/json'}})
+      const p=await r.json()
+      if(!r.ok)throw new Error(p.error||'Unable to load your history.')
+      setDays(Array.isArray(p.days)?p.days:[])
+    }catch(e){setMessage(e instanceof Error?e.message:'Unable to load your history.')}
+    finally{setBusy(false)}
+  },[])
+  useEffect(()=>{void loadDays()},[loadDays])
+  const startEdit=(d:HistoryDay)=>{
+    setEditing(d.date);setMessage('')
+    setForm({
+      totalExpenditure:d.totalExpenditure==null?'':String(Math.round(d.totalExpenditure)),
+      restingEnergy:d.restingEnergy==null?'':String(Math.round(d.restingEnergy)),
+      activeEnergy:d.activeEnergy==null?'':String(Math.round(d.activeEnergy)),
+      consumed:d.consumed==null?'':String(Math.round(d.consumed)),
+    })
+  }
+  const save=async(date:string)=>{
+    setSavingDate(date);setMessage('')
+    // An empty field clears that value; for intake that restores the food-derived sum.
+    const val=(v:string)=>v.trim()===''?null:Number(v)
+    try{
+      const r=await fetch('/api/mlog?fuel_route=daily-history',{method:'PUT',headers:{'Content-Type':'application/json',Accept:'application/json'},
+        body:JSON.stringify({date,values:{totalExpenditure:val(form.totalExpenditure),restingEnergy:val(form.restingEnergy),activeEnergy:val(form.activeEnergy),consumed:val(form.consumed)}})})
+      const p=await r.json()
+      if(!r.ok)throw new Error(p.error||'Unable to save that day.')
+      setEditing(null)
+      await loadDays()
+      onSaved()
+      setMessage(`Saved ${date}.`)
+    }catch(e){setMessage(e instanceof Error?e.message:'Unable to save that day.')}
+    finally{setSavingDate(null)}
+  }
+  return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>
+    <section className="history-modal panel" role="dialog" aria-modal="true" aria-label="Edit daily history">
+      <div className="sync-modal-head">
+        <div><h2>Edit daily history</h2><p>A day&rsquo;s overall totals. Individual meals are edited from the dashboard.</p></div>
+        <button className="icon-button" onClick={onClose} aria-label="Close"><X size={20}/></button>
+      </div>
+      {busy?<p className="history-empty">Loading your last 30 days…</p>:days.length===0?<p className="history-empty">No history yet.</p>:
+      <div className="history-rows">
+        {days.map(d=>editing===d.date
+          ?<div className="history-row is-editing" key={d.date}>
+            <strong className="hr-date">{longDate(d.date)}</strong>
+            <div className="hr-fields">
+              <label>Total burned<input type="number" inputMode="numeric" value={form.totalExpenditure} onChange={e=>setForm(f=>({...f,totalExpenditure:e.target.value}))} placeholder="—"/></label>
+              <label>Resting<input type="number" inputMode="numeric" value={form.restingEnergy} onChange={e=>setForm(f=>({...f,restingEnergy:e.target.value}))} placeholder="—"/></label>
+              <label>Active<input type="number" inputMode="numeric" value={form.activeEnergy} onChange={e=>setForm(f=>({...f,activeEnergy:e.target.value}))} placeholder="—"/></label>
+              <label>Consumed<input type="number" inputMode="numeric" value={form.consumed} onChange={e=>setForm(f=>({...f,consumed:e.target.value}))} placeholder="—"/></label>
+            </div>
+            <div className="hr-actions">
+              <button className="hr-save" onClick={()=>void save(d.date)} disabled={savingDate===d.date}><Save size={14}/>{savingDate===d.date?'Saving…':'Save'}</button>
+              <button className="hr-cancel" onClick={()=>setEditing(null)} disabled={savingDate===d.date}>Cancel</button>
+            </div>
+            {d.consumedLogged!=null&&<p className="hr-hint">Food logged that day totals {fmt(d.consumedLogged)} kcal. Clear the field to use that instead.</p>}
+          </div>
+          :<div className="history-row" key={d.date}>
+            <strong className="hr-date">{longDate(d.date)}</strong>
+            <span className="hr-stat"><small>Burned</small>{fmt(d.totalExpenditure)}</span>
+            <span className="hr-stat"><small>Resting</small>{fmt(d.restingEnergy)}</span>
+            <span className="hr-stat"><small>Active</small>{fmt(d.activeEnergy)}</span>
+            <span className="hr-stat"><small>Eaten</small>{fmt(d.consumed)}{d.consumedOverridden&&<i className="hr-edited" title="Manually set">edited</i>}</span>
+            <button className="hr-edit" onClick={()=>startEdit(d)} aria-label={`Edit ${d.date}`}><Pencil size={14}/></button>
+          </div>)}
+      </div>}
+      {message&&<p className="sync-message">{message}</p>}
+    </section>
+  </div>
+}
 
 function EditFoodModal({entry,onClose,onSaved}:{entry:FoodEntry;onClose:()=>void;onSaved:()=>Promise<void>|void}){
   const[form,setForm]=useState({food:entry.food||'',meal:entry.meal||'',portion:entry.portion||'',calories:entry.calories??null as N,protein:entry.protein??null as N,carbs:entry.carbs??null as N,fat:entry.fat??null as N,fiber:entry.fiber??null as N})

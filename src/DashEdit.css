@@ -39,3 +39,36 @@
      the cascade (the bundled CSS loads after fuel-nav.css) and silently overrode the
      narrow-phone breakpoint. */
 }
+
+/* ---- Edit daily history modal -------------------------------------------------- */
+.history-modal{width:min(720px,100%);max-height:min(88vh,860px);overflow:auto;padding:24px}
+.history-modal .history-empty{color:#888;font-size:13px;padding:26px 0;text-align:center}
+.history-modal .history-rows{display:grid;gap:2px;margin-top:16px}
+.history-modal .history-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid #eee;font-size:13px}
+.history-modal .history-row:first-child{border-top:0}
+.history-modal .hr-date{flex:1;min-width:0;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.history-modal .hr-stat{display:grid;justify-items:end;gap:1px;min-width:56px;font-weight:700;color:#111;text-align:right}
+.history-modal .hr-stat small{font-size:10px;font-weight:700;color:#aaa;text-transform:uppercase;letter-spacing:.05em}
+.history-modal .hr-edited{font-style:normal;font-size:9px;font-weight:800;color:#7a5200;background:#fff2d9;border-radius:999px;padding:1px 6px;margin-left:5px}
+.history-modal .hr-edit{flex:none;display:grid;place-items:center;width:34px;height:34px;border:1px solid #ddd;border-radius:10px;background:#fff;color:#111;cursor:pointer}
+.history-modal .hr-edit:hover{border-color:#aaa}
+.history-modal .history-row.is-editing{display:block;background:#fafafa;border-radius:12px;padding:14px;margin:4px 0;border-top:0}
+.history-modal .hr-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0}
+.history-modal .hr-fields label{display:grid;gap:5px;font-size:11px;font-weight:700;color:#666}
+.history-modal .hr-fields input{width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:9px;background:#fff;color:#111;padding:9px 10px;font:inherit;font-size:13px}
+.history-modal .hr-fields input:focus{border-color:#111;outline:none;box-shadow:0 0 0 2px rgba(0,0,0,.07)}
+.history-modal .hr-actions{display:flex;gap:8px}
+.history-modal .hr-save,.history-modal .hr-cancel{display:inline-flex;align-items:center;gap:6px;border-radius:10px;padding:9px 14px;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer}
+.history-modal .hr-save{border:0;background:#111;color:#fff}
+.history-modal .hr-cancel{border:1px solid #ddd;background:#fff;color:#111}
+.history-modal .hr-save:disabled,.history-modal .hr-cancel:disabled{opacity:.55;cursor:wait}
+.history-modal .hr-hint{margin:10px 0 0;font-size:11.5px;color:#888;line-height:1.45}
+@media(max-width:640px){
+  .history-modal{padding:18px}
+  .history-modal .hr-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .history-modal .history-row{flex-wrap:wrap;gap:8px 14px}
+  .history-modal .hr-date{flex-basis:100%}
+  .history-modal .hr-stat{min-width:0;flex:1}
+  .history-modal .hr-edit{min-width:44px;min-height:44px}
+  .history-modal .hr-save,.history-modal .hr-cancel{flex:1;justify-content:center;min-height:44px}
+}

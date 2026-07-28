@@ -11,6 +11,7 @@ import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout
 import { getRecipe, recipesNeedingNutrition, saveEstimatedNutrition } from './_lib/recipes.js'
 import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
 import { estimateFoodNutrition } from './_lib/food-nutrition.js'
+import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
 import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
@@ -81,6 +82,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'food-nutrition') {
     await handleFoodNutrition(req, res)
+    return
+  }
+  if (integrationRoute === 'daily-history') {
+    await handleDailyHistory(req, res)
     return
   }
   if (integrationRoute === 'meal-plan') {
@@ -437,6 +442,35 @@ async function handleFoodNutrition(req, res) {
   } catch (error) {
     console.error('Food nutrition backfill failed', error)
     sendJson(res, 500, { error: 'Food nutrition could not be filled in.' })
+  }
+}
+
+// Reads and edits a day's overall stats (burn totals and intake). Deliberately does
+// not touch individual food entries — intake is stored as an override instead.
+async function handleDailyHistory(req, res) {
+  if (!['GET', 'PUT'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'PUT'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to edit your history.' })
+      return
+    }
+    if (req.method === 'GET') {
+      const url = new URL(req.url, appUrl())
+      const days = Math.min(180, Math.max(1, Number(url.searchParams.get('days')) || 30))
+      sendJson(res, 200, { days: await listDailyHistory(auth.id, days) }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    const body = unwrap(req.body)
+    const saved = await saveDailyHistory(auth.id, text(body.date), body.values || {})
+    sendJson(res, 200, { ok: true, day: saved }, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Daily history request failed', error)
+    sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to save that day.' })
   }
 }
 

@@ -92,32 +92,7 @@ function enhanceNutrition() {
   panel.append(card)
 }
 
-function enhanceContextMenu() {
-  const menu = document.querySelector<HTMLElement>('.profile-menu')
-  if (!menu || menu.querySelector('.fuel-context-menu-button')) return
-
-  const button = document.createElement('button')
-  button.className = 'fuel-context-menu-button'
-  button.type = 'button'
-  button.setAttribute('role', 'menuitem')
-  button.innerHTML = `
-    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-      <path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h8"></path>
-    </svg>
-    <span>Preferences & context</span>`
-  button.addEventListener('click', () => {
-    document.querySelector<HTMLButtonElement>('.profile-button')?.click()
-    void openContextModal()
-  })
-
-  const syncButton = [...menu.querySelectorAll<HTMLButtonElement>('button')].find((candidate) =>
-    candidate.textContent?.includes('Sync setup'),
-  )
-  menu.insertBefore(button, syncButton || menu.querySelector('.logout-menu-button'))
-}
-
-async function openContextModal() {
+export async function openContextModal() {
   if (document.querySelector('.fuel-context-backdrop')) return
   const backdrop = document.createElement('div')
   backdrop.className = 'modal-backdrop fuel-context-backdrop'
@@ -190,7 +165,6 @@ function hideLegacyEnergyControls() {
 
 function runEnhancements() {
   enhanceNutrition()
-  enhanceContextMenu()
   hideLegacyEnergyControls()
 }
 

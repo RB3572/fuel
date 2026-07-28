@@ -38,7 +38,9 @@ export async function getNeonDashboard(userId) {
     const health = healthByDate.get(key) || null
     const totals = sumFoods(foodsByDate.get(key) || [])
     const expenditure = number(health?.total_expenditure_kcal)
-    const calories = totals.calories || null
+    // A manually edited day stores its intake as an override, since consumed is
+    // otherwise derived by summing food entries. The override wins when present.
+    const calories = number(health?.calories_consumed_override) ?? (totals.calories || null)
     trends.push({
       date: key,
       partialDay: Boolean(health?.partial_day),
@@ -79,14 +81,16 @@ export async function getNeonDashboard(userId) {
   }
 
   const totalExpenditure = number(todayHealth?.total_expenditure_kcal)
+  // Use one consumed figure everywhere, so an edited day's balance matches its intake.
+  const consumedToday = number(todayHealth?.calories_consumed_override) ?? (nutrition.calories || null)
   const summary = {
     date: today,
     partialDay: todayHealth ? Boolean(todayHealth.partial_day) : true,
-    caloriesConsumed: nutrition.calories || null,
+    caloriesConsumed: consumedToday,
     restingEnergy: number(todayHealth?.resting_energy_kcal),
     activeEnergy: number(todayHealth?.active_energy_kcal),
     totalExpenditure,
-    energyBalance: todayHealth?.partial_day || !nutrition.calories || !totalExpenditure ? null : nutrition.calories - totalExpenditure,
+    energyBalance: todayHealth?.partial_day || !consumedToday || !totalExpenditure ? null : consumedToday - totalExpenditure,
     protein: nutrition.protein || null,
     carbs: nutrition.carbs || null,
     fat: nutrition.fat || null,
