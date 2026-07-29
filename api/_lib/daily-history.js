@@ -68,19 +68,27 @@ export async function saveDailyHistory(userId, date, values) {
   const active = has('activeEnergy') ? num(values.activeEnergy) : undefined
   const consumed = has('consumed') ? num(values.consumed) : undefined
 
+  // A manual edit also clears partial_day. Apple Health flags a day "partial" while it
+  // is still in progress, and the deficit/surplus chart suppresses partial days so a
+  // half-finished today does not draw a huge fake deficit. But the flag is only ever
+  // cleared by a later sync — so a day whose last sync landed mid-afternoon stays
+  // partial forever, and correcting its numbers by hand moved every figure EXCEPT the
+  // one chart the user was looking at. Opening the editor and saving a day is the user
+  // asserting those are its final numbers, so the day is no longer in progress.
   const rows = await db`
-    INSERT INTO health_daily (user_id, date, total_expenditure_kcal, resting_energy_kcal, active_energy_kcal, calories_consumed_override, source, updated_at)
+    INSERT INTO health_daily (user_id, date, total_expenditure_kcal, resting_energy_kcal, active_energy_kcal, calories_consumed_override, partial_day, source, updated_at)
     VALUES (${userId}, ${date}::date,
       ${total === undefined ? null : total}, ${resting === undefined ? null : resting},
       ${active === undefined ? null : active}, ${consumed === undefined ? null : consumed},
-      'Manual edit', now())
+      false, 'Manual edit', now())
     ON CONFLICT (user_id, date) DO UPDATE SET
       total_expenditure_kcal = CASE WHEN ${total !== undefined} THEN ${total ?? null} ELSE health_daily.total_expenditure_kcal END,
       resting_energy_kcal    = CASE WHEN ${resting !== undefined} THEN ${resting ?? null} ELSE health_daily.resting_energy_kcal END,
       active_energy_kcal     = CASE WHEN ${active !== undefined} THEN ${active ?? null} ELSE health_daily.active_energy_kcal END,
       calories_consumed_override = CASE WHEN ${consumed !== undefined} THEN ${consumed ?? null} ELSE health_daily.calories_consumed_override END,
+      partial_day = false,
       updated_at = now()
-    RETURNING date, total_expenditure_kcal, resting_energy_kcal, active_energy_kcal, calories_consumed_override
+    RETURNING date, total_expenditure_kcal, resting_energy_kcal, active_energy_kcal, calories_consumed_override, partial_day
   `
   const row = rows[0] || {}
   return {
@@ -89,6 +97,7 @@ export async function saveDailyHistory(userId, date, values) {
     restingEnergy: num(row.resting_energy_kcal),
     activeEnergy: num(row.active_energy_kcal),
     consumedOverride: num(row.calories_consumed_override),
+    partialDay: Boolean(row.partial_day),
   }
 }
 

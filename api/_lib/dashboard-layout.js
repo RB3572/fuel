@@ -2,8 +2,15 @@ import { sql } from './db.js'
 
 // Section keys the dashboard knows how to render, in their default order. The energy
 // hero is always first and cannot be hidden or moved.
+//
+// These two lists are the server half of a pair: ALL_SECTIONS and ALL_ENERGY_BOXES in
+// src/App.tsx must match them exactly. normalizeLayout drops anything not listed here,
+// so a key the client can toggle but the server has never heard of appears to save and
+// then vanishes on reload — silently, because dropping it is not an error. That is
+// exactly what happened to rolling24 when the 24-hour metric was added. There is a test
+// pinning the two lists together.
 export const DASHBOARD_SECTIONS = ['nutrition', 'detailedNutrition', 'foodConsumed', 'fitness', 'workouts', 'steps', 'vitals', 'recovery']
-export const ENERGY_BOXES = ['totalBurned', 'consumed', 'active', 'resting', 'deficit']
+export const ENERGY_BOXES = ['totalBurned', 'consumed', 'active', 'resting', 'deficit', 'rolling24']
 
 export async function ensureDashboardLayoutTable() {
   const db = sql()
