@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 // Drives the real callGemini against a stubbed Gemini endpoint using the exact error
-// bodies Google returns. The bug this guards: the rolling `gemini-flash-latest` alias
-// points at Google's newest Flash model, and free-tier keys are allocated a quota of
-// ZERO on it — so every call 429s on the first request of the day and reads exactly
-// like an exhausted account.
+// bodies Google returns. Two bugs this guards, both of which took every AI feature down
+// at once: the rolling `gemini-flash-latest` alias, where free-tier keys are allocated
+// a quota of ZERO so every call 429s on the first request of the day; and a fallback
+// chain built entirely out of 2.x models, which Google then shut down or closed to new
+// keys.
 
 process.env.APP_URL ||= 'https://fuel.rishib.com'
 process.env.GEMINI_API_KEY ||= 'test-key-not-real'
@@ -61,25 +62,28 @@ function restore() {
 const invoke = () => callGemini(DEFAULT_MODEL, { contents: [] }, false, 5000)
 const thrown = async () => invoke().then(() => null, (error) => error)
 
-test('the default model is a pinned free-tier model, not a rolling alias', () => {
-  assert.equal(DEFAULT_MODEL, 'gemini-2.5-flash')
+test('the default model is current, pinned, and not a rolling alias', () => {
+  assert.equal(DEFAULT_MODEL, 'gemini-3.1-flash-lite')
   assert.ok(!GEMINI_MODEL_FALLBACKS.some((model) => model.includes('latest')), 'a -latest alias is back in the fallback list')
-  assert.ok(GEMINI_MODEL_FALLBACKS.length >= 2, 'there must be something to fall back to')
+  // gemini-2.0-flash and -flash-lite are shut down; a chain containing them is dead.
+  assert.ok(!GEMINI_MODEL_FALLBACKS.some((model) => model.includes('2.0')), 'the 2.0 models are shut down')
+  assert.ok(GEMINI_MODEL_FALLBACKS.filter((model) => model.startsWith('gemini-3')).length >= 2, 'the chain must be 3.x-first')
+  assert.ok(GEMINI_MODEL_FALLBACKS.length >= 3, 'there must be something to fall back to')
 })
 
 test('a healthy model is called once, with no fallback', async (t) => {
   t.after(restore)
   stub(() => ({ status: 200, body: OK }))
   assert.deepEqual(await invoke(), OK)
-  assert.deepEqual(calls, ['gemini-2.5-flash'])
+  assert.deepEqual(calls, [GEMINI_MODEL_FALLBACKS[0]])
 })
 
 test('a zero-quota model falls through to the next and is never retried', async (t) => {
   t.after(restore)
-  stub((model) => (model === 'gemini-2.5-flash' ? { status: 429, body: ZERO_QUOTA } : { status: 200, body: OK }))
+  stub((model) => (model === GEMINI_MODEL_FALLBACKS[0] ? { status: 429, body: ZERO_QUOTA } : { status: 200, body: OK }))
   assert.deepEqual(await invoke(), OK)
-  assert.deepEqual(calls, ['gemini-2.5-flash', 'gemini-2.0-flash'])
-  assert.equal(calls.filter((model) => model === 'gemini-2.5-flash').length, 1, 'waiting cannot fix a zero allocation')
+  assert.deepEqual(calls, [GEMINI_MODEL_FALLBACKS[0], GEMINI_MODEL_FALLBACKS[1]])
+  assert.equal(calls.filter((model) => model === GEMINI_MODEL_FALLBACKS[0]).length, 1, 'waiting cannot fix a zero allocation')
 })
 
 test('every model at zero quota blames the key, never billing', async (t) => {
@@ -97,17 +101,17 @@ test('a short per-minute rate limit is waited out and retried on the same model'
   stub((model, n) => (n === 1 ? { status: 429, body: rateLimited('1s') } : { status: 200, body: OK }))
   const started = Date.now()
   assert.deepEqual(await invoke(), OK)
-  assert.deepEqual(calls, ['gemini-2.5-flash', 'gemini-2.5-flash'])
+  assert.deepEqual(calls, [GEMINI_MODEL_FALLBACKS[0], GEMINI_MODEL_FALLBACKS[0]])
   assert.ok(Date.now() - started >= 950, 'the retryDelay Google asked for was not honoured')
 })
 
 test('a long retry delay moves to the next model instead of holding the request open', async (t) => {
   t.after(restore)
-  stub((model) => (model === 'gemini-2.5-flash' ? { status: 429, body: rateLimited('47s') } : { status: 200, body: OK }))
+  stub((model) => (model === GEMINI_MODEL_FALLBACKS[0] ? { status: 429, body: rateLimited('47s') } : { status: 200, body: OK }))
   const started = Date.now()
   assert.deepEqual(await invoke(), OK)
   assert.ok(Date.now() - started < 2000, 'it waited on a 47s delay')
-  assert.deepEqual(calls, ['gemini-2.5-flash', 'gemini-2.0-flash'])
+  assert.deepEqual(calls, [GEMINI_MODEL_FALLBACKS[0], GEMINI_MODEL_FALLBACKS[1]])
 })
 
 test('sustained rate limiting says wait, not out of quota', async (t) => {
@@ -120,13 +124,13 @@ test('sustained rate limiting says wait, not out of quota', async (t) => {
 
 test('404 and 503 fall through; invalid keys and schema bugs do not', async (t) => {
   t.after(restore)
-  stub((model) => (model === 'gemini-2.5-flash'
+  stub((model) => (model === GEMINI_MODEL_FALLBACKS[0]
     ? { status: 404, body: { error: { message: 'models/gemini-2.5-flash is not found for API version v1beta' } } }
     : { status: 200, body: OK }))
   assert.deepEqual(await invoke(), OK)
-  assert.deepEqual(calls, ['gemini-2.5-flash', 'gemini-2.0-flash'])
+  assert.deepEqual(calls, [GEMINI_MODEL_FALLBACKS[0], GEMINI_MODEL_FALLBACKS[1]])
 
-  stub((model) => (model === 'gemini-2.5-flash'
+  stub((model) => (model === GEMINI_MODEL_FALLBACKS[0]
     ? { status: 503, body: { error: { message: 'The model is overloaded.' } } }
     : { status: 200, body: OK }))
   assert.deepEqual(await invoke(), OK)

@@ -73,10 +73,22 @@ test('the output budget scales with the batch', () => {
   assert.match(mlog, /return MAX_BATCH/)
 })
 
-test('thinkingConfig is stripped for models that do not support it', () => {
-  // Otherwise the fallback chain is pointless: the moment gemini-2.5-flash is
-  // unavailable, every request 400s on gemini-2.0-flash for an unknown field.
-  assert.match(plan, /const NO_THINKING_CONFIG = \/gemini-\(1\\\.\|2\\\.0\)\//)
-  assert.match(plan, /function bodyForModel\(model, requestBody\)/)
+test('the thinking hint is expressed the way each model family expects', () => {
+  // Reasoning tokens come out of maxOutputTokens, so every caller asks for the least
+  // thinking it can — but 2.5 wants thinkingConfig.thinkingBudget and 3.x wants
+  // thinkingLevel. Sending the wrong one is a 400 on the entire request.
+  assert.match(plan, /const THINKING_BUDGET_FAMILY = \/gemini-2\\\.5\//)
+  assert.match(plan, /const THINKING_LEVEL_FAMILY = \/gemini-\(3\|\[4-9\]\)\//)
+  assert.match(plan, /thinkingLevel: 'minimal'/)
   assert.match(plan, /requestBody = bodyForModel\(model, requestBody\)/)
+})
+
+test('a rejected thinking hint is retried without it rather than failing everything', () => {
+  // If Google renames this again, one retry costs a little output budget; guessing
+  // wrong costs every AI feature until someone notices.
+  assert.match(plan, /function stripThinking\(requestBody\)/)
+  assert.match(plan, /function isThinkingRejection\(reason\)/)
+  assert.match(plan, /if \(failure\.thinkingRejected && !strippedThinking\)/)
+  // It must be classified before the generic schema rejection, which does not retry.
+  assert.ok(plan.indexOf('isThinkingRejection(providerReason)') < plan.indexOf('Unknown name'), 'the thinking case must be checked first')
 })

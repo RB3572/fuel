@@ -7,24 +7,25 @@ import { saveUserGoals } from './goals.js'
 import { ensureNutrientSchema, NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns, nutrientSummaryText } from './nutrients.js'
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
-// Models to try, in order, all multimodal (needed for photo food logging) and all
-// carrying a free tier.
+// Models to try, in order: all multimodal (needed for photo logging) and all carrying
+// a free tier.
 //
-// This used to be the rolling `gemini-flash-latest` alias. Google points that alias at
-// its newest Flash model, and free-tier keys are currently allocated a quota of ZERO on
-// it — so every call came back 429 RESOURCE_EXHAUSTED on the very first request of the
-// day, with no usage at all. That reads exactly like an exhausted key, which is why
-// this looked like a billing problem when it never was one.
+// Google retires these faster than anything else in the stack. gemini-2.0-flash and
+// -flash-lite are shut down outright, and 2.5-flash-lite is closed to keys created
+// after its retirement — which silently invalidated an entire fallback chain built out
+// of 2.x. The list is 3.x-first for that reason, with 2.5-flash kept only as a last
+// resort for older keys that still have it.
 //
-// A pinned model with a settled free-tier allocation fixes it today; walking a list
-// means the next alias or quota reshuffle degrades to the next model instead of taking
-// every AI feature down at once. Override the whole order with GEMINI_MODEL.
-export const GEMINI_MODEL_FALLBACKS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite']
+// Before that it was the rolling `gemini-flash-latest` alias, which Google points at
+// its newest Flash model — and free-tier keys are allocated a quota of ZERO there, so
+// every call 429'd on the first request of the day.
+//
+// Override the whole order with GEMINI_MODEL.
+export const GEMINI_MODEL_FALLBACKS = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-2.5-flash']
 export const DEFAULT_MODEL = GEMINI_MODEL_FALLBACKS[0]
-// Free-tier keys are rate-limited per minute, so a burst (the "fill missing nutrients"
-// batch is the obvious one) legitimately gets a retryable 429. Wait and retry when
-// Google says the wait is short; anything longer is not worth holding a request open
-// for, so it falls through to the next model instead.
+// Free-tier keys are rate-limited per minute, so a burst legitimately gets a retryable
+// 429. Wait and retry when Google says the wait is short; anything longer is not worth
+// holding a request open for, so it falls through to the next model instead.
 const GEMINI_MAX_RETRIES = 1
 const GEMINI_MAX_RETRY_DELAY_MS = 6000
 const TIME_ZONE = 'America/Los_Angeles'
@@ -640,19 +641,42 @@ export async function callGemini(model, requestBody, allowMapsFallback = false, 
   throw lastError || geminiError('Fuel AI is temporarily unavailable. Please try again.', 502, 'gemini_request_failed')
 }
 
-// thinkingConfig only exists on the thinking models. Sending it to an older one is a
-// 400 for an unknown field, which would make the whole fallback chain pointless: the
-// moment gemini-2.5-flash is unavailable, every request would die on gemini-2.0-flash
-// for a reason that has nothing to do with the prompt.
-const NO_THINKING_CONFIG = /gemini-(1\.|2\.0)/
+// Reasoning tokens are drawn from maxOutputTokens, so every caller asks for the least
+// thinking it can — otherwise a long deliberation truncates the JSON before it closes.
+// How you ask differs by family, and asking the wrong way is a 400 on the whole
+// request:
+//   2.5.x  generationConfig.thinkingConfig.thinkingBudget
+//   3.x    generationConfig.thinkingLevel ('minimal' is the floor; there is no zero)
+//   older  neither — the field is unknown and rejected
+// stripThinking() is the escape hatch: if Google renames any of this again, the caller
+// retries once without it rather than failing every request until someone notices.
+const THINKING_BUDGET_FAMILY = /gemini-2\.5/
+const THINKING_LEVEL_FAMILY = /gemini-(3|[4-9])/
 function bodyForModel(model, requestBody) {
-  if (!requestBody?.generationConfig?.thinkingConfig || !NO_THINKING_CONFIG.test(model)) return requestBody
-  const { thinkingConfig: _dropped, ...generationConfig } = requestBody.generationConfig
-  return { ...requestBody, generationConfig }
+  const generationConfig = requestBody?.generationConfig
+  if (!generationConfig?.thinkingConfig) return requestBody
+  if (THINKING_BUDGET_FAMILY.test(model)) return requestBody
+  const { thinkingConfig: _dropped, ...rest } = generationConfig
+  if (THINKING_LEVEL_FAMILY.test(model)) {
+    return { ...requestBody, generationConfig: { ...rest, thinkingLevel: 'minimal' } }
+  }
+  return { ...requestBody, generationConfig: rest }
+}
+function stripThinking(requestBody) {
+  const generationConfig = requestBody?.generationConfig
+  if (!generationConfig) return requestBody
+  const { thinkingConfig: _a, thinkingLevel: _b, ...rest } = generationConfig
+  return { ...requestBody, generationConfig: rest }
+}
+// A 400 naming one of the thinking fields means this model wants it expressed some
+// other way. Dropping it costs a little output budget; guessing again costs everything.
+function isThinkingRejection(reason) {
+  return /thinking(config|level|budget)/i.test(String(reason || ''))
 }
 
 async function callGeminiModel(model, requestBody, { headers, timeoutMs, allowMapsFallback }) {
   requestBody = bodyForModel(model, requestBody)
+  let strippedThinking = false
   const invoke = async (body) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -681,6 +705,13 @@ async function callGeminiModel(model, requestBody, { headers, timeoutMs, allowMa
     if (result.response.ok) return result.payload
 
     const failure = classifyGeminiFailure(model, result)
+    // The model rejected how we asked for less thinking, not what we asked it to do.
+    if (failure.thinkingRejected && !strippedThinking) {
+      strippedThinking = true
+      requestBody = stripThinking(requestBody)
+      console.warn(`Gemini ${model} rejected the thinking hint; retrying without it.`)
+      continue
+    }
     if (failure.retryAfterMs != null && attempt < GEMINI_MAX_RETRIES) {
       console.warn(`Gemini rate-limited ${model}; retrying in ${failure.retryAfterMs}ms.`)
       await new Promise((resolve) => setTimeout(resolve, failure.retryAfterMs))
@@ -699,6 +730,12 @@ function classifyGeminiFailure(model, { response, payload }) {
   const details = Array.isArray(payload?.error?.details) ? payload.error.details : []
   const status = response.status
   console.error(`Gemini provider error (${model}, ${status})`, providerReason)
+
+  // How we asked for less thinking, rather than what we asked for. Recoverable on this
+  // same model by dropping the hint.
+  if (status === 400 && isThinkingRejection(providerReason)) {
+    return { thinkingRejected: true, error: tagged(geminiError('Fuel AI rejected the request configuration.', 400, 'gemini_schema_rejected'), providerReason) }
+  }
 
   // Our own malformed request: every model would reject it identically.
   if (/Invalid JSON payload|response_schema|Unknown name \\"additionalProperties\\"|Cannot find field/i.test(providerReason)) {
