@@ -251,6 +251,8 @@ export default function App(){
     try{
       let filled=0
       let note=''
+      let failedCount=0
+      let failReason=''
       for(let pass=0;pass<6;pass+=1){
         const r=await fetch('/api/mlog?fuel_route=food-nutrition',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({limit:6})})
         const p=await r.json().catch(()=>({}))
@@ -261,12 +263,19 @@ export default function App(){
           throw new Error(p.error||'Could not fill in nutrition.')
         }
         filled+=(p.updated||[]).length
+        // Entries the server could not estimate come back in `failed`. Ignoring them is
+        // how a server-side crash once read as "nothing happened" for days.
+        const failures=(p.failed||[]) as Array<{error?:string}>
+        if(failures.length){failedCount+=failures.length;failReason=failReason||failures[0]?.error||''}
         if(p.quotaExhausted&&p.quotaRetryable){note=filled?`Filled in ${filled} ${filled===1?'entry':'entries'}, then hit the free Gemini rate limit. Try again in a minute for the rest.`:'Hit the free Gemini rate limit. Try again in a minute.';break}
         // Stop on no progress so entries the model can't estimate don't loop forever.
         if(!(p.updated||[]).length||p.quotaExhausted||!p.remaining)break
       }
       await load()
-      setFillNote(note||(filled?`Filled in ${filled} ${filled===1?'entry':'entries'}.`:'Nothing left to fill in.'))
+      if(note)setFillNote(note)
+      else if(filled)setFillNote(`Filled in ${filled} ${filled===1?'entry':'entries'}.${failedCount?` ${failedCount} could not be estimated${failReason?`: ${failReason}`:'.'}`:''}`)
+      else if(failedCount)setError(`Could not estimate ${failedCount} ${failedCount===1?'entry':'entries'}${failReason?`: ${failReason}`:'.'}`)
+      else setFillNote('Nothing left to fill in.')
     }catch(e){setError(e instanceof Error?e.message:'Could not fill in nutrition.')}
     finally{setFillingNutrients(false)}
   }

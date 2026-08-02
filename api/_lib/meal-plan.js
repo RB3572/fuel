@@ -638,7 +638,19 @@ export async function callGemini(model, requestBody, allowMapsFallback = false, 
   throw lastError || geminiError('Fuel AI is temporarily unavailable. Please try again.', 502, 'gemini_request_failed')
 }
 
+// thinkingConfig only exists on the thinking models. Sending it to an older one is a
+// 400 for an unknown field, which would make the whole fallback chain pointless: the
+// moment gemini-2.5-flash is unavailable, every request would die on gemini-2.0-flash
+// for a reason that has nothing to do with the prompt.
+const NO_THINKING_CONFIG = /gemini-(1\.|2\.0)/
+function bodyForModel(model, requestBody) {
+  if (!requestBody?.generationConfig?.thinkingConfig || !NO_THINKING_CONFIG.test(model)) return requestBody
+  const { thinkingConfig: _dropped, ...generationConfig } = requestBody.generationConfig
+  return { ...requestBody, generationConfig }
+}
+
 async function callGeminiModel(model, requestBody, { headers, timeoutMs, allowMapsFallback }) {
+  requestBody = bodyForModel(model, requestBody)
   const invoke = async (body) => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)

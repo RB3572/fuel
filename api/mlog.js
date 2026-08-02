@@ -13,7 +13,7 @@ import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutr
 import { estimateFoodNutrition } from './_lib/food-nutrition.js'
 import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
 import { clearLocationHistory, getPlaceHeatmap, recordLocation, renamePlace } from './_lib/places.js'
-import { ensureNutrientSchema } from './_lib/nutrients.js'
+import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 import { logRecipeAsFood } from './_lib/food-entries.js'
 import { getRolling24h } from './_lib/rolling-energy.js'
 
