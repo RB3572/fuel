@@ -42,7 +42,10 @@ export class NutritionQuotaError extends Error {
 export function asNutritionQuotaError(error) {
   const status = error?.status || error?.statusCode
   const code = error?.code || ''
-  const message = String(error?.message || '')
+  // callGemini keeps Google's own wording on `providerReason`. Carry it through, so a
+  // failure names the real cause instead of a house-style paraphrase of it.
+  const reason = error?.providerReason ? ` (${String(error.providerReason).slice(0, 200)})` : ''
+  const message = `${String(error?.message || '')}${reason}`
   if (code === 'gemini_rate_limited') return new NutritionQuotaError(message, { retryable: true })
   if (code === 'gemini_no_quota' || code === 'gemini_not_configured' || code === 'gemini_permission_denied') return new NutritionQuotaError(message)
   if (status === 429 || /quota|rate limit|high demand|RESOURCE_EXHAUSTED/i.test(message)) {

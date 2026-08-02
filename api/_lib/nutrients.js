@@ -71,7 +71,12 @@ async function ensureSchema() {
       ADD COLUMN IF NOT EXISTS added_sugars_g double precision,
       ADD COLUMN IF NOT EXISTS sodium_mg double precision,
       ADD COLUMN IF NOT EXISTS caffeine_mg double precision,
-      ADD COLUMN IF NOT EXISTS nutrients jsonb NOT NULL DEFAULT '{}'::jsonb
+      ADD COLUMN IF NOT EXISTS nutrients jsonb NOT NULL DEFAULT '{}'::jsonb,
+      -- Stamped once an AI estimate has been written for this entry, so the
+      -- "fill missing nutrients" queue converges. Without it, an entry the model
+      -- cannot add micronutrients to stays permanently incomplete and is re-estimated
+      -- on every pass while nothing on screen changes.
+      ADD COLUMN IF NOT EXISTS ai_filled_at timestamptz
   `
   await db`
     ALTER TABLE recipes

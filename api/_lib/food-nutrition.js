@@ -58,7 +58,7 @@ export async function estimateFoodNutrition(entry) {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.2,
-        maxOutputTokens: 1200,
+        maxOutputTokens: 4096,
         responseMimeType: 'application/json',
         responseSchema: RESPONSE_SCHEMA,
         // The Flash models are thinking models and thinking tokens are drawn from
@@ -74,12 +74,22 @@ export async function estimateFoodNutrition(entry) {
     throw error
   }
 
-  const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') || ''
+  // Report the actual failure. A truncated answer, a blocked answer and malformed JSON
+  // are three different problems with three different fixes, and collapsing them into
+  // "unreadable" is how this stayed undiagnosed.
+  const candidate = payload?.candidates?.[0]
+  const text = candidate?.content?.parts?.map((part) => part.text).join('') || ''
+  if (!text) {
+    const reason = String(candidate?.finishReason || payload?.promptFeedback?.blockReason || 'no reason given')
+    if (/MAX_TOKENS/i.test(reason)) throw new Error('Fuel AI ran out of output space before finishing the estimate.')
+    if (/SAFETY|BLOCK|RECITATION/i.test(reason)) throw new Error(`Fuel AI declined to estimate this entry (${reason}).`)
+    throw new Error(`Fuel AI returned an empty nutrition estimate (${reason}).`)
+  }
   let parsed
   try {
     parsed = JSON.parse(text)
   } catch {
-    throw new Error('Fuel AI returned an unreadable nutrition estimate.')
+    throw new Error(`Fuel AI returned unreadable JSON: ${text.slice(0, 120)}`)
   }
 
   const macro = (value) => {

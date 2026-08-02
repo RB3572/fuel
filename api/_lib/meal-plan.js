@@ -629,10 +629,12 @@ export async function callGemini(model, requestBody, allowMapsFallback = false, 
   // has no allocation at all rather than one model being unlucky — say so, because the
   // fix is a new key, not waiting or paying.
   if (lastError?.code === 'gemini_no_quota') {
-    throw geminiError(
+    const exhausted = geminiError(
       'Gemini reports no free-tier quota for this API key on any Fuel model. That usually means the key’s Google Cloud project has no Generative Language allocation — creating a fresh key in Google AI Studio normally fixes it.',
       429, 'gemini_no_quota',
     )
+    exhausted.providerReason = lastError.providerReason
+    throw exhausted
   }
   console.error('Every Gemini model failed', unavailable.join(' | '))
   throw lastError || geminiError('Fuel AI is temporarily unavailable. Please try again.', 502, 'gemini_request_failed')

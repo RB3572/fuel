@@ -352,6 +352,7 @@ async function handleFoodNutrition(req, res) {
         AND occurred_at > now() - interval '24 hours'
         AND occurred_at <= now()
         AND btrim(coalesce(description, '')) <> ''
+        AND ai_filled_at IS NULL
         AND (calories_kcal IS NULL OR protein_g IS NULL OR carbs_g IS NULL
              OR fat_g IS NULL OR fiber_g IS NULL
              OR nutrients IS NULL OR nutrients = '{}'::jsonb)
@@ -396,6 +397,7 @@ async function handleFoodNutrition(req, res) {
             sodium_mg = coalesce(sodium_mg, ${cols.sodiumMg}),
             caffeine_mg = coalesce(caffeine_mg, ${cols.caffeineMg}),
             nutrients = ${JSON.stringify(merged)}::jsonb,
+            ai_filled_at = now(),
             updated_at = now()
           WHERE id = ${entry.id} AND user_id = ${auth.id}
           RETURNING id, description, calories_kcal, protein_g, carbs_g, fat_g, fiber_g
@@ -409,7 +411,10 @@ async function handleFoodNutrition(req, res) {
           break
         }
         console.error(`Food nutrition estimate failed for ${entry.description}`, error)
-        failed.push({ id: entry.id, description: entry.description, error: error instanceof Error ? error.message : 'Estimate failed.' })
+        // Keep Gemini's own wording when there is any: a generic message here is what
+        // made a total failure look like an empty to-do list.
+        const detail = error?.providerReason ? ` (${String(error.providerReason).slice(0, 200)})` : ''
+        failed.push({ id: entry.id, description: entry.description, error: `${error instanceof Error ? error.message : 'Estimate failed.'}${detail}` })
       }
     }
     if (quotaError && !updated.length) {
