@@ -45,6 +45,34 @@ test('a whole-batch failure is never reported as "nothing to do"', () => {
   assert.ok(failBranch > 0 && failBranch < nothing, 'the failure branch must be checked before the empty branch')
 })
 
+test('a whole batch of entries costs ONE Gemini request', () => {
+  const food = read('../api/_lib/food-nutrition.js')
+  // A request per entry exhausted the free tier's per-minute allowance on an ordinary
+  // day's food, and the batch then died half-finished.
+  assert.match(food, /export async function estimateFoodNutritionBatch\(entries\)/)
+  assert.match(food, /items: \{\s*type: 'array'/)
+  assert.match(food, /number: \{ type: 'integer'/, 'each estimate must echo which food it is for')
+  // Exactly one callGemini in the module.
+  assert.equal((food.match(/await callGemini\(/g) || []).length, 1)
+  assert.match(mlog, /estimates = await estimateFoodNutritionBatch\(batch\.map/)
+  assert.doesNotMatch(mlog, /for \(const entry of batch\) \{\s*try \{\s*const estimate = await/, 'the per-entry request loop must be gone')
+})
+
+test('one bad item does not cost the rest of the batch', () => {
+  const food = read('../api/_lib/food-nutrition.js')
+  // They travel together now, so an inconsistent item is dropped individually.
+  assert.match(food, /if \(estimate\) estimates\.set\(index, estimate\)/)
+  assert.match(food, /\) return null\n  return estimate/)
+  assert.match(mlog, /Fuel AI did not return a usable estimate for this entry/)
+})
+
+test('the output budget scales with the batch', () => {
+  const food = read('../api/_lib/food-nutrition.js')
+  assert.match(food, /maxOutputTokens: Math\.min\(32000, 1200 \+ batch\.length \* 900\)/)
+  assert.match(food, /export const MAX_BATCH = 12/)
+  assert.match(mlog, /return MAX_BATCH/)
+})
+
 test('thinkingConfig is stripped for models that do not support it', () => {
   // Otherwise the fallback chain is pointless: the moment gemini-2.5-flash is
   // unavailable, every request 400s on gemini-2.0-flash for an unknown field.

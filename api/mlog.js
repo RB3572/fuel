@@ -10,7 +10,7 @@ import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
 import { recipesNeedingNutrition, saveEstimatedNutrition } from './_lib/recipes.js'
 import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
-import { estimateFoodNutrition } from './_lib/food-nutrition.js'
+import { estimateFoodNutritionBatch, MAX_BATCH } from './_lib/food-nutrition.js'
 import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
 import { clearLocationHistory, getPlaceHeatmap, identifyPlace, recordLocation, renamePlace } from './_lib/places.js'
 import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
@@ -401,9 +401,14 @@ async function handleFoodNutrition(req, res) {
     const failed = []
     let quotaError = ''
     let quotaRetryable = false
-    for (const entry of batch) {
+
+    // ONE Gemini call for the whole batch. A request per entry exhausted the free
+    // tier's per-minute allowance on an ordinary day's food, so the batch died
+    // half-finished; sending them together makes a day's diary a single request.
+    let estimates = new Map()
+    if (batch.length) {
       try {
-        const estimate = await estimateFoodNutrition({
+        estimates = await estimateFoodNutritionBatch(batch.map((entry) => ({
           description: entry.description,
           portion: entry.portion,
           calories: finite(entry.calories_kcal),
@@ -411,7 +416,25 @@ async function handleFoodNutrition(req, res) {
           carbs: finite(entry.carbs_g),
           fat: finite(entry.fat_g),
           fiber: finite(entry.fiber_g),
-        })
+        })))
+      } catch (error) {
+        if (error instanceof NutritionQuotaError) {
+          quotaError = error.message
+          quotaRetryable = Boolean(error.retryable)
+        } else {
+          // The request itself failed, so every entry in it failed for the same reason.
+          console.error('Food nutrition batch failed', error)
+          const detail = error?.providerReason ? ` (${String(error.providerReason).slice(0, 200)})` : ''
+          const message = `${error instanceof Error ? error.message : 'Estimate failed.'}${detail}`
+          for (const entry of batch) failed.push({ id: entry.id, description: entry.description, error: message })
+        }
+      }
+    }
+
+    for (const [index, estimate] of estimates) {
+      const entry = batch[index]
+      if (!entry) continue
+      try {
         // Merge, never clobber: the user's own numbers win, AI only fills the gaps.
         const merged = normalizeNutrients({ ...estimate.nutrients, ...(entry.nutrients || {}) })
         const cols = nutrientColumns(merged)
@@ -434,19 +457,18 @@ async function handleFoodNutrition(req, res) {
         `
         if (rows.length) updated.push({ id: rows[0].id, description: rows[0].description })
       } catch (error) {
-        if (error instanceof NutritionQuotaError) {
-          // Every remaining call fails identically; stop rather than burning them.
-          quotaError = error.message
-          quotaRetryable = Boolean(error.retryable)
-          break
-        }
-        console.error(`Food nutrition estimate failed for ${entry.description}`, error)
-        // Keep Gemini's own wording when there is any: a generic message here is what
-        // made a total failure look like an empty to-do list.
-        const detail = error?.providerReason ? ` (${String(error.providerReason).slice(0, 200)})` : ''
-        failed.push({ id: entry.id, description: entry.description, error: `${error instanceof Error ? error.message : 'Estimate failed.'}${detail}` })
+        console.error(`Food nutrition write failed for ${entry.description}`, error)
+        failed.push({ id: entry.id, description: entry.description, error: error instanceof Error ? error.message : 'Could not save the estimate.' })
       }
     }
+    // Anything the model silently skipped or answered inconsistently.
+    if (!quotaError) {
+      for (let index = 0; index < batch.length; index += 1) {
+        if (estimates.has(index) || failed.some((f) => f.id === batch[index].id)) continue
+        failed.push({ id: batch[index].id, description: batch[index].description, error: 'Fuel AI did not return a usable estimate for this entry.' })
+      }
+    }
+
     if (quotaError && !updated.length) {
       // 429 for "slow down", 503 for "this key cannot call Gemini at all". Only the
       // first is worth retrying, and the client says something different for each.
@@ -611,10 +633,12 @@ async function probeGemini() {
   }
 }
 
+// Entries per request. They now travel to Gemini together, so this is bounded by how
+// much JSON one answer can hold rather than by how many calls we can afford.
 function batchSize(value) {
   const parsed = Number(value)
-  if (!Number.isFinite(parsed) || parsed <= 0) return 6
-  return Math.min(12, Math.round(parsed))
+  if (!Number.isFinite(parsed) || parsed <= 0) return MAX_BATCH
+  return Math.min(MAX_BATCH, Math.round(parsed))
 }
 
 async function handleDashboardLayout(req, res) {

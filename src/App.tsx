@@ -285,8 +285,10 @@ export default function App(){
       let note=''
       let failedCount=0
       let failReason=''
-      for(let pass=0;pass<6;pass+=1){
-        const r=await fetch('/api/mlog?fuel_route=food-nutrition',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({limit:6})})
+      // Each pass is now a single Gemini call covering a whole batch, so two passes
+      // cover far more food than six used to — and cost a fraction of the requests.
+      for(let pass=0;pass<3;pass+=1){
+        const r=await fetch('/api/mlog?fuel_route=food-nutrition',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({})})
         const p=await r.json().catch(()=>({}))
         // A rate limit part-way through is not a failure: keep whatever was filled and
         // say it is worth retrying, rather than throwing away the successful passes.

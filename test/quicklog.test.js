@@ -14,8 +14,9 @@ test('/quicklog is routed to the camera page', () => {
   assert.ok(config.rewrites.some((r) => r.source === '/quicklog' && r.destination === '/quicklog.html'))
 })
 
-test('the camera opens front-facing and can be flipped', () => {
-  assert.match(page, /let facingMode = 'user'/)
+test('the camera opens rear-facing and can be flipped', () => {
+  // A plate on a table is what this page is pointed at.
+  assert.match(page, /let facingMode = 'environment'/)
   assert.match(page, /facingMode: \{ ideal: facingMode \}/, 'ideal, not exact: a front-only laptop must still work')
   assert.match(page, /facingMode = facingMode === 'user' \? 'environment' : 'user'/)
   assert.match(html, /id="ql-flip"/)
@@ -26,6 +27,9 @@ test('the captured frame is un-mirrored before it is sent', () => {
   // the model must still see the scene the right way round (packaging text especially).
   assert.match(read('../public/quicklog.css'), /\.ql\.is-front \.ql-video\{transform:scaleX\(-1\)\}/)
   assert.match(page, /if \(facingMode === 'user'\) \{[\s\S]*?context\.scale\(-1, 1\)/)
+  // The mirror class must follow the camera rather than being set unconditionally.
+  assert.match(page, /classList\.toggle\('is-front', facingMode === 'user'\)/)
+  assert.doesNotMatch(page, /classList\.add\('is-front'\)/)
 })
 
 test('one tap logs and leaves — no preview or confirm step', () => {

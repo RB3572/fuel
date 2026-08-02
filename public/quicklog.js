@@ -11,9 +11,9 @@ const hint = document.getElementById('ql-hint')
 const busy = document.getElementById('ql-busy')
 const busyText = document.getElementById('ql-busy-text')
 
-// Front camera by default, as asked. The flip button exists because a plate on a table
-// is usually easier to frame with the rear one.
-let facingMode = 'user'
+// Rear camera by default — a plate on a table is what this page is pointed at. The
+// flip button covers the rest.
+let facingMode = 'environment'
 let stream = null
 let sending = false
 
@@ -128,5 +128,5 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) stopC
 window.addEventListener('pagehide', stopCamera)
 
 hint.textContent = 'Point at your food and tap to log it'
-document.getElementById('ql').classList.add('is-front')
+document.getElementById('ql').classList.toggle('is-front', facingMode === 'user')
 void startCamera()
