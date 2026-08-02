@@ -1,4 +1,5 @@
 import { sql } from './db.js'
+import { describeCoordinate } from './place-names.js'
 
 // Location history for the 24-hour place heatmap.
 //
@@ -55,6 +56,14 @@ async function migrate() {
   `
   await db`CREATE INDEX IF NOT EXISTS user_location_samples_user_time ON user_location_samples (user_id, recorded_at DESC)`
   await db`CREATE INDEX IF NOT EXISTS user_places_user ON user_places (user_id)`
+  // A name looked up from the coordinate, so places read as "Cava" rather than
+  // "Place 3". Cached per place: the lookup runs once, never per sample. Kept separate
+  // from `label` so a user's own name always wins and is never overwritten by a later
+  // lookup. geocoded_at records the attempt, so a place that has no name on the map
+  // is not retried forever.
+  await db`ALTER TABLE user_places ADD COLUMN IF NOT EXISTS suggested_label text`
+  await db`ALTER TABLE user_places ADD COLUMN IF NOT EXISTS suggested_detail text`
+  await db`ALTER TABLE user_places ADD COLUMN IF NOT EXISTS geocoded_at timestamptz`
 }
 
 // Records one fix and files it under the nearest known place, creating a place when
@@ -129,7 +138,7 @@ export async function getPlaceHeatmap(userId, days = 30) {
   const window = Math.min(365, Math.max(1, Number(days) || 30))
 
   const [places, rows, coverage] = await Promise.all([
-    db`SELECT id, label, latitude, longitude, sample_count FROM user_places WHERE user_id = ${userId} ORDER BY sample_count DESC`,
+    db`SELECT id, label, suggested_label, suggested_detail, geocoded_at, latitude, longitude, sample_count FROM user_places WHERE user_id = ${userId} ORDER BY sample_count DESC`,
     db`
       SELECT place_id,
         (EXTRACT(hour FROM recorded_at AT TIME ZONE ${TIME_ZONE})::int * 2
@@ -176,6 +185,11 @@ export async function getPlaceHeatmap(userId, days = 30) {
     .map((place) => ({
       id: String(place.id),
       label: place.label || null,
+      // The looked-up name, and whether a lookup has been attempted at all, so the
+      // client knows which places still need identifying.
+      suggestedLabel: place.suggested_label || null,
+      suggestedDetail: place.suggested_detail || null,
+      identified: Boolean(place.geocoded_at),
       latitude: Number(place.latitude),
       longitude: Number(place.longitude),
       samples: totals.get(String(place.id)) || 0,
@@ -205,6 +219,51 @@ export async function getPlaceHeatmap(userId, days = 30) {
     totalSamples: coverage[0]?.samples || 0,
     daysCovered: coverage[0]?.days || 0,
     firstSampleAt: coverage[0]?.first_at ? new Date(coverage[0].first_at).toISOString() : null,
+  }
+}
+
+// Looks up one place's name and caches it. One place per call — Nominatim allows one
+// request a second, so the client walks the unidentified places rather than the server
+// firing a burst. Returns the cached answer without a lookup once geocoded_at is set,
+// including when the lookup found nothing (so a nameless spot is not retried forever).
+export async function identifyPlace(userId, placeId, { force = false } = {}) {
+  await ensurePlacesSchema()
+  const db = sql()
+  const rows = await db`
+    SELECT id, label, suggested_label, suggested_detail, geocoded_at, latitude, longitude
+    FROM user_places WHERE id = ${String(placeId)}::uuid AND user_id = ${userId} LIMIT 1
+  `
+  if (!rows.length) throw new Error('That place was not found.')
+  const place = rows[0]
+  if (place.geocoded_at && !force) {
+    return { id: String(place.id), suggestedLabel: place.suggested_label || null, suggestedDetail: place.suggested_detail || null, identified: true, cached: true }
+  }
+
+  let name = ''
+  let detail = ''
+  try {
+    const described = await describeCoordinate(place.latitude, place.longitude)
+    name = described.name
+    detail = described.detail
+  } catch (error) {
+    // A lookup failure must not break the page: the place keeps its fallback name and
+    // stays unidentified so it can be tried again later.
+    console.warn('Place name lookup failed', error?.message || error)
+    return { id: String(place.id), suggestedLabel: null, suggestedDetail: null, identified: false, error: 'Could not look up a name for this place.' }
+  }
+
+  const saved = await db`
+    UPDATE user_places
+    SET suggested_label = ${name || null}, suggested_detail = ${detail || null}, geocoded_at = now(), updated_at = now()
+    WHERE id = ${String(placeId)}::uuid AND user_id = ${userId}
+    RETURNING id, suggested_label, suggested_detail
+  `
+  return {
+    id: String(saved[0]?.id || place.id),
+    suggestedLabel: saved[0]?.suggested_label || null,
+    suggestedDetail: saved[0]?.suggested_detail || null,
+    identified: true,
+    cached: false,
   }
 }
 

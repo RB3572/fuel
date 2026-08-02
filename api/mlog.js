@@ -12,7 +12,7 @@ import { recipesNeedingNutrition, saveEstimatedNutrition } from './_lib/recipes.
 import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
 import { estimateFoodNutrition } from './_lib/food-nutrition.js'
 import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
-import { clearLocationHistory, getPlaceHeatmap, recordLocation, renamePlace } from './_lib/places.js'
+import { clearLocationHistory, getPlaceHeatmap, identifyPlace, recordLocation, renamePlace } from './_lib/places.js'
 import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 import { logRecipeAsFood } from './_lib/food-entries.js'
 import { getRolling24h } from './_lib/rolling-energy.js'
@@ -488,6 +488,12 @@ async function handlePlaces(req, res) {
     const body = unwrap(req.body)
     if (req.method === 'PUT') {
       sendJson(res, 200, { ok: true, place: await renamePlace(auth.id, body.placeId, body.label) }, auth.cookie ? [auth.cookie] : [])
+      return
+    }
+    // One place per request: the name lookup is rate-limited upstream, so the client
+    // walks its unidentified places rather than the server firing a burst.
+    if (body.action === 'identify') {
+      sendJson(res, 200, { ok: true, ...(await identifyPlace(auth.id, body.placeId, { force: body.force === true })) }, auth.cookie ? [auth.cookie] : [])
       return
     }
     sendJson(res, 200, { ok: true, ...(await recordLocation(auth.id, body)) }, auth.cookie ? [auth.cookie] : [])

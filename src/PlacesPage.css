@@ -59,3 +59,43 @@
   .places-page .clear-history{width:100%;justify-content:center;min-height:44px}
   .places-page .lp-rename{min-height:36px}
 }
+
+/* ---- Rename dialog with a map preview ------------------------------------------ */
+/* The legend row now carries a second line (the looked-up context), so the name and
+   detail share one flexible column instead of the name owning the row. */
+.places-page .lp-text{display:grid;gap:1px;min-width:0;flex:1}
+.places-page .lp-text .lp-name{flex:none}
+.places-page .lp-detail{font-size:11px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.place-modal{width:min(460px,100%);max-height:min(88vh,760px);overflow:auto;padding:20px}
+.place-modal .place-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+.place-modal .eyebrow{display:block;color:#777;font-size:11px;font-weight:800;letter-spacing:.12em}
+.place-modal h2{margin:3px 0 0;font-size:21px;letter-spacing:-.03em;overflow-wrap:anywhere}
+.place-modal .place-modal-head p{margin:3px 0 0;color:#777;font-size:12.5px}
+
+/* Static OSM tiles. The mosaic is anchored at the frame centre and pulled back by the
+   pin's offset inside it, so the exact coordinate lands under the pin at any size. */
+.place-map{margin:0 0 14px}
+.place-map .pm-frame{position:relative;height:210px;border-radius:14px;overflow:hidden;border:1px solid #e0ddd8;background:#e8e4dd}
+.place-map .pm-mosaic{position:absolute;left:50%;top:50%;display:grid;line-height:0}
+.place-map .pm-mosaic img{display:block;width:256px;height:256px}
+.place-map .pm-blank{display:block;width:256px;height:256px;background:#e8e4dd}
+.place-map .pm-pin{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:#cf4446;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+.place-map .pm-credit{margin:6px 2px 0;font-size:10.5px;color:#9a9a95}
+.place-map .pm-credit a{color:#777}
+
+.place-modal .pm-suggestion{display:block;width:100%;margin-bottom:12px;border:1px solid #e0e0e0;background:#fff;color:#111;border-radius:10px;padding:9px 12px;font:inherit;font-size:12.5px;font-weight:700;text-align:left;cursor:pointer}
+.place-modal .pm-suggestion:hover{border-color:#aaa;background:#fafafa}
+.place-modal .pm-label{display:block;font-size:12px;font-weight:750;margin-bottom:7px}
+.place-modal .pm-input{width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:12px;background:#fafafa;color:#111;padding:12px 13px;font:inherit;font-size:14px;outline:none}
+.place-modal .pm-input:focus{border-color:#111;box-shadow:0 0 0 3px rgba(0,0,0,.07)}
+.place-modal .pm-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.place-modal .pm-actions button{min-height:42px}
+.place-modal .places-fine{margin:10px 0 0}
+
+@media(max-width:560px){
+  .place-modal{padding:16px}
+  .place-modal h2{font-size:19px}
+  .place-map .pm-frame{height:180px}
+  .places-page .lp-detail{display:none}
+}

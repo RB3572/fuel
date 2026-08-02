@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { MapPin, Trash2 } from 'lucide-react'
+import { MapPin, Trash2, X } from 'lucide-react'
+import PlaceMap from './PlaceMap'
 import './PlacesPage.css'
 
-type Place = { id: string; label: string | null; samples: number; likelyHome: boolean }
+type Place = {
+  id: string; label: string | null; samples: number; likelyHome: boolean
+  suggestedLabel: string | null; suggestedDetail: string | null; identified: boolean
+  latitude: number; longitude: number
+}
 type Bucket = { index: number; startMinute: number; placeId: string | null; samples: number; share: number }
 type Heatmap = { places: Place[]; buckets: Bucket[]; bucketsPerDay: number; windowDays: number; totalSamples: number; daysCovered: number; firstSampleAt: string | null }
 
@@ -47,6 +52,7 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const identifying = useRef(false)
   const [tracking, setTracking] = useState(() => (typeof localStorage === 'undefined' ? true : localStorage.getItem('fuel-location-off') !== '1'))
 
   const load = useCallback(async () => {
@@ -62,6 +68,41 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
   }, [])
   useEffect(() => { void load() }, [load])
 
+  // Give unnamed places a real name. One request at a time and spaced out: the lookup
+  // is rate-limited upstream (one per second), and a place is only ever looked up once
+  // because the answer is cached server-side. A failure is left unidentified rather
+  // than retried in a loop.
+  useEffect(() => {
+    const pending = (data?.places || []).filter((place) => !place.label && !place.identified && place.samples > 0)
+    if (!pending.length || identifying.current) return
+    identifying.current = true
+    let cancelled = false
+    ;(async () => {
+      for (const place of pending) {
+        if (cancelled) break
+        try {
+          const r = await fetch('/api/mlog?fuel_route=places', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ action: 'identify', placeId: place.id }),
+          })
+          const p = await r.json().catch(() => ({}))
+          if (!cancelled && r.ok) {
+            setData((current) => (current ? {
+              ...current,
+              places: current.places.map((existing) => (existing.id === place.id
+                ? { ...existing, suggestedLabel: p.suggestedLabel ?? existing.suggestedLabel, suggestedDetail: p.suggestedDetail ?? existing.suggestedDetail, identified: Boolean(p.identified) }
+                : existing)),
+            } : current))
+          }
+        } catch { /* leave it unidentified; the placeholder name still works */ }
+        if (!cancelled) await new Promise((resolve) => setTimeout(resolve, 1100))
+      }
+      identifying.current = false
+    })()
+    return () => { cancelled = true; identifying.current = false }
+  }, [data?.places])
+
   const colorFor = useMemo(() => {
     const map = new Map<string, string>()
     ;(data?.places || []).forEach((place, index) => {
@@ -70,13 +111,18 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
     return (id: string | null) => (id && map.get(id)) || NO_DATA
   }, [data])
 
+  // What a place is called: the user's own name, else the name looked up from the
+  // map, else a numbered placeholder. Used everywhere so the timeline, the legend and
+  // the rename dialog can never disagree.
+  const nameOf = useCallback((place: Place | undefined, index: number) =>
+    place?.label || place?.suggestedLabel || `Place ${index + 1}`, [])
+
   const labelFor = useCallback((id: string | null) => {
     if (!id) return 'No data'
     const index = (data?.places || []).findIndex((p) => p.id === id)
-    const place = data?.places[index]
-    if (!place) return 'Unknown'
-    return place.label || `Place ${index + 1}`
-  }, [data])
+    if (index < 0) return 'Unknown'
+    return nameOf(data?.places[index], index)
+  }, [data, nameOf])
 
   // Colour stops sit at each slot's centre, so the browser interpolates between them
   // and the bar reads as one continuous gradient down the day.
@@ -134,6 +180,8 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
     finally { setBusy(false) }
   }
 
+  const editingIndex = (data?.places || []).findIndex((place) => place.id === editing)
+  const editingPlace = editingIndex >= 0 ? data?.places[editingIndex] : undefined
   const hourMarks = [0, 3, 6, 9, 12, 15, 18, 21, 24]
   const hasData = (data?.totalSamples || 0) > 0
 
@@ -161,7 +209,7 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
         <section className="panel places-empty">
           <h2>No places yet</h2>
           <p>Fuel records a single location fix each time you open the app (at most once every few minutes). After a day or two of normal use, this page will show which places fill which parts of your day.</p>
-          <p className="places-fine">Nothing is shared. Fixes are stored in your own Fuel database and can be deleted below at any time.</p>
+          <p className="places-fine">Your fixes are stored in your own Fuel database and can be deleted below at any time.</p>
         </section>
       )}
 
@@ -194,35 +242,62 @@ export default function PlacesPage({ nav }: { nav: ReactNode }) {
       {hasData && (
         <section className="panel places-legend">
           <h2>Your places</h2>
-          {(data?.places || []).filter((p) => p.samples > 0).map((place, index) => (
+          {(data?.places || []).map((place, index) => (place.samples > 0 ? (
             <div className="legend-place" key={place.id}>
               <span className="lp-dot" style={{ background: index < COLOR_ORDER.length ? paletteAt(index) : OTHER_COLOR }} />
-              {editing === place.id ? (
-                <>
-                  <input className="lp-input" value={draft} autoFocus maxLength={60} placeholder={`Place ${index + 1}`}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void saveLabel(place.id); if (e.key === 'Escape') setEditing(null) }} />
-                  <button className="lp-save" onClick={() => void saveLabel(place.id)} disabled={busy}>Save</button>
-                  <button className="lp-cancel" onClick={() => setEditing(null)} disabled={busy}>Cancel</button>
-                </>
-              ) : (
-                <>
-                  <span className="lp-name">{place.label || `Place ${index + 1}`}</span>
-                  {place.likelyHome && !place.label && <span className="lp-hint">likely home</span>}
-                  <span className="lp-count">{place.samples} check-in{place.samples === 1 ? '' : 's'}</span>
-                  <button className="lp-rename" onClick={() => { setEditing(place.id); setDraft(place.label || '') }}>Rename</button>
-                </>
-              )}
+              <span className="lp-text">
+                <span className="lp-name">{nameOf(place, index)}</span>
+                {place.suggestedDetail && !place.label && <span className="lp-detail">{place.suggestedDetail}</span>}
+              </span>
+              {place.likelyHome && !place.label && <span className="lp-hint">likely home</span>}
+              <span className="lp-count">{place.samples} check-in{place.samples === 1 ? '' : 's'}</span>
+              <button className="lp-rename" onClick={() => { setEditing(place.id); setDraft(place.label || place.suggestedLabel || '') }}>Rename</button>
             </div>
-          ))}
-          <p className="places-fine">Names are yours — Fuel never looks up an address for these coordinates.</p>
+          ) : null))}
+          <p className="places-fine">Names come from OpenStreetMap and are only a starting point — rename any place to whatever you actually call it.</p>
         </section>
+      )}
+
+      {editingPlace && (
+        <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setEditing(null) }}>
+          <section className="panel place-modal" role="dialog" aria-modal="true" aria-label="Rename this place">
+            <div className="place-modal-head">
+              <div>
+                <span className="eyebrow">RENAME</span>
+                <h2>{nameOf(editingPlace, editingIndex)}</h2>
+                {editingPlace.suggestedDetail && <p>{editingPlace.suggestedDetail}</p>}
+              </div>
+              <button className="icon-button" onClick={() => setEditing(null)} aria-label="Close"><X size={17} /></button>
+            </div>
+
+            <PlaceMap latitude={editingPlace.latitude} longitude={editingPlace.longitude} label={nameOf(editingPlace, editingIndex)} />
+
+            {editingPlace.suggestedLabel && editingPlace.suggestedLabel !== draft.trim() && (
+              <button className="pm-suggestion" onClick={() => setDraft(editingPlace.suggestedLabel || '')}>
+                Use “{editingPlace.suggestedLabel}”
+              </button>
+            )}
+
+            <label className="pm-label" htmlFor="place-name">What do you call this place?</label>
+            <input
+              id="place-name" className="pm-input" value={draft} autoFocus maxLength={60}
+              placeholder={editingPlace.suggestedLabel || `Place ${editingIndex + 1}`}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void saveLabel(editingPlace.id); if (event.key === 'Escape') setEditing(null) }}
+            />
+            <div className="pm-actions">
+              <button className="lp-cancel" onClick={() => setEditing(null)} disabled={busy}>Cancel</button>
+              <button className="lp-save" onClick={() => void saveLabel(editingPlace.id)} disabled={busy}>Save name</button>
+            </div>
+            <p className="places-fine">Clearing the box puts the map's own name back.</p>
+          </section>
+        </div>
       )}
 
       <section className="panel places-privacy">
         <div>
           <h2>Location data</h2>
-          <p>Fixes are stored only in your own Fuel database, are never sent anywhere else, and are only ever read back to you. Turning tracking off stops new fixes immediately.</p>
+          <p>Your fixes are stored in your own Fuel database and are only ever read back to you. To name a place, its averaged centre — never an individual fix, and nothing identifying you — is sent once to OpenStreetMap and the answer is cached. Turning tracking off stops new fixes immediately.</p>
         </div>
         <button className="clear-history" onClick={() => void clearAll()} disabled={busy}><Trash2 size={15} />Delete all location history</button>
       </section>
