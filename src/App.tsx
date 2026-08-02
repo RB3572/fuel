@@ -239,6 +239,38 @@ export default function App(){
     fetch('/api/mlog?fuel_route=dashboard-layout',{cache:'no-store',headers:{Accept:'application/json'}}).then(r=>r.json()).then(p=>{if(p?.layout)setLayout(normalizeLayout(p.layout))}).catch(()=>{})
   },[load])
   useEffect(()=>{if(!session.authenticated)return;const id=setInterval(load,30000);const focus=()=>void load();addEventListener('focus',focus);return()=>{clearInterval(id);removeEventListener('focus',focus)}},[session.authenticated,load])
+  const[justLogged,setJustLogged]=useState<string[]>([])
+  // Quick log sends the user back here with the ids it created. Scroll to them once the
+  // dashboard has actually rendered them, so the tap ends where the result is.
+  useEffect(()=>{
+    if(!data)return
+    // A hash, not a query: it never reaches the server, and it survives the redirect
+    // intact. Cleared immediately so a refresh does not re-trigger the highlight.
+    const ids=(window.location.hash.match(/^#logged=(.*)$/)||[])[1]
+    if(!ids)return
+    setJustLogged(decodeURIComponent(ids).split(',').filter(Boolean))
+    window.history.replaceState({},'',window.location.pathname+window.location.search)
+    // Not requestAnimationFrame: the new row has to be committed AND laid out first,
+    // and a smooth scroll started mid-reflow gets cancelled. A short timeout lets the
+    // list settle. Smooth is attempted first, then checked — some engines (and any
+    // reduced-motion setting) treat a smooth scroll as a no-op, and arriving at the
+    // dashboard still parked at the top would defeat the whole point of the redirect.
+    let verify:ReturnType<typeof setTimeout>|undefined
+    const scroll=setTimeout(()=>{
+      // The new row is appended last, so the top of the panel can still leave it below
+      // the fold. Aim at the row itself and centre it; the panel is only a fallback for
+      // the case where the entry is not on screen yet.
+      const target=document.querySelector('.food-entry.just-logged')||document.getElementById('food-consumed')
+      if(!target)return
+      const before=window.scrollY
+      target.scrollIntoView({behavior:'smooth',block:'center'})
+      verify=setTimeout(()=>{
+        if(Math.abs(window.scrollY-before)<8)target.scrollIntoView({block:'center'})
+      },400)
+    },160)
+    const timer=setTimeout(()=>setJustLogged([]),6000)
+    return()=>{clearTimeout(timer);clearTimeout(scroll);if(verify)clearTimeout(verify)}
+  },[data])
   useLocationCapture(session.authenticated)
   const logout=async()=>{await fetch('/api/auth/logout',{method:'POST'});setSession({loading:false,authenticated:false,user:null});setData(null)}
   const deleteFood=async(entry:FoodEntry)=>{if(!entry.id||deletingFoodId)return;const label=entry.food||entry.meal||'this food entry';if(!window.confirm(`Delete "${label}" from Fuel? This cannot be undone.`))return;setDeletingFoodId(entry.id);setError('');try{const r=await fetch('/api/mlog',{method:'DELETE',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({entryId:entry.id})}),p=await r.json();if(!r.ok)throw new Error(p.error||'Unable to delete this food entry.');await load()}catch(e){setError(e instanceof Error?e.message:'Unable to delete this food entry.')}finally{setDeletingFoodId(null)}}
@@ -296,7 +328,7 @@ export default function App(){
   const sectionNodes:Record<SectionKey,{title:string;detail:string;node:ReactNode}>={
     nutrition:{title:'Nutrition',detail:`Calculated calorie target · ${balanceLabel(goalTarget(data?.goals,'calorieBalancePercent',0))} relative to average burn`,node:<section className="panel nutrition-panel"><GoalRing label="Calculated calories" value={s?.caloriesConsumed} target={goalTarget(data?.goals,'calories',2000)} unit="kcal"/><GoalBar label="Protein" value={s?.protein} target={goalTarget(data?.goals,'protein',112)} unit="g"/><GoalBar label="Carbohydrates" value={s?.carbs} target={goalTarget(data?.goals,'carbs',300)} unit="g"/><GoalBar label="Fat" value={s?.fat} target={goalTarget(data?.goals,'fat',60)} unit="g"/><GoalBar label="Fiber" value={s?.fiber} target={goalTarget(data?.goals,'fiber',30)} unit="g"/></section>},
     detailedNutrition:{title:'Detailed nutrition',detail:'Totals from logged food; unavailable nutrients remain blank rather than being guessed',node:<NutrientGrid nutrients={s?.nutrients}/>},
-    foodConsumed:{title:'Food consumed',detail:`${data?.today.foodEntries.length||0} entries today`,node:<section className="panel"><FoodTools entries={data?.today.foodEntries||[]} busy={fillingNutrients} note={fillNote} onFill={()=>void fillNutrients()}/><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={e.id||i} e={e} deleting={deletingFoodId===e.id} onDelete={()=>void deleteFood(e)} onEdit={()=>setEditingFood(e)}/>)}</EntryList></section>},
+    foodConsumed:{title:'Food consumed',detail:`${data?.today.foodEntries.length||0} entries today`,node:<section className="panel" id="food-consumed"><FoodTools entries={data?.today.foodEntries||[]} busy={fillingNutrients} note={fillNote} onFill={()=>void fillNutrients()}/><EntryList empty="No food logged today.">{(data?.today.foodEntries||[]).map((e,i)=><FoodRow key={e.id||i} e={e} justLogged={justLogged.includes(e.id)} deleting={deletingFoodId===e.id} onDelete={()=>void deleteFood(e)} onEdit={()=>setEditingFood(e)}/>)}</EntryList></section>},
     fitness:{title:'Fitness',detail:'Daily activity totals from Apple Health',node:<><ActivityRings summary={s} goals={data?.goals}/><section className="metric-grid fitness-metrics"><Metric icon={<Activity/>} label="Active energy" value={s?.activeEnergy} unit="kcal"/><Metric icon={<Clock3/>} label="Exercise" value={s?.exerciseMinutes} unit="min"/><Metric icon={<Route/>} label="Walking + running" value={s?.distanceMiles} unit="mi" decimals={2}/>{positive(s?.runningStrideLength)&&<Metric icon={<Route/>} label="Running stride length" value={s?.runningStrideLength} unit="m" decimals={2}/>}<Metric icon={<Footprints/>} label="Steps" value={s?.stepCount} unit=""/>{positive(s?.standMinutes)&&<Metric icon={<Clock3/>} label="Stand time" value={s?.standMinutes} unit="min"/>}{positive(s?.flightsClimbed)&&<Metric icon={<Activity/>} label="Flights climbed" value={s?.flightsClimbed} unit="flights"/>}{positive(s?.cyclingDistanceMiles)&&<Metric icon={<Bike/>} label="Cycling distance" value={s?.cyclingDistanceMiles} unit="mi" decimals={2}/>}</section></>},
     workouts:{title:'Workouts',detail:workoutDetail,node:<section className="panel"><EntryList empty="No workout activity logged today.">{(data?.today.workouts||[]).map((e,i)=><WorkoutRow key={i} e={e}/>)}</EntryList></section>},
     steps:{title:'Steps',detail:`Interactive 30-day movement trend · goal ${fmt(goalTarget(data?.goals,'steps',10000))}`,node:<section className="panel chart-panel"><InteractiveLine data={data?.trends||[]} metric="stepCount" unit="steps" chartTitle="Daily steps" yLabel="Steps"/></section>},
@@ -489,7 +521,7 @@ function FoodTools({entries,busy,note,onFill}:{entries:FoodEntry[];busy:boolean;
   </div>
 }
 
-function FoodRow({e,deleting,onDelete,onEdit}:{e:FoodEntry;deleting:boolean;onDelete:()=>void;onEdit:()=>void}){const details=[e.nutrients?.sugarsG!=null?`${fmt(e.nutrients.sugarsG,1)}g sugar`:'',e.nutrients?.sodiumMg!=null?`${fmt(e.nutrients.sodiumMg)}mg sodium`:'',e.nutrients?.caffeineMg!=null?`${fmt(e.nutrients.caffeineMg)}mg caffeine`:''].filter(Boolean).join(' · ');return <article className="entry food-entry"><div><strong>{e.food||e.meal}</strong><span>{[e.time,e.meal,e.portion].filter(Boolean).join(' · ')}</span>{details&&<span className="food-micro">{details}</span>}</div><div className="entry-actions"><div className="entry-nutrition"><strong>{fmt(e.calories)} kcal</strong><span>{fmt(e.protein,1)}g protein · {fmt(e.carbs,1)}g carbs · {fmt(e.fat,1)}g fat · {fmt(e.fiber,1)}g fiber</span></div><div className="entry-buttons"><button className="edit-entry-button" disabled={deleting||!e.id} onClick={onEdit} aria-label={`Edit ${e.food||'food entry'}`} title="Edit food entry"><Pencil size={15}/><span>Edit</span></button><button className="delete-entry-button" disabled={deleting} onClick={onDelete} aria-label={`Delete ${e.food||'food entry'}`} title="Delete food entry"><Trash2 size={15}/><span>{deleting?'Deleting…':'Delete'}</span></button></div></div></article>}
+function FoodRow({e,justLogged,deleting,onDelete,onEdit}:{e:FoodEntry;justLogged?:boolean;deleting:boolean;onDelete:()=>void;onEdit:()=>void}){const details=[e.nutrients?.sugarsG!=null?`${fmt(e.nutrients.sugarsG,1)}g sugar`:'',e.nutrients?.sodiumMg!=null?`${fmt(e.nutrients.sodiumMg)}mg sodium`:'',e.nutrients?.caffeineMg!=null?`${fmt(e.nutrients.caffeineMg)}mg caffeine`:''].filter(Boolean).join(' · ');return <article className={`entry food-entry${justLogged?' just-logged':''}`}><div><strong>{e.food||e.meal}</strong>{justLogged&&<span className="just-logged-badge">Just logged</span>}<span>{[e.time,e.meal,e.portion].filter(Boolean).join(' · ')}</span>{details&&<span className="food-micro">{details}</span>}</div><div className="entry-actions"><div className="entry-nutrition"><strong>{fmt(e.calories)} kcal</strong><span>{fmt(e.protein,1)}g protein · {fmt(e.carbs,1)}g carbs · {fmt(e.fat,1)}g fat · {fmt(e.fiber,1)}g fiber</span></div><div className="entry-buttons"><button className="edit-entry-button" disabled={deleting||!e.id} onClick={onEdit} aria-label={`Edit ${e.food||'food entry'}`} title="Edit food entry"><Pencil size={15}/><span>Edit</span></button><button className="delete-entry-button" disabled={deleting} onClick={onDelete} aria-label={`Delete ${e.food||'food entry'}`} title="Delete food entry"><Trash2 size={15}/><span>{deleting?'Deleting…':'Delete'}</span></button></div></div></article>}
 
 type HistoryDay={date:string;totalExpenditure:N;restingEnergy:N;activeEnergy:N;consumed:N;consumedLogged:N;consumedOverridden:boolean}
 // Edits a past day's overall stats only — burn totals and total intake. Individual

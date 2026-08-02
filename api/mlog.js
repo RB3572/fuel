@@ -16,6 +16,8 @@ import { clearLocationHistory, getPlaceHeatmap, identifyPlace, recordLocation, r
 import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 import { logRecipeAsFood } from './_lib/food-entries.js'
 import { getRolling24h } from './_lib/rolling-energy.js'
+import { callGemini, GEMINI_MODEL_FALLBACKS } from './_lib/meal-plan.js'
+import { logPhoto } from './_lib/quick-log.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -93,6 +95,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'places') {
     await handlePlaces(req, res)
+    return
+  }
+  if (integrationRoute === 'quicklog') {
+    await handleQuickLog(req, res)
     return
   }
   if (integrationRoute === 'meal-plan') {
@@ -360,6 +366,30 @@ async function handleFoodNutrition(req, res) {
       LIMIT 50
     `
     if (req.method === 'GET') {
+      // ?diagnose=1 answers "why did the fill button do nothing" without guessing:
+      // whether a key is configured, which model is being asked, what is actually in
+      // the queue, and — with &probe=1 — the raw outcome of one live Gemini call.
+      // Open it in a browser while signed in.
+      const url = new URL(req.url, appUrl())
+      if (url.searchParams.get('diagnose')) {
+        const report = {
+          geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
+          modelRequested: process.env.GEMINI_FOOD_MODEL || process.env.GEMINI_MODEL || GEMINI_MODEL_FALLBACKS[0],
+          modelFallbacks: GEMINI_MODEL_FALLBACKS,
+          pending: pending.length,
+          entries: pending.map((e) => ({ id: e.id, description: e.description, missing: missingFields(e) })),
+        }
+        const totals = await db`
+          SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE occurred_at > now() - interval '24 hours')::int AS last24h,
+            count(*) FILTER (WHERE ai_filled_at IS NOT NULL)::int AS already_filled
+          FROM food_entries WHERE user_id = ${auth.id}
+        `
+        report.foodEntries = { total: totals[0]?.total || 0, inLast24Hours: totals[0]?.last24h || 0, alreadyAiFilled: totals[0]?.already_filled || 0 }
+        if (url.searchParams.get('probe')) report.probe = await probeGemini()
+        sendJson(res, 200, report, auth.cookie ? [auth.cookie] : [])
+        return
+      }
       sendJson(res, 200, { pending: pending.length, entries: pending.map((e) => ({ id: e.id, description: e.description })) }, auth.cookie ? [auth.cookie] : [])
       return
     }
@@ -440,6 +470,32 @@ async function handleFoodNutrition(req, res) {
 
 // Reads and edits a day's overall stats (burn totals and intake). Deliberately does
 // not touch individual food entries — intake is stored as an override instead.
+// One photo in, food logged out. Backs /quicklog, whose entire job is to cost one tap.
+async function handleQuickLog(req, res) {
+  if (req.method !== 'POST') {
+    methodNotAllowed(res, ['POST'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to log a photo.' })
+      return
+    }
+    await ensureNutrientSchema()
+    const body = unwrap(req.body)
+    const result = await logPhoto(auth.id, body.image, { mealHint: text(body.meal) || '', localTime: text(body.localTime) || '' })
+    sendJson(res, result.logged.length ? 201 : 200, result, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Quick log failed', error)
+    const detail = error?.providerReason ? ` (${String(error.providerReason).slice(0, 200)})` : ''
+    sendJson(res, error?.statusCode && error.statusCode < 500 ? error.statusCode : 500, {
+      error: `${error instanceof Error ? error.message : 'That photo could not be logged.'}${detail}`,
+    })
+  }
+}
+
 async function handleDailyHistory(req, res) {
   if (!['GET', 'PUT'].includes(req.method)) {
     methodNotAllowed(res, ['GET', 'PUT'])
@@ -505,6 +561,53 @@ async function handlePlaces(req, res) {
   } catch (error) {
     console.error('Places request failed', error)
     sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to handle that place request.' })
+  }
+}
+
+// Which columns kept an entry in the fill queue, so a diagnose report says why an
+// entry is there rather than just that it is.
+function missingFields(entry) {
+  const missing = []
+  for (const [column, label] of [['calories_kcal', 'calories'], ['protein_g', 'protein'], ['carbs_g', 'carbs'], ['fat_g', 'fat'], ['fiber_g', 'fiber']]) {
+    if (entry[column] == null) missing.push(label)
+  }
+  const nutrients = entry.nutrients && typeof entry.nutrients === 'object' ? entry.nutrients : {}
+  if (!Object.keys(nutrients).length) missing.push('micronutrients')
+  return missing
+}
+
+// One real Gemini call with a trivial prompt, reporting exactly what came back. This
+// is the difference between "the key has no quota", "the model rejects our request"
+// and "the answer arrives but we mis-parse it" — three problems that had all been
+// showing up as the same silent nothing.
+async function probeGemini() {
+  const started = Date.now()
+  try {
+    const payload = await callGemini(
+      process.env.GEMINI_FOOD_MODEL || process.env.GEMINI_MODEL || GEMINI_MODEL_FALLBACKS[0],
+      {
+        contents: [{ role: 'user', parts: [{ text: 'Reply with the JSON object {"ok":true} and nothing else.' }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 256, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+      },
+      false, 15000,
+    )
+    const candidate = payload?.candidates?.[0]
+    return {
+      ok: true,
+      ms: Date.now() - started,
+      finishReason: candidate?.finishReason || null,
+      text: (candidate?.content?.parts?.map((part) => part.text).join('') || '').slice(0, 200),
+      usage: payload?.usageMetadata || null,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      ms: Date.now() - started,
+      message: error instanceof Error ? error.message : String(error),
+      code: error?.code || null,
+      status: error?.statusCode || null,
+      providerReason: error?.providerReason || null,
+    }
   }
 }
 

@@ -24,3 +24,13 @@
   .vital-trend .interactive-line{padding:10px 8px 8px}
   .vital-trend .interactive-line svg{height:150px}
 }
+
+/* ---- Just logged from /quicklog -------------------------------------------------
+   The camera page returns to the dashboard scrolled to the food it just created, so
+   the new row identifies itself for a few seconds rather than making the user hunt. */
+.food-entry.just-logged{position:relative;background:#f0faf3;border-radius:12px;padding-left:10px;padding-right:10px;
+  box-shadow:inset 0 0 0 1px #bfe6cd;animation:just-logged-in .45s cubic-bezier(.2,.8,.2,1) both}
+.just-logged-badge{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;
+  background:#14894e;color:#fff!important;font-size:10px;font-weight:800;letter-spacing:.04em;vertical-align:middle}
+@keyframes just-logged-in{from{opacity:.2;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.food-entry.just-logged{animation:none}}
