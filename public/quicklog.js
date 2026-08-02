@@ -32,6 +32,18 @@ function say(message, tone, { sticky = false } = {}) {
 // Taking another photo is the user acknowledging the last failure.
 function clearSticky() { stickyMessage = false; say('') }
 
+// This page runs on a phone, where there is no console to check. Any error that
+// escapes — a rejected promise from the fire-and-forget click handler, a script error,
+// anything — has to end up visible, or a failure looks exactly like a dead button.
+window.addEventListener('error', (event) => {
+  say(`Something went wrong: ${event.message || 'unknown error'}`, 'error', { sticky: true })
+})
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason
+  say(`Something went wrong: ${reason?.message || reason || 'unknown error'}`, 'error', { sticky: true })
+})
+
+
 async function startCamera() {
   stopCamera()
   say('Starting the camera…')
@@ -88,7 +100,8 @@ function captureJpeg() {
 }
 
 async function takeAndLog() {
-  if (sending || shutter.disabled) return
+  if (sending) { busyText.textContent = 'Still reading the last photo…'; return }
+  if (shutter.disabled) { say('The camera is not ready yet.', 'error', { sticky: true }); return }
   clearSticky()
   const dataUrl = captureJpeg()
   if (!dataUrl) { say('The camera could not capture that frame. Try again.', 'error', { sticky: true }); return }
@@ -96,15 +109,16 @@ async function takeAndLog() {
   sending = true
   shutter.disabled = true
   busy.hidden = false
-  busyText.textContent = 'Reading your photo…'
+  busyText.textContent = `Uploading photo (${Math.round(dataUrl.length / 1024)} KB)…`
   say('')
   // Freeze the frame under the overlay so it is obvious which shot is being logged.
   stopCamera()
 
-  // Reading a photo takes a few seconds; a minute means something is wrong, and an
-  // unbounded fetch would leave the spinner up for good.
+  // Reading a photo takes a few seconds. The abort sits just past the function's own
+  // 60s ceiling (vercel.json) so a real server error arrives first and gets reported;
+  // this only catches a connection that never returns at all.
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 60000)
+  const timeout = setTimeout(() => controller.abort(), 75000)
   try {
     const response = await fetch('/api/mlog?fuel_route=quicklog', {
       method: 'POST',
@@ -112,6 +126,7 @@ async function takeAndLog() {
       body: JSON.stringify({ image: { mimeType: 'image/jpeg', data: dataUrl }, localTime: new Date().toString() }),
       signal: controller.signal,
     })
+    busyText.textContent = 'Reading your photo…'
     const payload = await response.json().catch(() => ({}))
     if (response.status === 401) { window.location.href = '/'; return }
     // Include the status: a 413 (photo too big) and a 429 (Gemini rate limit) are very

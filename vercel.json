@@ -51,5 +51,10 @@
       "source": "/mcp-info",
       "destination": "/api/mlog?fuel_route=info"
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 60
+    }
+  }
 }

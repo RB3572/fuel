@@ -62,9 +62,34 @@ test('a failure message survives the camera restarting', () => {
   assert.match(page, /clearSticky\(\)\n  const dataUrl = captureJpeg\(\)/)
 })
 
+test('the function is given long enough to finish a Gemini call', () => {
+  // Without this the function runs on the platform default, which is shorter than the
+  // photo and batch calls it makes — killed mid-call, the browser gets a gateway error
+  // instead of a result.
+  const config = JSON.parse(read('../vercel.json'))
+  assert.equal(config.functions['api/**/*.js'].maxDuration, 60)
+  // The client waits slightly longer, so a real server message beats a client abort.
+  assert.match(page, /controller\.abort\(\), 75000/)
+})
+
+test('nothing on the page can fail silently', () => {
+  // There is no console on a phone: an escaped error has to reach the screen, or a
+  // failure is indistinguishable from a dead button.
+  assert.match(page, /window\.addEventListener\('error'/)
+  assert.match(page, /window\.addEventListener\('unhandledrejection'/)
+  assert.match(page, /Something went wrong: /)
+  // The traps call say(), which reads a `let` — they must come after its declaration.
+  assert.ok(page.indexOf('let stickyMessage') < page.indexOf("addEventListener('error'"), 'the traps must not run before say() is usable')
+})
+
+test('the busy overlay names the stage it is on', () => {
+  assert.match(page, /Uploading photo \(\$\{Math\.round\(dataUrl\.length \/ 1024\)\} KB\)…/)
+  assert.match(page, /busyText\.textContent = 'Reading your photo…'/)
+})
+
 test('a stalled upload cannot spin forever, and says what failed', () => {
   assert.match(page, /const controller = new AbortController\(\)/)
-  assert.match(page, /setTimeout\(\(\) => controller\.abort\(\), 60000\)/)
+  assert.match(page, /setTimeout\(\(\) => controller\.abort\(\), 75000\)/)
   assert.match(page, /signal: controller\.signal/)
   assert.match(page, /aborted \? 'That took too long/)
   // A 413 and a 429 are different problems; the status makes them distinguishable.
