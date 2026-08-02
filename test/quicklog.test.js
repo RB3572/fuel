@@ -45,7 +45,37 @@ test('the camera is released when the page is left or hidden', () => {
   assert.match(page, /visibilitychange/)
   assert.match(page, /pagehide/)
   // And before the upload, so the light is off while the request is in flight.
-  assert.match(page, /stopCamera\(\)\n\n  try \{/)
+  const capture = page.slice(page.indexOf('async function takeAndLog'), page.indexOf('const response = await fetch'))
+  assert.match(capture, /stopCamera\(\)/)
+})
+
+test('a failure message survives the camera restarting', () => {
+  // startCamera() clears the status line on success. Reporting the failure before the
+  // restart erased it, so a rejected photo returned to a clean viewfinder with no
+  // explanation — indistinguishable from the shutter doing nothing.
+  assert.match(page, /let stickyMessage = false/)
+  assert.match(page, /if \(!message && stickyMessage\) return/)
+  // Every failure path restarts the camera FIRST, then speaks.
+  assert.match(page, /await startCamera\(\)\n      say\(payload\.note[\s\S]*?\{ sticky: true \}\)/)
+  assert.match(page, /await startCamera\(\)\n    say\(message, 'error', \{ sticky: true \}\)/)
+  // Taking another photo acknowledges the last failure.
+  assert.match(page, /clearSticky\(\)\n  const dataUrl = captureJpeg\(\)/)
+})
+
+test('a stalled upload cannot spin forever, and says what failed', () => {
+  assert.match(page, /const controller = new AbortController\(\)/)
+  assert.match(page, /setTimeout\(\(\) => controller\.abort\(\), 60000\)/)
+  assert.match(page, /signal: controller\.signal/)
+  assert.match(page, /aborted \? 'That took too long/)
+  // A 413 and a 429 are different problems; the status makes them distinguishable.
+  assert.match(page, /HTTP \$\{response\.status\}/)
+  assert.match(page, /clearTimeout\(timeout\)/)
+})
+
+test('a canvas that failed to encode is not uploaded as nothing', () => {
+  // Safari returns a bare "data:," when it cannot encode, e.g. low memory.
+  assert.match(page, /dataUrl && dataUrl\.length > 1000 \? dataUrl : null/)
+  assert.match(page, /1280 \/ Math\.max\(width, height\)/)
 })
 
 test('a photo with no food is not logged as an empty entry', () => {
@@ -57,7 +87,7 @@ test('uploads are bounded and type-checked before they reach Gemini', () => {
   assert.match(quickLog, /ALLOWED_IMAGE_TYPES = new Set\(\['image\/jpeg', 'image\/png', 'image\/webp'\]\)/)
   assert.match(quickLog, /data\.length \* 0\.75 > MAX_IMAGE_BYTES/)
   assert.match(quickLog, /MAX_FOODS = 8/)
-  assert.match(page, /1600 \/ Math\.max\(width, height\)/, 'the capture is downscaled before upload')
+  assert.match(page, /1280 \/ Math\.max\(width, height\)/, 'the capture is downscaled before upload')
 })
 
 test('quick-logged entries are marked as already AI-estimated', () => {

@@ -17,11 +17,20 @@ let facingMode = 'environment'
 let stream = null
 let sending = false
 
-function say(message, tone) {
+// `sticky` marks a message the user still needs to read. startCamera() clears the
+// status line when it succeeds, and that used to erase the failure it was recovering
+// from — so a rejected photo returned to a clean viewfinder with no explanation, which
+// is indistinguishable from the button doing nothing.
+let stickyMessage = false
+function say(message, tone, { sticky = false } = {}) {
+  if (!message && stickyMessage) return
   statusLine.textContent = message || ''
   statusLine.hidden = !message
   statusLine.className = `ql-status${tone ? ` is-${tone}` : ''}`
+  stickyMessage = Boolean(message) && sticky
 }
+// Taking another photo is the user acknowledging the last failure.
+function clearSticky() { stickyMessage = false; say('') }
 
 async function startCamera() {
   stopCamera()
@@ -61,7 +70,7 @@ function captureJpeg() {
   const width = video.videoWidth
   const height = video.videoHeight
   if (!width || !height) return null
-  const scale = Math.min(1, 1600 / Math.max(width, height))
+  const scale = Math.min(1, 1280 / Math.max(width, height))
   canvas.width = Math.round(width * scale)
   canvas.height = Math.round(height * scale)
   const context = canvas.getContext('2d')
@@ -72,13 +81,17 @@ function captureJpeg() {
     context.scale(-1, 1)
   }
   context.drawImage(video, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', 0.82)
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.78)
+  // Safari returns a bare "data:," when it cannot encode the canvas (low memory on an
+  // older phone). Treat that as a failed capture rather than uploading nothing.
+  return dataUrl && dataUrl.length > 1000 ? dataUrl : null
 }
 
 async function takeAndLog() {
   if (sending || shutter.disabled) return
+  clearSticky()
   const dataUrl = captureJpeg()
-  if (!dataUrl) { say('The camera is not ready yet.', 'error'); return }
+  if (!dataUrl) { say('The camera could not capture that frame. Try again.', 'error', { sticky: true }); return }
 
   sending = true
   shutter.disabled = true
@@ -88,22 +101,29 @@ async function takeAndLog() {
   // Freeze the frame under the overlay so it is obvious which shot is being logged.
   stopCamera()
 
+  // Reading a photo takes a few seconds; a minute means something is wrong, and an
+  // unbounded fetch would leave the spinner up for good.
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 60000)
   try {
     const response = await fetch('/api/mlog?fuel_route=quicklog', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ image: { mimeType: 'image/jpeg', data: dataUrl }, localTime: new Date().toString() }),
+      signal: controller.signal,
     })
     const payload = await response.json().catch(() => ({}))
     if (response.status === 401) { window.location.href = '/'; return }
-    if (!response.ok) throw new Error(payload.error || 'That photo could not be logged.')
+    // Include the status: a 413 (photo too big) and a 429 (Gemini rate limit) are very
+    // different problems and both used to read as one generic failure.
+    if (!response.ok) throw new Error(payload.error || `That photo could not be logged (HTTP ${response.status}).`)
 
     const logged = payload.logged || []
     if (!logged.length) {
       busy.hidden = true
       sending = false
-      say(payload.note || 'No food was recognised in that photo. Try again.', 'error')
       await startCamera()
+      say(payload.note || 'No food was recognised in that photo. Try again.', 'error', { sticky: true })
       return
     }
     // Straight back to the dashboard, which scrolls to the food it just gained.
@@ -112,8 +132,15 @@ async function takeAndLog() {
   } catch (error) {
     busy.hidden = true
     sending = false
-    say(error instanceof Error ? error.message : 'That photo could not be logged.', 'error')
+    const aborted = error?.name === 'AbortError'
+    const message = aborted ? 'That took too long. Check your connection and try again.'
+      : error instanceof Error ? error.message : 'That photo could not be logged.'
+    // Restart first: startCamera() resets the status line, so saying this before it
+    // would erase the only explanation the user gets.
     await startCamera()
+    say(message, 'error', { sticky: true })
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
