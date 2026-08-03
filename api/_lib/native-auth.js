@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
-import { upsertUser } from './db.js'
+import { decryptJson, encryptJson } from './crypto.js'
+import { sql, upsertUser } from './db.js'
 import { issueTokenPair } from './mcp-auth.js'
 import { methodNotAllowed, sendJson, clearCookie, parseCookies, redirect, serializeCookie } from './http.js'
 import { randomToken, signState, verifyStateCookie } from './crypto.js'
@@ -87,7 +88,41 @@ function audiencesFor(provider) {
   return configured.filter(Boolean)
 }
 
-/// POST /api/auth/native  { provider: 'google' | 'apple', idToken, name? }
+/// The Google path for the app does not use a Google iOS client at all.
+///
+/// An iOS-type OAuth client would be a second registration to keep in sync, and a web
+/// client cannot redirect to a custom scheme. Instead the app opens Fuel's existing
+/// Google flow — the user sees Google's own account picker, no Fuel screen — and the
+/// callback hands back this short-lived code instead of setting a browser session. The
+/// client secret stays on the server, where it belongs.
+///
+/// The code is bound to the PKCE challenge the app generated, so a malicious app that
+/// registered the same URL scheme and intercepted the redirect cannot redeem it.
+const HANDOFF_TTL_SECONDS = 120
+
+export function mintNativeHandoffCode({ userId, codeChallenge }) {
+  return encryptJson({
+    type: 'fuel_native_handoff',
+    userId,
+    codeChallenge,
+    exp: Math.floor(Date.now() / 1000) + HANDOFF_TTL_SECONDS,
+  })
+}
+
+// Exported so the PKCE binding can be attacked directly in tests; it is the whole
+// defence against another app hijacking the fuel:// scheme.
+export function redeemNativeHandoffCode(code, codeVerifier) {
+  const payload = decryptJson(String(code || ''))
+  if (payload?.type !== 'fuel_native_handoff') throw new Error('That sign-in code is not valid.')
+  if (Number(payload.exp) <= Math.floor(Date.now() / 1000)) throw new Error('That sign-in code has expired.')
+  const expected = crypto.createHash('sha256').update(String(codeVerifier || '')).digest('base64url')
+  if (!payload.codeChallenge || payload.codeChallenge !== expected) {
+    throw new Error('That sign-in code was issued for a different request.')
+  }
+  return payload
+}
+
+/// POST /api/auth/native  { provider: 'google' | 'apple' | 'fuel', idToken | code }
 export async function handleNativeAuth(req, res) {
   if (req.method !== 'POST') {
     methodNotAllowed(res, ['POST'])
@@ -97,12 +132,35 @@ export async function handleNativeAuth(req, res) {
   const provider = String(body.provider || '').toLowerCase()
   const idToken = String(body.idToken || body.identityToken || '')
 
-  if (!['google', 'apple'].includes(provider)) {
-    sendJson(res, 400, { error: 'provider must be "google" or "apple".' })
+  if (!['google', 'apple', 'fuel'].includes(provider)) {
+    sendJson(res, 400, { error: 'provider must be "google", "apple" or "fuel".' })
     return
   }
-  if (!idToken) {
+  if (provider !== 'fuel' && !idToken) {
     sendJson(res, 400, { error: 'An identity token is required.' })
+    return
+  }
+
+  // The handoff path: the browser already proved the identity through Fuel's own
+  // Google flow, so there is no token to verify — only the code to redeem.
+  if (provider === 'fuel') {
+    try {
+      const payload = redeemNativeHandoffCode(body.code, body.codeVerifier)
+      const tokens = await issueTokenPair({
+        userId: payload.userId,
+        clientId: 'fuel-ios-handoff',
+        resource: RESOURCE,
+        scopes: ['fuel:read', 'fuel:write'],
+      })
+      const db = sql()
+      const [user] = await db`SELECT email, name, picture_url FROM app_users WHERE id = ${payload.userId}`
+      sendJson(res, 200, {
+        ...tokens,
+        user: { email: user?.email, name: user?.name, picture: user?.picture_url },
+      })
+    } catch (error) {
+      sendJson(res, 401, { error: error.message || 'That sign-in could not be completed.' })
+    }
     return
   }
 

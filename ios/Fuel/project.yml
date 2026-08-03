@@ -53,12 +53,11 @@ targets:
         NSLocationWhenInUseUsageDescription: >-
           Fuel records where you eat so it can show your places heatmap. Location
           never leaves your Fuel account.
-        # Google's iOS OAuth client redirects to the reversed client ID. Fill both in
-        # from the iOS client in Google Cloud Console; Sign in with Apple needs neither.
-        GoogleClientID: REPLACE_WITH_IOS_CLIENT_ID.apps.googleusercontent.com
+        # Both sign-ins come back to fuel://auth. Google needs no client ID here: the
+        # server brokers it with Fuel's existing client, so no secret ships in the app.
         CFBundleURLTypes:
-          - CFBundleURLName: com.labloggercompany.fuel.google
-            CFBundleURLSchemes: [com.googleusercontent.apps.REPLACE_WITH_IOS_CLIENT_ID]
+          - CFBundleURLName: com.labloggercompany.fuel.auth
+            CFBundleURLSchemes: [fuel]
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
           - com.labloggercompany.fuel.refresh

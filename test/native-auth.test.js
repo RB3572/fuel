@@ -37,7 +37,8 @@ const appleClaims = (overrides = {}) => ({
 
 const originalFetch = globalThis.fetch
 globalThis.fetch = async () => ({ ok: true, json: async () => ({ keys: [jwk] }) })
-const { verifyAppleIdentityToken } = await import('../api/_lib/native-auth.js')
+const { verifyAppleIdentityToken, mintNativeHandoffCode, redeemNativeHandoffCode } =
+  await import('../api/_lib/native-auth.js')
 test.after(() => { globalThis.fetch = originalFetch })
 
 const audience = ['com.labloggercompany.fuel.web']
@@ -99,6 +100,51 @@ test('a token signed by an unknown key is refused', async () => {
   )
 })
 
+// MARK: the Google handoff
+//
+// The app opens Fuel's own Google flow and gets a one-time code back over the fuel://
+// scheme. Any app can register that scheme, so the code is bound to a PKCE challenge:
+// intercepting it must not be enough to redeem it.
+
+process.env.TOKEN_ENCRYPTION_KEY ||= Buffer.alloc(32, 9).toString('base64')
+
+const s256 = (verifier) => crypto.createHash('sha256').update(verifier).digest('base64url')
+
+test('a handoff code redeems with the verifier that produced its challenge', () => {
+  const verifier = 'a-long-random-verifier-value'
+  const code = mintNativeHandoffCode({ userId: 'user-1', codeChallenge: s256(verifier) })
+  assert.equal(redeemNativeHandoffCode(code, verifier).userId, 'user-1')
+})
+
+test('an intercepted handoff code is useless without the verifier', () => {
+  const code = mintNativeHandoffCode({ userId: 'user-1', codeChallenge: s256('the-real-verifier') })
+  assert.throws(() => redeemNativeHandoffCode(code, 'a-guess'), /issued for a different request/)
+  assert.throws(() => redeemNativeHandoffCode(code, ''), /issued for a different request/)
+})
+
+test('a handoff code with no challenge at all is refused', () => {
+  // Belt and braces: a code minted without PKCE must not be redeemable by passing
+  // an empty verifier whose hash happens to match an empty challenge.
+  const code = mintNativeHandoffCode({ userId: 'user-1', codeChallenge: '' })
+  assert.throws(() => redeemNativeHandoffCode(code, ''), /issued for a different request/)
+})
+
+test('an expired handoff code is refused', () => {
+  const verifier = 'v'
+  const code = mintNativeHandoffCode({ userId: 'user-1', codeChallenge: s256(verifier) })
+  const realNow = Date.now
+  Date.now = () => realNow() + 10 * 60 * 1000
+  try {
+    assert.throws(() => redeemNativeHandoffCode(code, verifier), /has expired/)
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('a token from somewhere else is not a handoff code', () => {
+  assert.throws(() => redeemNativeHandoffCode('not-a-code', 'v'))
+})
+
 // MARK: wiring
 
 test('both surfaces offer Google and Apple, and share one verifier', () => {
@@ -127,12 +173,21 @@ test('both surfaces offer Google and Apple, and share one verifier', () => {
 
 test('the app signs in natively with the same identity, not a Fuel consent page', () => {
   const signIn = read('../ios/Fuel/Sources/SignIn.swift')
-  // Apple: the system sheet. Google: Google's own page, not fuel.rishib.com.
+  // Apple goes through the system sheet.
   assert.match(signIn, /ASAuthorizationAppleIDProvider/)
-  assert.match(signIn, /https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth/)
+  // Google goes through Fuel's existing Google flow — the user sees Google's own
+  // account picker. Crucially NOT /oauth/authorize, which is the MCP consent screen.
+  assert.match(signIn, /\/api\/auth\/google\/start/)
   assert.doesNotMatch(signIn, /\/oauth\/authorize/)
-  // Whatever the provider, Fuel verifies the identity token server-side.
   assert.match(signIn, /\/api\/auth\/native/)
-  // Public clients only: no secret ships in the app.
   assert.doesNotMatch(signIn, /client_secret/)
+})
+
+test('the Google handoff never puts tokens in the redirect URL', () => {
+  const callback = read('../api/auth/google/callback.js')
+  // A code bound to PKCE, not an access token a scheme-hijacker could simply read.
+  assert.match(callback, /fuel:\/\/auth\?code=/)
+  assert.doesNotMatch(callback, /fuel:\/\/auth\?access_token/)
+  // And no browser session is set for the app's flow.
+  assert.match(callback, /redirect\(res, `fuel:\/\/auth\?code=\$\{encodeURIComponent\(handoff\)\}`, baseCookies\)/)
 })

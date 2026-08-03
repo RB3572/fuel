@@ -32,31 +32,24 @@ downgraded tokens in `test/native-auth.test.js`.
 
 | What | Where | Needed for |
 |---|---|---|
-| App ID `com.labloggercompany.fuel` with **HealthKit** + **Sign in with Apple** | Apple Developer portal | ✅ already registered |
-| `GOOGLE_IOS_CLIENT_ID` | Vercel env | Google sign-in, app |
-| `GoogleClientID` + reversed URL scheme | `ios/Fuel/project.yml` | Google sign-in, app |
+| App ID `com.labloggercompany.fuel` with **HealthKit** + **Sign in with Apple** | Apple Developer portal | ✅ registered |
+| Google — nothing | — | ✅ uses Fuel's existing client, server-side |
 | `APPLE_SERVICE_ID` | Vercel env | Sign in with Apple, **web only** |
 
-**Sign in with Apple in the app works already** — it needs only the capability, which is
-registered. Build with your team and it will run.
+**Google needs no iOS OAuth client.** An iOS-type client would be a second registration
+to keep in sync, and a web client cannot redirect to a custom scheme. Instead the app
+opens Fuel's own Google flow at `/api/auth/google/start?native=1`: the user sees Google's
+account picker — the same one the website shows — and the callback hands back a
+short-lived code over `fuel://auth` instead of setting a browser session. The client
+secret stays on the server, which is the point, because a shipped app cannot keep one.
 
-**Google in the app** needs an iOS OAuth client. It must be created in the Google Cloud
-project that owns Fuel's existing web client (project number `804091048275` — the prefix
-of `GOOGLE_CLIENT_ID`):
+The code is bound to a PKCE challenge the app generated, so another app that registered
+the `fuel://` scheme and intercepted the redirect still cannot redeem it. That binding is
+attacked directly in `test/native-auth.test.js`.
 
-1. Google Cloud console → APIs & Services → Credentials → **Create credentials → OAuth
-   client ID → iOS**.
-2. Bundle ID: `com.labloggercompany.fuel`.
-3. Copy the client ID, then:
-   ```bash
-   vercel env add GOOGLE_IOS_CLIENT_ID production   # paste the client ID
-   ```
-4. In `ios/Fuel/project.yml`, replace both `REPLACE_WITH_IOS_CLIENT_ID` placeholders —
-   the `GoogleClientID` value, and the reversed form in `CFBundleURLSchemes`
-   (`com.googleusercontent.apps.<the numeric part>`). Then `xcodegen generate`.
-
-Until that is done the app says so and points at Sign in with Apple, rather than failing
-silently.
+**Sign in with Apple in the app** needs only the capability, which is registered. Build
+with your team and it runs; the simulator additionally needs an Apple ID signed in under
+Settings.
 
 **Sign in with Apple on the web** additionally needs a Services ID:
 

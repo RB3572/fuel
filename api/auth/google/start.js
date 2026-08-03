@@ -3,6 +3,9 @@ import { appUrl, geminiGoogleScope, googleEnv, googleScopes, redirectUri, stateC
 import { redirect, serializeCookie } from '../../_lib/http.js'
 
 const returnCookieName = 'fuel_oauth_return'
+// Set when the Fuel iOS app starts the flow, so the callback hands the result back to
+// the app instead of setting a browser session.
+const nativeCookieName = 'fuel_native_pkce'
 
 export default function handler(req, res) {
   if (req.method !== 'GET') {
@@ -13,6 +16,11 @@ export default function handler(req, res) {
 
   const requestUrl = new URL(req.url, appUrl())
   const connectGemini = requestUrl.searchParams.get('gemini') === '1'
+  // The app asks for openid/email/profile only — it never needs Google API access —
+  // and proves possession of the request with PKCE.
+  const nativeChallenge = requestUrl.searchParams.get('native') === '1'
+    ? String(requestUrl.searchParams.get('code_challenge') || '')
+    : ''
   const scopes = connectGemini ? [...googleScopes, geminiGoogleScope] : googleScopes
   const { clientId } = googleEnv()
   const state = randomToken(24)
@@ -28,6 +36,7 @@ export default function handler(req, res) {
   authorizationUrl.searchParams.set('state', state)
 
   const cookies = [serializeCookie(stateCookieName, signState(state), { maxAge: 10 * 60 })]
+  if (nativeChallenge) cookies.push(serializeCookie(nativeCookieName, nativeChallenge, { maxAge: 10 * 60 }))
   const returnTo = safeReturnTo(req)
   if (returnTo !== '/') cookies.push(serializeCookie(returnCookieName, returnTo, { maxAge: 10 * 60 }))
   redirect(res, authorizationUrl.toString(), cookies)

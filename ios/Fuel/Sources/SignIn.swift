@@ -41,11 +41,6 @@ final class SignIn: NSObject {
     private var appleContinuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
     private var appleNonce: String?
 
-    /// Registered in Info.plist. Google requires the reversed client ID as the scheme.
-    private var googleClientID: String? {
-        Bundle.main.object(forInfoDictionaryKey: "GoogleClientID") as? String
-    }
-
     init(baseURL: String) {
         self.baseURL = baseURL
         super.init()
@@ -113,54 +108,36 @@ final class SignIn: NSObject {
 
     // MARK: - Google
 
+    /// Google, without a Google iOS client.
+    ///
+    /// An iOS OAuth client would be a second registration to keep in sync, and a web
+    /// client cannot redirect to a custom scheme — so instead this opens Fuel's own
+    /// Google flow. What the user sees is Google's account picker, the same one the
+    /// website shows; Fuel is only the invisible redirect at the end. The client secret
+    /// stays on the server, which is the point: a shipped app cannot keep one.
     func signInWithGoogle() async {
         busy = true
         error = nil
         defer { busy = false }
-        guard let clientID = googleClientID, !clientID.isEmpty, !clientID.hasPrefix("REPLACE") else {
-            error = "Google sign-in isn't configured yet. Add an iOS OAuth client ID to Info.plist, or use Sign in with Apple."
-            return
-        }
         do {
-            // Google's iOS convention: the redirect scheme is the client ID reversed.
-            let scheme = clientID.split(separator: ".").reversed().joined(separator: ".")
-            let redirect = "\(scheme):/oauth2redirect"
             let verifier = Self.randomURLSafe(64)
-
-            var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
+            var components = URLComponents(string: baseURL + "/api/auth/google/start")!
             components.queryItems = [
-                .init(name: "client_id", value: clientID),
-                .init(name: "redirect_uri", value: redirect),
-                .init(name: "response_type", value: "code"),
-                .init(name: "scope", value: "openid email profile"),
-                .init(name: "code_challenge", value: Self.sha256(verifier)),
-                .init(name: "code_challenge_method", value: "S256"),
+                .init(name: "native", value: "1"),
+                .init(name: "code_challenge", value: Self.s256(verifier)),
             ]
 
-            let callback = try await webAuth(url: components.url!, scheme: scheme)
-            guard let code = URLComponents(url: callback, resolvingAgainstBaseURL: false)?
-                .queryItems?.first(where: { $0.name == "code" })?.value else {
+            let callback = try await webAuth(url: components.url!, scheme: "fuel")
+            let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if let failure = items.first(where: { $0.name == "error" })?.value {
                 throw NSError(domain: "Fuel", code: 2,
-                              userInfo: [NSLocalizedDescriptionKey: "Google did not return an authorization code."])
+                              userInfo: [NSLocalizedDescriptionKey: "Google sign-in failed (\(failure))."])
             }
-
-            // Exchange at Google for the ID token. A public iOS client has no secret.
-            var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
-            request.httpMethod = "POST"
-            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-            request.httpBody = [
-                "client_id": clientID, "code": code, "code_verifier": verifier,
-                "grant_type": "authorization_code", "redirect_uri": redirect,
-            ].map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0.value)" }
-                .joined(separator: "&").data(using: .utf8)
-
-            let (data, _) = try await URLSession.shared.data(for: request)
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let idToken = object["id_token"] as? String else {
+            guard let code = items.first(where: { $0.name == "code" })?.value else {
                 throw NSError(domain: "Fuel", code: 3,
-                              userInfo: [NSLocalizedDescriptionKey: "Google did not return an identity token."])
+                              userInfo: [NSLocalizedDescriptionKey: "Fuel did not return a sign-in code."])
             }
-            try await exchange(provider: "google", idToken: idToken, email: nil, name: nil)
+            try await exchange(handoffCode: code, verifier: verifier)
         } catch {
             if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin { return }
             self.error = error.localizedDescription
@@ -187,7 +164,10 @@ final class SignIn: NSObject {
         var payload: [String: Any] = ["provider": provider, "idToken": idToken]
         if let email { payload["email"] = email }
         if let name { payload["name"] = name }
+        try await postNative(payload)
+    }
 
+    private func postNative(_ payload: [String: Any]) async throws {
         var request = URLRequest(url: URL(string: baseURL + "/api/auth/native")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -205,10 +185,16 @@ final class SignIn: NSObject {
         let next = Tokens(accessToken: access,
                           refreshToken: object?["refresh_token"] as? String,
                           expiresAt: Date().addingTimeInterval((object?["expires_in"] as? Double) ?? 3600),
-                          email: user?["email"] as? String ?? email,
-                          name: user?["name"] as? String ?? name)
+                          email: user?["email"] as? String ?? payload["email"] as? String,
+                          name: user?["name"] as? String ?? payload["name"] as? String)
         tokens = next
         Self.save(next)
+    }
+
+    /// Redeem the one-time code from Fuel's Google callback. PKCE means an app that
+    /// hijacked the URL scheme and stole the code still cannot spend it.
+    private func exchange(handoffCode: String, verifier: String) async throws {
+        try await postNative(["provider": "fuel", "code": handoffCode, "codeVerifier": verifier])
     }
 
     private func refreshTokens(_ refreshToken: String) async throws {
@@ -251,9 +237,19 @@ final class SignIn: NSObject {
             .replacingOccurrences(of: "=", with: "")
     }
 
+    /// Apple's nonce is the hex digest.
     private static func sha256(_ value: String) -> String {
         let digest = SHA256.hash(data: Data(value.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// PKCE's code_challenge is base64url of the raw digest — a different encoding of
+    /// the same hash, and mixing them up fails only at redemption time.
+    private static func s256(_ verifier: String) -> String {
+        Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
 

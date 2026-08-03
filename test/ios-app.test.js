@@ -26,11 +26,12 @@ test('the long-lived sync token still works alongside OAuth', () => {
 
 test('the iOS app signs in with PKCE and never stores a password', () => {
   const signIn = read('../ios/Fuel/Sources/SignIn.swift')
-  assert.match(signIn, /code_challenge_method/)
   assert.match(signIn, /ASWebAuthenticationSession/)
-  assert.match(signIn, /"scope", value: "openid email profile"/)
-  // Public client: no secret compiled into the app.
+  assert.match(signIn, /code_challenge/)
+  // No secret and no Google client ID in the app: the server brokers Google with the
+  // credentials it already holds.
   assert.doesNotMatch(signIn, /client_secret/)
+  assert.doesNotMatch(signIn, /apps\.googleusercontent\.com/)
 })
 
 test('the AI runs on device, not through Gemini', () => {
