@@ -22,7 +22,7 @@ type RangeKey = 'day' | 'week' | 'month'
 type SessionUser = { email?: string; name?: string; picture?: string }
 type NutrientTotals=Record<string,N>
 type Summary = { date:string; partialDay:boolean; caloriesConsumed:N; restingEnergy:N; activeEnergy:N; totalExpenditure:N; energyBalance:N; protein:N; carbs:N; fat:N; fiber:N; sugars?:N; addedSugars?:N; sodium?:N; caffeine?:N; nutrients?:NutrientTotals; sleepHours:N; restingHeartRate:N; hrv:N; respiratoryRate:N; bloodOxygen:N; walkingHeartRateAverage:N; stepCount:N; distanceMiles:N; cyclingDistanceMiles:N; swimmingDistanceYards:N; swimmingStrokes:N; runningStrideLength:N; cardioRecovery:N; standMinutes:N; flightsClimbed:N; exerciseMinutes:N; vo2Max:N }
-type FoodEntry = { id:string; time:string; meal:string; food:string; portion:string; calories:N; protein:N; carbs:N; fat:N; fiber:N; sugars?:N; addedSugars?:N; sodium?:N; caffeine?:N; nutrients?:NutrientTotals }
+type FoodEntry = { id:string; time:string; meal:string; food:string; portion:string; calories:N; protein:N; carbs:N; fat:N; fiber:N; sugars?:N; addedSugars?:N; sodium?:N; caffeine?:N; nutrients?:NutrientTotals; aiFilled?:boolean }
 type WorkoutEntry = { time:string; activity:string; durationMinutes:N; activeCalories:N; distanceMiles:N; averagePace:string; averageHeartRate:N; effort:string; location:string; swimmingDistanceYards:N; stepCount:N; strokeCount:N; dataQuality:string }
 type TrendPoint = Summary & { workoutCount:number }
 type GoalRange = { minimum:N; target:N; maximum:N }
@@ -509,7 +509,12 @@ function Section({title,detail}:{title:string;detail:string}){return <div classN
 function EntryList({children,empty}:{children:ReactNode;empty:string}){const a=Array.isArray(children)?children:[children];return a.length?<div className="entry-list">{children}</div>:<div className="empty">{empty}</div>}
 // Offers the AI fill-in only when today's diary actually has gaps: an entry missing a
 // core macro, or carrying no micronutrient detail at all.
+// "Missing" has to mean the same thing here as it does in the fill queue on the server,
+// or the banner outlives the work. An entry the AI has already been asked about is
+// finished even when the model could not supply every field — otherwise the prompt
+// stays up forever offering a button that has nothing left to do.
 function foodEntryIncomplete(e:FoodEntry){
+  if(e.aiFilled)return false
   if(e.calories==null||e.protein==null||e.carbs==null||e.fat==null||e.fiber==null)return true
   return !e.nutrients||Object.keys(e.nutrients).length===0
 }

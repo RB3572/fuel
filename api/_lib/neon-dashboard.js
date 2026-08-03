@@ -217,6 +217,10 @@ function normalizeFood(row) {
     fat: number(row.fat_g), fiber: number(row.fiber_g), sugars: number(row.sugars_g), addedSugars: number(row.added_sugars_g),
     sodium: number(row.sodium_mg), caffeine: number(row.caffeine_mg), nutrients: nutrientsFromRow(row),
     confidence: row.confidence || '', notes: row.notes || '', source: row.source || '',
+    // Whether the AI fill has already run for this entry. The dashboard needs it to
+    // agree with the fill queue about what is still outstanding: an entry the model has
+    // already been asked about is finished, even if it could not supply every field.
+    aiFilled: row.ai_filled_at != null,
   }
 }
 function normalizeSupplement(row) {

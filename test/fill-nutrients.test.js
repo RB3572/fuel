@@ -92,3 +92,24 @@ test('a rejected thinking hint is retried without it rather than failing everyth
   // It must be classified before the generic schema rejection, which does not retry.
   assert.ok(plan.indexOf('isThinkingRejection(providerReason)') < plan.indexOf('Unknown name'), 'the thinking case must be checked first')
 })
+
+test('the banner clears once the AI fill has run', () => {
+  // The server marks an entry done with ai_filled_at; the client used to re-derive
+  // "missing" from the data. Any field the model could not supply — micronutrients for
+  // a plain food, say — kept the banner up forever, offering a button whose queue was
+  // already empty.
+  const dashboard = read('../api/_lib/neon-dashboard.js')
+  assert.match(dashboard, /aiFilled: row\.ai_filled_at != null/)
+  assert.match(app, /aiFilled\?:boolean/)
+  assert.match(app, /if\(e\.aiFilled\)return false/)
+  // It has to be the first check, ahead of the field-by-field test it overrides.
+  const fn = app.slice(app.indexOf('function foodEntryIncomplete'), app.indexOf('function FoodTools'))
+  assert.ok(fn.indexOf('e.aiFilled') < fn.indexOf('e.calories==null'), 'the aiFilled short-circuit must come first')
+})
+
+test('the queue and the banner agree on what is outstanding', () => {
+  // Both sides key off the same column, so they cannot drift apart again.
+  assert.match(mlog, /AND ai_filled_at IS NULL/)
+  assert.match(mlog, /ai_filled_at = now\(\)/)
+  assert.match(read('../api/_lib/neon-dashboard.js'), /ai_filled_at/)
+})
