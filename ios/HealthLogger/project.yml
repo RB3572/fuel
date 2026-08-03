@@ -44,5 +44,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
         CODE_SIGN_STYLE: Automatic
+        # The LAB LOGGER INC. team that owns com.labloggercompany.healthlogger.
+        # Without this, `xcodebuild archive` fails with "requires a development team".
+        DEVELOPMENT_TEAM: 9VVDB6UALA
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0"
