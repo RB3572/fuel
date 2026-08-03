@@ -94,17 +94,28 @@ struct SetupView: View {
                         }
                     )
 
+                // Google's own mark and wording, on a button built to the same
+                // measurements as Apple's — 50pt tall, 12pt radius — so the pair reads
+                // as one stack rather than two borrowed components.
                 Button {
                     Task { await store.auth.signInWithGoogle(); await afterSignIn() }
                 } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "g.circle.fill").font(.system(size: 19))
-                        Text("Continue with Google").font(.system(size: 17, weight: .medium))
+                    HStack(spacing: 12) {
+                        Image("GoogleG").resizable().frame(width: 20, height: 20)
+                        Text("Sign in with Google")
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(scheme == .dark ? Color(hex: 0xE3E3E3) : Color(hex: 0x1F1F1F))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(scheme == .dark ? Color(hex: 0x131314) : .white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(scheme == .dark ? Color(hex: 0x8E918F) : Color(hex: 0xDADCE0), lineWidth: 1)
+                    )
                 }
-                .buttonStyle(.bordered)
-                .tint(Palette.ink(scheme))
+                .buttonStyle(.plain)
 
                 if store.auth.busy { ProgressView().padding(.top, 4) }
 
