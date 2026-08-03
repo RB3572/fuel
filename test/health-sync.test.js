@@ -111,6 +111,27 @@ test('the legacy Shortcut import is untouched', () => {
   assert.doesNotMatch(legacy, /health-sync|hk_quantity/)
 })
 
+test('the Shortcut keeps its own endpoint, rewrite and auth', () => {
+  // Everything the Shortcut depends on, pinned. The iOS app, OAuth and native sign-in
+  // all arrived after this was written; none of them may move it.
+  const config = JSON.parse(read('../vercel.json'))
+  assert.ok(config.rewrites.some((r) => r.source === '/api/health/import-text'
+    && r.destination === '/api/health/import'), 'the Shortcut posts to /api/health/import-text')
+
+  const legacy = read('../api/health/import.js')
+  // Its own function and its own auth: it never went through mlog's authenticatedUser,
+  // so adding OAuth scopes there cannot have reached it.
+  assert.match(legacy, /const user = await userForSyncToken\(token\)\.catch\(\(\) => null\)/)
+  assert.doesNotMatch(legacy, /verifyAccessToken|fuel:read|fuel:write/)
+
+  // And the sync-token path api/mlog.js uses is still tried before OAuth, so a
+  // Shortcut token keeps working on the dashboard API too.
+  const mlog = read('../api/mlog.js')
+  const syncTokenAt = mlog.indexOf('await userForSyncToken(token)')
+  const oauthAt = mlog.indexOf('verifyAccessToken(token, requiredScopes)')
+  assert.ok(syncTokenAt > 0 && oauthAt > syncTokenAt, 'the sync token is still tried first')
+})
+
 test('the iOS app and the server agree on the protocol constants', () => {
   const api = read('../ios/HealthLogger/Sources/FuelAPI.swift')
   const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
