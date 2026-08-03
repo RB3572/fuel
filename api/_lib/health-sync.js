@@ -259,7 +259,7 @@ async function ingest(userId, body) {
       INSERT INTO hk_quantity_samples (user_id, hk_uuid, type, value, unit, start_at, end_at, source, device, metadata)
       SELECT ${userId}, (x->>'uuid')::uuid, x->>'type', (x->>'value')::double precision, x->>'unit',
              (x->>'start')::timestamptz, (x->>'end')::timestamptz, x->>'source', x->>'device',
-             coalesce(x->'metadata', '{}'::jsonb)
+             coalesce(nullif(x->'metadata', 'null'::jsonb), '{}'::jsonb)
       FROM jsonb_array_elements(${JSON.stringify(cleanQuantity)}::jsonb) AS x
       ON CONFLICT (user_id, hk_uuid) DO UPDATE SET
         value = EXCLUDED.value, unit = EXCLUDED.unit, end_at = EXCLUDED.end_at, metadata = EXCLUDED.metadata
@@ -274,7 +274,7 @@ async function ingest(userId, body) {
       INSERT INTO hk_category_samples (user_id, hk_uuid, type, value, value_name, start_at, end_at, source, device, metadata)
       SELECT ${userId}, (x->>'uuid')::uuid, x->>'type', (x->>'value')::integer, x->>'valueName',
              (x->>'start')::timestamptz, (x->>'end')::timestamptz, x->>'source', x->>'device',
-             coalesce(x->'metadata', '{}'::jsonb)
+             coalesce(nullif(x->'metadata', 'null'::jsonb), '{}'::jsonb)
       FROM jsonb_array_elements(${JSON.stringify(cleanCategory)}::jsonb) AS x
       ON CONFLICT (user_id, hk_uuid) DO UPDATE SET
         value = EXCLUDED.value, value_name = EXCLUDED.value_name, end_at = EXCLUDED.end_at, metadata = EXCLUDED.metadata
@@ -292,7 +292,7 @@ async function ingest(userId, body) {
              (x->>'duration')::double precision, (x->>'activeEnergy')::double precision,
              (x->>'distance')::double precision, (x->>'elevation')::double precision,
              (x->>'averageHeartRate')::double precision, x->>'source', x->>'device',
-             x->'route', coalesce(x->'metadata', '{}'::jsonb)
+             nullif(x->'route', 'null'::jsonb), coalesce(nullif(x->'metadata', 'null'::jsonb), '{}'::jsonb)
       FROM jsonb_array_elements(${JSON.stringify(cleanWorkouts)}::jsonb) AS x
       ON CONFLICT (user_id, hk_uuid) DO UPDATE SET
         activity_type = EXCLUDED.activity_type, end_at = EXCLUDED.end_at, duration_s = EXCLUDED.duration_s,
@@ -308,7 +308,7 @@ async function ingest(userId, body) {
   if (cleanClinical.length) {
     const rows = await db`
       INSERT INTO hk_clinical_records (user_id, hk_uuid, type, fhir)
-      SELECT ${userId}, (x->>'uuid')::uuid, x->>'type', coalesce(x->'fhir', '{}'::jsonb)
+      SELECT ${userId}, (x->>'uuid')::uuid, x->>'type', coalesce(nullif(x->'fhir', 'null'::jsonb), '{}'::jsonb)
       FROM jsonb_array_elements(${JSON.stringify(cleanClinical)}::jsonb) AS x
       ON CONFLICT (user_id, hk_uuid) DO UPDATE SET type = EXCLUDED.type, fhir = EXCLUDED.fhir
       RETURNING id

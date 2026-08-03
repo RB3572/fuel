@@ -43,7 +43,15 @@ struct ContentView: View {
                     } else {
                         Button {
                             Task {
-                                try? await SyncEngine.shared.requestAuthorization()
+                                do {
+                                    try await SyncEngine.shared.requestAuthorization()
+                                } catch {
+                                    // Never claim access we do not have: a silent failure here
+                                    // means every later sync finds nothing and the app looks
+                                    // healthy while uploading empty pages forever.
+                                    store.status = .failed("Health access failed: \(error.localizedDescription)")
+                                    return
+                                }
                                 authorized = true
                                 UserDefaults.standard.set(true, forKey: "hkAuthorized")
                                 BackgroundSync.enableHealthKitDelivery()

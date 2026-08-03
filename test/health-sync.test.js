@@ -64,6 +64,16 @@ test('versioning, batching bounds, and anchor mirroring are enforced', () => {
   assert.match(sync, /health_sync_sessions/)
 })
 
+test('a JSON null in the payload is stored as SQL NULL, not the jsonb string "null"', () => {
+  // Caught on a real device: a workout with no GPS sends route: null, and `x->'route'`
+  // yields jsonb 'null' rather than SQL NULL — so `route IS NOT NULL` matched every
+  // routeless workout. nullif() collapses it before it reaches the column.
+  for (const field of ['route', 'metadata', 'fhir']) {
+    assert.match(sync, new RegExp(`nullif\\(x->'${field}', 'null'::jsonb\\)`),
+      `${field} must collapse a JSON null to SQL NULL`)
+  }
+})
+
 test('the legacy Shortcut import is untouched', () => {
   const legacy = read('../api/health/import.js')
   assert.match(legacy, /PARSER_VERSION = 14/)
