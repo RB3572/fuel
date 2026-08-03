@@ -25,6 +25,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>2</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Health Logger reads your Apple Health data — activity, heart, sleep, body, vitals, workouts and mobility — and securely syncs it to your private Fuel dashboard. Nothing is shared with anyone else.</string>
 	<key>NSHealthUpdateUsageDescription</key>

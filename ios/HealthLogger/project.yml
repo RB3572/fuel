@@ -32,6 +32,10 @@ targets:
         NSHealthUpdateUsageDescription: >-
           Health Logger only reads Health data; it never writes any. iOS requires this
           text to be present.
+        # The app implements no encryption of its own: HTTPS comes from URLSession and
+        # the token sits in the Keychain, both Apple's. Declaring it here means App Store
+        # Connect stops asking the export-compliance question on every upload.
+        ITSAppUsesNonExemptEncryption: false
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
           - com.labloggercompany.healthlogger.refresh
