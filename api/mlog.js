@@ -3,7 +3,7 @@ import { authenticatedSession, appUrl } from './_lib/google.js'
 import { methodNotAllowed, sendJson } from './_lib/http.js'
 import { handleMealPlan } from './_lib/meal-plan.js'
 import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
-import { authorizationServerMetadata } from './_lib/mcp-auth.js'
+import { authorizationServerMetadata, verifyAccessToken } from './_lib/mcp-auth.js'
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
@@ -121,7 +121,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const auth = await authenticatedUser(req)
+    const auth = await authenticatedUser(req, req.method === 'GET' ? ['fuel:read'] : ['fuel:write'])
     if (!auth) {
       sendJson(res, 401, { error: 'Sign in or provide a valid Fuel bearer token.' })
       return
@@ -753,12 +753,18 @@ function routeFromRequest(req) {
   }
 }
 
-async function authenticatedUser(req) {
+async function authenticatedUser(req, requiredScopes = []) {
   const authorization = String(req.headers.authorization || '')
   const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
   if (token) {
+    // Two kinds of bearer are valid here. The long-lived sync token is what the
+    // Health Logger and Shortcut use. An OAuth access token is what a real client —
+    // the Fuel iOS app, or an MCP client — presents, and it carries scopes, so a
+    // read-only grant cannot be used to write.
     const user = await userForSyncToken(token).catch(() => null)
-    return user ? { id: user.id, cookie: null } : null
+    if (user) return { id: user.id, cookie: null }
+    const granted = verifyAccessToken(token, requiredScopes)
+    return granted ? { id: granted.userId, cookie: null } : null
   }
 
   const { session, cookie } = await authenticatedSession(req)

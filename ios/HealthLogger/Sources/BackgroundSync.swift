@@ -17,8 +17,12 @@ import UIKit
 // nothing new: each anchored query returns empty and no upload happens.
 
 enum BackgroundSync {
-    static let refreshTaskID = "com.labloggercompany.healthlogger.refresh"
-    static let fullSyncTaskID = "com.labloggercompany.healthlogger.fullsync"
+    // Derived from the bundle ID so this file can be shared by both apps without
+    // either one registering the other's identifiers. Health Logger still gets
+    // com.labloggercompany.healthlogger.refresh, exactly as its Info.plist declares.
+    private static let bundleID = Bundle.main.bundleIdentifier ?? "com.labloggercompany.fuel"
+    static let refreshTaskID = bundleID + ".refresh"
+    static let fullSyncTaskID = bundleID + ".fullsync"
 
     // Must run before the app finishes launching (called from HealthLoggerApp.init).
     static func registerTasks() {

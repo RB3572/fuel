@@ -1,0 +1,73 @@
+# XcodeGen spec — `xcodegen generate` in this directory produces Fuel.xcodeproj.
+#
+# iOS 26 because the AI runs on device through the FoundationModels framework: no
+# Gemini, no network round trip, no quota, and food photos never leave the phone.
+#
+# The HealthKit replication engine is shared with Health Logger by source rather than
+# copied. Fuel talks to the same endpoint with the same protocol, so a second
+# implementation would only be a second thing to keep correct.
+name: Fuel
+options:
+  bundleIdPrefix: com.labloggercompany
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+targets:
+  Fuel:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - Resources/Assets.xcassets
+      - path: ../HealthLogger/Sources/HealthKitCatalog.swift
+      - path: ../HealthLogger/Sources/SyncEngine.swift
+      - path: ../HealthLogger/Sources/SyncSink.swift
+      - path: ../HealthLogger/Sources/SyncStore.swift
+      - path: ../HealthLogger/Sources/FuelAPI.swift
+      - path: ../HealthLogger/Sources/BackgroundSync.swift
+    entitlements:
+      path: Resources/Fuel.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.background-delivery: true
+        com.apple.developer.healthkit.access: []
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Fuel
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+        NSHealthShareUsageDescription: >-
+          Fuel reads your Apple Health data — activity, heart, sleep, body, vitals and
+          workouts — so your dashboard reflects what you actually did today.
+        NSHealthUpdateUsageDescription: >-
+          Fuel only reads Health data; it never writes any. iOS requires this text to
+          be present.
+        NSCameraUsageDescription: >-
+          Take a photo of a meal and Fuel identifies it and estimates its nutrition
+          on device, without sending the picture anywhere.
+        NSLocationWhenInUseUsageDescription: >-
+          Fuel records where you eat so it can show your places heatmap. Location
+          never leaves your Fuel account.
+        # The OAuth redirect comes back to fuel://oauth/callback.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.labloggercompany.fuel.oauth
+            CFBundleURLSchemes: [fuel]
+        UIBackgroundModes: [fetch, processing]
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.labloggercompany.fuel.refresh
+          - com.labloggercompany.fuel.fullsync
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.labloggercompany.fuel
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 9VVDB6UALA
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"
