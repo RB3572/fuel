@@ -31,6 +31,7 @@ targets:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.background-delivery: true
         com.apple.developer.healthkit.access: []
+        com.apple.developer.applesignin: [Default]
     info:
       path: Resources/Info.plist
       properties:
@@ -52,10 +53,12 @@ targets:
         NSLocationWhenInUseUsageDescription: >-
           Fuel records where you eat so it can show your places heatmap. Location
           never leaves your Fuel account.
-        # The OAuth redirect comes back to fuel://oauth/callback.
+        # Google's iOS OAuth client redirects to the reversed client ID. Fill both in
+        # from the iOS client in Google Cloud Console; Sign in with Apple needs neither.
+        GoogleClientID: REPLACE_WITH_IOS_CLIENT_ID.apps.googleusercontent.com
         CFBundleURLTypes:
-          - CFBundleURLName: com.labloggercompany.fuel.oauth
-            CFBundleURLSchemes: [fuel]
+          - CFBundleURLName: com.labloggercompany.fuel.google
+            CFBundleURLSchemes: [com.googleusercontent.apps.REPLACE_WITH_IOS_CLIENT_ID]
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
           - com.labloggercompany.fuel.refresh

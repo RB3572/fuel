@@ -9,7 +9,8 @@ import HealthKit
 // /api/health/sync/v1. One app instead of two, and the dashboard reflects a workout
 // minutes after it ends without the user doing anything.
 //
-// Auth is OAuth against the website's own authorization server — no pasted tokens.
+// Sign-in is the website's own Google account, or Apple — verified server-side and
+// matched on the same email, so the app and the site are the same account.
 
 struct ChatMessage: Identifiable, Equatable {
     enum Role: Equatable { case user, coach }
@@ -39,23 +40,23 @@ final class AppStore {
     var logging = false
     var lastLogged: String?
 
-    let oauth: OAuthSession
+    let auth: SignIn
 
     var baseURL: String {
         didSet {
             UserDefaults.standard.set(baseURL, forKey: "fuelBaseURL")
             syncEndpointFromBase()
-            oauth.updateBaseURL(baseURL)
+            auth.updateBaseURL(baseURL)
         }
     }
 
     var healthAuthorized = UserDefaults.standard.bool(forKey: "hkAuthorized")
-    var isSignedIn: Bool { oauth.isSignedIn }
+    var isSignedIn: Bool { auth.isSignedIn }
 
     private init() {
         let url = UserDefaults.standard.string(forKey: "fuelBaseURL") ?? FuelClient.defaultBaseURL
         baseURL = url
-        oauth = OAuthSession(baseURL: url)
+        auth = SignIn(baseURL: url)
         syncEndpointFromBase()
     }
 
@@ -65,11 +66,11 @@ final class AppStore {
         SyncStore.shared.endpoint = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             + "/api/health/sync/v1"
         // The sync engine authenticates with the same OAuth access token.
-        Task { SyncStore.shared.token = await oauth.accessToken() ?? "" }
+        Task { SyncStore.shared.token = await auth.accessToken() ?? "" }
     }
 
     private func client() async throws -> FuelClient {
-        guard let token = await oauth.accessToken() else { throw FuelClientError.notConfigured }
+        guard let token = await auth.accessToken() else { throw FuelClientError.notConfigured }
         SyncStore.shared.token = token
         return try FuelClient(baseURL: baseURL, token: token)
     }
@@ -227,7 +228,7 @@ final class AppStore {
 
     func syncHealth(reason: String) async {
         guard isSignedIn, healthAuthorized else { return }
-        SyncStore.shared.token = await oauth.accessToken() ?? ""
+        SyncStore.shared.token = await auth.accessToken() ?? ""
         _ = await SyncEngine.shared.sync(reason: reason)
         await load()
     }

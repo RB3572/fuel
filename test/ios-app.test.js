@@ -24,15 +24,13 @@ test('the long-lived sync token still works alongside OAuth', () => {
   assert.match(mlog, /if \(user\) return \{ id: user\.id, cookie: null \}/)
 })
 
-test('the iOS app signs in over OAuth with PKCE and never stores a password', () => {
-  const oauth = read('../ios/Fuel/Sources/OAuth.swift')
-  assert.match(oauth, /code_challenge_method/)
-  assert.match(oauth, /S256/)
-  assert.match(oauth, /ASWebAuthenticationSession/)
-  assert.match(oauth, /"scope", value: "fuel:read fuel:write"/)
-  // Public client: dynamic registration, no secret compiled into the app.
-  assert.match(oauth, /"token_endpoint_auth_method": "none"/)
-  assert.doesNotMatch(oauth, /client_secret/)
+test('the iOS app signs in with PKCE and never stores a password', () => {
+  const signIn = read('../ios/Fuel/Sources/SignIn.swift')
+  assert.match(signIn, /code_challenge_method/)
+  assert.match(signIn, /ASWebAuthenticationSession/)
+  assert.match(signIn, /"scope", value: "openid email profile"/)
+  // Public client: no secret compiled into the app.
+  assert.doesNotMatch(signIn, /client_secret/)
 })
 
 test('the AI runs on device, not through Gemini', () => {

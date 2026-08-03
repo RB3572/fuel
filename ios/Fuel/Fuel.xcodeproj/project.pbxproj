@@ -10,10 +10,10 @@
 		028DDE52F36882D6BEECDFEA /* FuelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */; };
 		12239BAF7F793D39DE03D1CC /* SyncSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1833EA7687ECA1C1CF14B0 /* SyncSink.swift */; };
 		1B44A3DEBEC4CF4DFD8C8B5E /* FuelAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E99656AED251FEA35F2F100C /* FuelAPI.swift */; };
-		1D376BD4D3352004C237AECA /* OAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11B888043DD105824C1C929 /* OAuth.swift */; };
 		38D46A42074556FEC03E0C9B /* CoachView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B5B04656BF14A3B462B73 /* CoachView.swift */; };
 		39844E003CBA7FE8A166ED21 /* CameraLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E762C9F186DC68F711045162 /* CameraLogView.swift */; };
 		436864E08EC6C8A211EB8CCA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 994F8C24D9312F72DAFA2A12 /* Assets.xcassets */; };
+		55A5DC93B5930CFD60DC26F0 /* SignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FC3C7B7D4B5951095EF487C /* SignIn.swift */; };
 		7F8F36885619CD796831614C /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4101886BC814B0DD968C954D /* TrendsView.swift */; };
 		8CEECA600976103398056182 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F75273FDA28EE1A341AA5A3 /* TodayView.swift */; };
 		8D40B831CB1C0AED77CFA1FE /* OnDeviceAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6C2EA6227B2FD6E2349E050 /* OnDeviceAI.swift */; };
@@ -36,6 +36,7 @@
 		7AD1C0EAF43B21F21654B0AB /* SyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStore.swift; sourceTree = "<group>"; };
 		7C5B5B04656BF14A3B462B73 /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachView.swift; sourceTree = "<group>"; };
 		8F75273FDA28EE1A341AA5A3 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
+		8FC3C7B7D4B5951095EF487C /* SignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignIn.swift; sourceTree = "<group>"; };
 		93C6546C861D9789FFD709B0 /* SyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngine.swift; sourceTree = "<group>"; };
 		994F8C24D9312F72DAFA2A12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C440567FECEB2E771E84314D /* BackgroundSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSync.swift; sourceTree = "<group>"; };
@@ -44,7 +45,6 @@
 		E97BDA97A18630C812B6EE9A /* FuelClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuelClient.swift; sourceTree = "<group>"; };
 		E99656AED251FEA35F2F100C /* FuelAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuelAPI.swift; sourceTree = "<group>"; };
 		EB1833EA7687ECA1C1CF14B0 /* SyncSink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncSink.swift; sourceTree = "<group>"; };
-		F11B888043DD105824C1C929 /* OAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuth.swift; sourceTree = "<group>"; };
 		F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuelApp.swift; sourceTree = "<group>"; };
 		F826CB7F5C5FF43B0F03E3AB /* Fuel.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Fuel.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -89,8 +89,8 @@
 				F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */,
 				E97BDA97A18630C812B6EE9A /* FuelClient.swift */,
 				64C7CF13A8704D2FAD979B65 /* MoreView.swift */,
-				F11B888043DD105824C1C929 /* OAuth.swift */,
 				C6C2EA6227B2FD6E2349E050 /* OnDeviceAI.swift */,
+				8FC3C7B7D4B5951095EF487C /* SignIn.swift */,
 				41AAF989E677DB59A259D7D6 /* Theme.swift */,
 				8F75273FDA28EE1A341AA5A3 /* TodayView.swift */,
 				4101886BC814B0DD968C954D /* TrendsView.swift */,
@@ -204,8 +204,8 @@
 				F948E38B03D9AC4378588BE2 /* FuelClient.swift in Sources */,
 				B35DE1A8E1AA67AD06DF0D9D /* HealthKitCatalog.swift in Sources */,
 				A172ECC6794EE727B2DC667E /* MoreView.swift in Sources */,
-				1D376BD4D3352004C237AECA /* OAuth.swift in Sources */,
 				8D40B831CB1C0AED77CFA1FE /* OnDeviceAI.swift in Sources */,
+				55A5DC93B5930CFD60DC26F0 /* SignIn.swift in Sources */,
 				FB049B1CEED760BC8BEF28D1 /* SyncEngine.swift in Sources */,
 				12239BAF7F793D39DE03D1CC /* SyncSink.swift in Sources */,
 				E186007FB9202A6046BEB343 /* SyncStore.swift in Sources */,

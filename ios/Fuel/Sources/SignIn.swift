@@ -1,0 +1,295 @@
+import Foundation
+import AuthenticationServices
+import CryptoKit
+import UIKit
+
+// Signing in with the same credentials as the website.
+//
+// The site keys every user row on their email address, so proving that address is all
+// that matters. Two ways to do it, both native:
+//
+//   • Google — the system browser sheet on accounts.google.com. Same account picker the
+//     website uses, so it is literally the same sign-in, not a Fuel consent screen in
+//     front of it.
+//   • Apple — the system sheet, no browser at all.
+//
+// Either way the phone ends up holding an ID token, posts it to /api/auth/native, and
+// gets back an ordinary Fuel token pair. The app never sees a password.
+
+@MainActor
+@Observable
+final class SignIn: NSObject {
+    struct Tokens: Codable {
+        var accessToken: String
+        var refreshToken: String?
+        var expiresAt: Date
+        var email: String?
+        var name: String?
+
+        var isFresh: Bool { expiresAt > Date().addingTimeInterval(60) }
+    }
+
+    private(set) var tokens: Tokens?
+    private(set) var busy = false
+    var error: String?
+
+    var isSignedIn: Bool { tokens != nil }
+    var email: String? { tokens?.email }
+
+    private var baseURL: String
+    private var webSession: ASWebAuthenticationSession?
+    private var appleContinuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
+    private var appleNonce: String?
+
+    /// Registered in Info.plist. Google requires the reversed client ID as the scheme.
+    private var googleClientID: String? {
+        Bundle.main.object(forInfoDictionaryKey: "GoogleClientID") as? String
+    }
+
+    init(baseURL: String) {
+        self.baseURL = baseURL
+        super.init()
+        tokens = Self.load()
+    }
+
+    func updateBaseURL(_ url: String) { baseURL = url }
+
+    func signOut() {
+        tokens = nil
+        Keychain.set("", for: "fuel-tokens")
+    }
+
+    /// A valid access token, refreshed if it has aged out.
+    func accessToken() async -> String? {
+        guard let tokens else { return nil }
+        if tokens.isFresh { return tokens.accessToken }
+        guard let refresh = tokens.refreshToken else { return nil }
+        try? await refreshTokens(refresh)
+        return self.tokens?.accessToken
+    }
+
+    // MARK: - Apple
+
+    func signInWithApple() async {
+        busy = true
+        error = nil
+        defer { busy = false }
+        do {
+            let nonce = Self.randomURLSafe(32)
+            appleNonce = nonce
+            let request = ASAuthorizationAppleIDProvider().createRequest()
+            request.requestedScopes = [.email, .fullName]
+            // Apple signs the SHA-256 of the nonce into the token; the server checks the
+            // token's signature, and this ties it to this specific request.
+            request.nonce = Self.sha256(nonce)
+
+            let credential = try await performAppleRequest(request)
+            guard let identityToken = credential.identityToken,
+                  let token = String(data: identityToken, encoding: .utf8) else {
+                throw NSError(domain: "Fuel", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Apple did not return an identity token."])
+            }
+            // Apple sends the email and name exactly once, on first authorization, so
+            // they are forwarded now or never.
+            let name = [credential.fullName?.givenName, credential.fullName?.familyName]
+                .compactMap { $0 }.joined(separator: " ")
+            try await exchange(provider: "apple", idToken: token,
+                               email: credential.email, name: name.isEmpty ? nil : name)
+        } catch {
+            if (error as NSError).code == ASAuthorizationError.canceled.rawValue { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func performAppleRequest(_ request: ASAuthorizationAppleIDRequest) async throws -> ASAuthorizationAppleIDCredential {
+        try await withCheckedThrowingContinuation { continuation in
+            appleContinuation = continuation
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = self
+            controller.presentationContextProvider = self
+            controller.performRequests()
+        }
+    }
+
+    // MARK: - Google
+
+    func signInWithGoogle() async {
+        busy = true
+        error = nil
+        defer { busy = false }
+        guard let clientID = googleClientID, !clientID.isEmpty, !clientID.hasPrefix("REPLACE") else {
+            error = "Google sign-in isn't configured yet. Add an iOS OAuth client ID to Info.plist, or use Sign in with Apple."
+            return
+        }
+        do {
+            // Google's iOS convention: the redirect scheme is the client ID reversed.
+            let scheme = clientID.split(separator: ".").reversed().joined(separator: ".")
+            let redirect = "\(scheme):/oauth2redirect"
+            let verifier = Self.randomURLSafe(64)
+
+            var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
+            components.queryItems = [
+                .init(name: "client_id", value: clientID),
+                .init(name: "redirect_uri", value: redirect),
+                .init(name: "response_type", value: "code"),
+                .init(name: "scope", value: "openid email profile"),
+                .init(name: "code_challenge", value: Self.sha256(verifier)),
+                .init(name: "code_challenge_method", value: "S256"),
+            ]
+
+            let callback = try await webAuth(url: components.url!, scheme: scheme)
+            guard let code = URLComponents(url: callback, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "code" })?.value else {
+                throw NSError(domain: "Fuel", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "Google did not return an authorization code."])
+            }
+
+            // Exchange at Google for the ID token. A public iOS client has no secret.
+            var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = [
+                "client_id": clientID, "code": code, "code_verifier": verifier,
+                "grant_type": "authorization_code", "redirect_uri": redirect,
+            ].map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0.value)" }
+                .joined(separator: "&").data(using: .utf8)
+
+            let (data, _) = try await URLSession.shared.data(for: request)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let idToken = object["id_token"] as? String else {
+                throw NSError(domain: "Fuel", code: 3,
+                              userInfo: [NSLocalizedDescriptionKey: "Google did not return an identity token."])
+            }
+            try await exchange(provider: "google", idToken: idToken, email: nil, name: nil)
+        } catch {
+            if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func webAuth(url: URL, scheme: String) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: scheme) { callback, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let callback { continuation.resume(returning: callback) }
+                else { continuation.resume(throwing: NSError(domain: "Fuel", code: 4)) }
+            }
+            session.presentationContextProvider = self
+            webSession = session
+            session.start()
+        }
+    }
+
+    // MARK: - Fuel
+
+    /// Hand the identity token to Fuel, which verifies it and returns its own tokens.
+    private func exchange(provider: String, idToken: String, email: String?, name: String?) async throws {
+        var payload: [String: Any] = ["provider": provider, "idToken": idToken]
+        if let email { payload["email"] = email }
+        if let name { payload["name"] = name }
+
+        var request = URLRequest(url: URL(string: baseURL + "/api/auth/native")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let access = object?["access_token"] as? String else {
+            throw NSError(domain: "Fuel", code: 5, userInfo: [
+                NSLocalizedDescriptionKey: (object?["error"] as? String) ?? "Fuel could not verify that sign-in.",
+            ])
+        }
+        let user = object?["user"] as? [String: Any]
+        let next = Tokens(accessToken: access,
+                          refreshToken: object?["refresh_token"] as? String,
+                          expiresAt: Date().addingTimeInterval((object?["expires_in"] as? Double) ?? 3600),
+                          email: user?["email"] as? String ?? email,
+                          name: user?["name"] as? String ?? name)
+        tokens = next
+        Self.save(next)
+    }
+
+    private func refreshTokens(_ refreshToken: String) async throws {
+        var request = URLRequest(url: URL(string: baseURL + "/oauth/token")!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "grant_type=refresh_token&refresh_token=\(refreshToken)&client_id=fuel-native"
+            .data(using: .utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let access = object["access_token"] as? String else { return }
+        var next = tokens
+        next?.accessToken = access
+        next?.refreshToken = object["refresh_token"] as? String ?? tokens?.refreshToken
+        next?.expiresAt = Date().addingTimeInterval((object["expires_in"] as? Double) ?? 3600)
+        if let next { tokens = next; Self.save(next) }
+    }
+
+    // MARK: - Storage & crypto
+
+    private static func save(_ tokens: Tokens) {
+        guard let data = try? JSONEncoder().encode(tokens),
+              let text = String(data: data, encoding: .utf8) else { return }
+        Keychain.set(text, for: "fuel-tokens")
+    }
+
+    private static func load() -> Tokens? {
+        guard let text = Keychain.get("fuel-tokens"), !text.isEmpty,
+              let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Tokens.self, from: data)
+    }
+
+    private static func randomURLSafe(_ bytes: Int) -> String {
+        var raw = [UInt8](repeating: 0, count: bytes)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes, &raw)
+        return Data(raw).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func sha256(_ value: String) -> String {
+        let digest = SHA256.hash(data: Data(value.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+extension SignIn: ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding,
+                  ASWebAuthenticationPresentationContextProviding {
+    nonisolated func authorizationController(controller: ASAuthorizationController,
+                                             didCompleteWithAuthorization authorization: ASAuthorization) {
+        Task { @MainActor in
+            if let credential = authorization.credential as? ASAuthorizationAppleIDCredential {
+                appleContinuation?.resume(returning: credential)
+            } else {
+                appleContinuation?.resume(throwing: NSError(domain: "Fuel", code: 6))
+            }
+            appleContinuation = nil
+        }
+    }
+
+    nonisolated func authorizationController(controller: ASAuthorizationController,
+                                             didCompleteWithError error: Error) {
+        Task { @MainActor in
+            appleContinuation?.resume(throwing: error)
+            appleContinuation = nil
+        }
+    }
+
+    nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        MainActor.assumeIsolated { Self.anchor() }
+    }
+
+    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        MainActor.assumeIsolated { Self.anchor() }
+    }
+
+    @MainActor
+    private static func anchor() -> ASPresentationAnchor {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first?.keyWindow ?? ASPresentationAnchor()
+    }
+}

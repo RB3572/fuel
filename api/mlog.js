@@ -19,6 +19,7 @@ import { getRolling24h } from './_lib/rolling-energy.js'
 import { callGemini, GEMINI_MODEL_FALLBACKS, responseText } from './_lib/meal-plan.js'
 import { logPhoto } from './_lib/quick-log.js'
 import { handleHealthSyncV1 } from './_lib/health-sync.js'
+import { handleAppleCallback, handleAppleStart, handleNativeAuth } from './_lib/native-auth.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -104,6 +105,18 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'health-sync-v1') {
     await handleHealthSyncV1(req, res)
+    return
+  }
+  if (integrationRoute === 'native-auth') {
+    await handleNativeAuth(req, res)
+    return
+  }
+  if (integrationRoute === 'apple-start') {
+    handleAppleStart(req, res)
+    return
+  }
+  if (integrationRoute === 'apple-callback') {
+    await handleAppleCallback(req, res)
     return
   }
   if (integrationRoute === 'meal-plan') {

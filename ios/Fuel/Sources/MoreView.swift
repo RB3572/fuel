@@ -71,20 +71,23 @@ struct MoreView: View {
                 }
 
                 Section {
-                    Label("Signed in", systemImage: "person.crop.circle.fill")
-                        .foregroundStyle(.green)
+                    LabeledContent {
+                        Text(store.auth.email ?? "Signed in").font(.footnote)
+                    } label: {
+                        Label("Account", systemImage: "person.crop.circle.fill")
+                    }
                     TextField("Server", text: $store.baseURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
                         .font(.system(.footnote, design: .monospaced))
                     Button(role: .destructive) {
-                        store.oauth.signOut()
+                        store.auth.signOut()
                     } label: { Text("Sign out") }
                 } header: {
                     Text("Account")
                 } footer: {
-                    Text("Signed in with the same account as the website, over OAuth. Fuel talks to the same database — point it at your own server if you self-host.")
+                    Text("The same account as the website — sign in with Google or Apple and you see the same data. Point Fuel at your own server if you self-host.")
                 }
 
                 Section {

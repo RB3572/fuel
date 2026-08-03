@@ -1,5 +1,6 @@
 import SwiftUI
 import BackgroundTasks
+import AuthenticationServices
 
 @main
 struct FuelApp: App {
@@ -60,8 +61,8 @@ struct RootView: View {
     }
 }
 
-/// First run: sign in with the same OAuth server the website uses. The password and
-/// the consent screen both live in the system browser; the app only ever sees a token.
+/// First run. The same credentials as the website: the Google account you already use,
+/// or Apple. Both are native sheets — there is no Fuel consent screen in the way.
 struct SetupView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.colorScheme) private var scheme
@@ -69,7 +70,8 @@ struct SetupView: View {
     var body: some View {
         ZStack {
             Palette.background(scheme).ignoresSafeArea()
-            VStack(spacing: 22) {
+            VStack(spacing: 20) {
+                Spacer()
                 BoltMark().frame(width: 76, height: 76)
                 VStack(spacing: 6) {
                     Text("Fuel").font(.system(size: 34, weight: .bold, design: .rounded))
@@ -77,33 +79,52 @@ struct SetupView: View {
                     Text("Your dashboard, on your phone.")
                         .font(.system(size: 15)).foregroundStyle(Palette.muted(scheme))
                 }
-                Button {
-                    Task {
-                        await store.oauth.signIn()
-                        await store.load()
-                        await store.loadContext()
-                    }
-                } label: {
-                    HStack {
-                        if store.oauth.signingIn { ProgressView().controlSize(.small).tint(.white) }
-                        Text(store.oauth.signingIn ? "Signing in…" : "Sign in to Fuel")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(store.oauth.signingIn)
+                Spacer()
 
-                Text("Opens fuel.rishib.com to sign in. Fuel never sees your password.")
+                SignInWithAppleButton(.signIn) { _ in } onCompletion: { _ in }
+                    .signInWithAppleButtonStyle(scheme == .dark ? .white : .black)
+                    .frame(height: 50)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // The real request runs through our own controller so the identity
+                    // token can be forwarded to Fuel; the button is the system chrome.
+                    .allowsHitTesting(false)
+                    .overlay(
+                        Button { Task { await store.auth.signInWithApple(); await afterSignIn() } } label: {
+                            Color.clear
+                        }
+                    )
+
+                Button {
+                    Task { await store.auth.signInWithGoogle(); await afterSignIn() }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "g.circle.fill").font(.system(size: 19))
+                        Text("Continue with Google").font(.system(size: 17, weight: .medium))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.bordered)
+                .tint(Palette.ink(scheme))
+
+                if store.auth.busy { ProgressView().padding(.top, 4) }
+
+                Text("Use the same account as fuel.rishib.com and you'll see the same data.")
                     .font(.caption).foregroundStyle(Palette.muted(scheme))
                     .multilineTextAlignment(.center)
 
-                if let error = store.oauth.error {
+                if let error = store.auth.error {
                     Text(error).font(.caption).foregroundStyle(.orange).multilineTextAlignment(.center)
                 }
+                Spacer().frame(height: 20)
             }
             .padding(24)
         }
+    }
+
+    private func afterSignIn() async {
+        guard store.isSignedIn else { return }
+        await store.load()
+        await store.loadContext()
     }
 }
 
