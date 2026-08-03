@@ -21,6 +21,7 @@ struct FuelApp: App {
                 .tint(Palette.flameMid)
                 .task {
                     await store.load()
+                    await store.loadEditableState()
                     await store.loadContext()
                     if store.healthAuthorized { BackgroundSync.enableHealthKitDelivery() }
                     await store.syncHealth(reason: "app open")

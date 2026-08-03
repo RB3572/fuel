@@ -10,6 +10,7 @@
 		028DDE52F36882D6BEECDFEA /* FuelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */; };
 		12239BAF7F793D39DE03D1CC /* SyncSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1833EA7687ECA1C1CF14B0 /* SyncSink.swift */; };
 		1B44A3DEBEC4CF4DFD8C8B5E /* FuelAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E99656AED251FEA35F2F100C /* FuelAPI.swift */; };
+		1E571C2C2FA20A61DDC59D97 /* EditSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07B4E4F9F82543B457C1A074 /* EditSheets.swift */; };
 		38D46A42074556FEC03E0C9B /* CoachView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B5B04656BF14A3B462B73 /* CoachView.swift */; };
 		39844E003CBA7FE8A166ED21 /* CameraLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E762C9F186DC68F711045162 /* CameraLogView.swift */; };
 		436864E08EC6C8A211EB8CCA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 994F8C24D9312F72DAFA2A12 /* Assets.xcassets */; };
@@ -28,6 +29,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		07B4E4F9F82543B457C1A074 /* EditSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditSheets.swift; sourceTree = "<group>"; };
 		4101886BC814B0DD968C954D /* TrendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendsView.swift; sourceTree = "<group>"; };
 		41AAF989E677DB59A259D7D6 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		4543D27AD1D0A03A8E539621 /* HealthKitCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitCatalog.swift; sourceTree = "<group>"; };
@@ -86,6 +88,7 @@
 				4F20155033B25A23515C87FF /* AppStore.swift */,
 				E762C9F186DC68F711045162 /* CameraLogView.swift */,
 				7C5B5B04656BF14A3B462B73 /* CoachView.swift */,
+				07B4E4F9F82543B457C1A074 /* EditSheets.swift */,
 				F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */,
 				E97BDA97A18630C812B6EE9A /* FuelClient.swift */,
 				64C7CF13A8704D2FAD979B65 /* MoreView.swift */,
@@ -199,6 +202,7 @@
 				DC98EADF5AAC4C2C6733E8D0 /* BackgroundSync.swift in Sources */,
 				39844E003CBA7FE8A166ED21 /* CameraLogView.swift in Sources */,
 				38D46A42074556FEC03E0C9B /* CoachView.swift in Sources */,
+				1E571C2C2FA20A61DDC59D97 /* EditSheets.swift in Sources */,
 				1B44A3DEBEC4CF4DFD8C8B5E /* FuelAPI.swift in Sources */,
 				028DDE52F36882D6BEECDFEA /* FuelApp.swift in Sources */,
 				F948E38B03D9AC4378588BE2 /* FuelClient.swift in Sources */,

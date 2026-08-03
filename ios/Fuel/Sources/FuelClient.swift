@@ -37,6 +37,11 @@ struct Today: Decodable {
 
 /// One day, whether it's today's summary or a point on the trend line — the server
 /// sends the same shape for both.
+/// The 39 micronutrients the website's detailed-nutrition grid can show. Decoded as a
+/// dictionary rather than 39 properties: the server sends only what was actually
+/// tracked, and the grid renders only what is present.
+typealias Nutrients = [String: Double]
+
 struct DaySummary: Decodable, Identifiable {
     var date: String
     var partialDay: Bool?
@@ -67,6 +72,10 @@ struct DaySummary: Decodable, Identifiable {
     var standMinutes: Double?
     var vo2Max: Double?
     var cardioRecovery: Double?
+    var nutrients: Nutrients?
+    var runningStrideLength: Double?
+    var swimmingDistanceYards: Double?
+    var swimmingStrokes: Double?
 
     var id: String { date }
 }
@@ -85,18 +94,26 @@ struct FoodEntry: Decodable, Identifiable {
     var notes: String?
     var source: String?
     var aiFilled: Bool?
+    var nutrients: Nutrients?
 
-    /// What the AI fill queue considers outstanding: no macros yet, and never filled.
+    /// Must mean the same thing the website's queue means, or the prompt outlives the
+    /// work: an entry the model has already been asked about is finished even if it
+    /// could not supply every field.
     var needsNutrition: Bool {
-        (aiFilled != true) && (calories == nil || protein == nil || carbs == nil || fat == nil)
+        if aiFilled == true { return false }
+        if calories == nil || protein == nil || carbs == nil || fat == nil || fiber == nil { return true }
+        return (nutrients?.isEmpty ?? true)
     }
 }
 
 struct Workout: Decodable, Identifiable {
-    var type: String?
-    var minutes: Double?
-    var calories: Double?
-    var id: String { (type ?? "workout") + String(minutes ?? 0) }
+    var activity: String?
+    var distanceMiles: Double?
+    var swimmingDistanceYards: Double?
+    var strokeCount: Double?
+    var stepCount: Double?
+    var dataQuality: String?
+    var id: String { (activity ?? "workout") + String(distanceMiles ?? 0) + String(stepCount ?? 0) }
 }
 
 struct Supplement: Decodable, Identifiable {
@@ -121,13 +138,55 @@ struct GoalRange: Decodable {
 
 struct Goals: Decodable {
     var calories: GoalRange?
+    var calorieBalancePercent: GoalRange?
     var protein: GoalRange?
     var carbs: GoalRange?
     var fat: GoalRange?
     var fiber: GoalRange?
-    var steps: GoalRange?
+    var move: GoalRange?
     var exercise: GoalRange?
+    var stand: GoalRange?
+    var steps: GoalRange?
     var sleepHours: GoalRange?
+}
+
+/// The flat shape /api/goals reads and writes — the same keys the website's editor uses.
+struct GoalValues: Codable {
+    var calorieBalancePercent: Double?
+    var protein: Double?
+    var carbs: Double?
+    var fat: Double?
+    var fiber: Double?
+    var move: Double?
+    var exercise: Double?
+    var stand: Double?
+    var steps: Double?
+    var sleepHours: Double?
+    var calories: Double?
+}
+
+/// One editable past day, from ?fuel_route=daily-history.
+struct HistoryDay: Decodable, Identifiable {
+    var date: String
+    var totalExpenditure: Double?
+    var restingEnergy: Double?
+    var activeEnergy: Double?
+    var consumed: Double?
+    var consumedLogged: Double?
+    var consumedOverridden: Bool?
+    var id: String { date }
+}
+
+/// Which sections appear, in what order, and which energy boxes are shown.
+struct DashboardLayout: Codable {
+    var order: [String]
+    var hidden: [String]
+    var energyBoxes: [String]
+
+    static let allSections = ["nutrition", "detailedNutrition", "foodConsumed",
+                              "fitness", "workouts", "steps", "vitals", "recovery"]
+    static let allEnergyBoxes = ["totalBurned", "consumed", "active", "resting", "deficit", "rolling24"]
+    static let `default` = DashboardLayout(order: allSections, hidden: [], energyBoxes: allEnergyBoxes)
 }
 
 struct IntradayEnergy: Decodable {
@@ -247,6 +306,53 @@ struct FuelClient {
     /// Places heatmap — the same payload the web app's Places page renders.
     func places(days: Int = 30) async throws -> Data {
         try await send(try request("/api/mlog?fuel_route=places&days=\(days)"))
+    }
+
+    func goals() async throws -> GoalValues {
+        try JSONDecoder().decode(GoalValues.self, from: try await send(try request("/api/goals")))
+    }
+
+    func saveGoals(_ goals: GoalValues) async throws {
+        let data = try JSONEncoder().encode(goals)
+        let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        _ = try await send(try request("/api/goals", method: "PUT", body: body))
+    }
+
+    func history(days: Int = 30) async throws -> [HistoryDay] {
+        struct Response: Decodable { var days: [HistoryDay] }
+        let data = try await send(try request("/api/mlog?fuel_route=daily-history&days=\(days)"))
+        return try JSONDecoder().decode(Response.self, from: data).days
+    }
+
+    /// Overrides one day's energy and intake, exactly as the website's history editor
+    /// does. Sending null for a field clears the override rather than zeroing it.
+    ///
+    /// The server reads body.values, not the bare fields — same shape the browser sends.
+    func saveHistory(date: String, totalExpenditure: Double?, restingEnergy: Double?,
+                     activeEnergy: Double?, consumed: Double?) async throws {
+        let values: [String: Any] = [
+            "totalExpenditure": totalExpenditure ?? NSNull(),
+            "restingEnergy": restingEnergy ?? NSNull(),
+            "activeEnergy": activeEnergy ?? NSNull(),
+            "consumed": consumed ?? NSNull(),
+        ]
+        _ = try await send(try request("/api/mlog?fuel_route=daily-history", method: "PUT",
+                                       body: ["date": date, "values": values]))
+    }
+
+    func layout() async throws -> DashboardLayout {
+        struct Response: Decodable { var layout: DashboardLayout }
+        let data = try await send(try request("/api/mlog?fuel_route=dashboard-layout"))
+        return try JSONDecoder().decode(Response.self, from: data).layout
+    }
+
+    /// The server reads body.layout, not the bare object. Sending it unwrapped answers
+    /// 200 and saves the defaults, which looks like success and is not.
+    func saveLayout(_ layout: DashboardLayout) async throws {
+        let data = try JSONEncoder().encode(layout)
+        let inner = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        _ = try await send(try request("/api/mlog?fuel_route=dashboard-layout", method: "PUT",
+                                       body: ["layout": inner]))
     }
 
     func userContext() async throws -> String {

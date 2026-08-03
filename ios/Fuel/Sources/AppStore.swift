@@ -40,6 +40,13 @@ final class AppStore {
     var logging = false
     var lastLogged: String?
 
+    /// The website's editable dashboard state: which sections show and in what order,
+    /// the goal targets, and the per-day energy overrides. All server-backed, so the
+    /// phone and the browser agree.
+    var layout = DashboardLayout.default
+    var goalValues = GoalValues()
+    var history: [HistoryDay] = []
+
     let auth: SignIn
 
     var baseURL: String {
@@ -87,6 +94,55 @@ final class AppStore {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// Layout and goals ride alongside the dashboard rather than blocking it — a slow
+    /// goals read should not hold up the numbers.
+    func loadEditableState() async {
+        guard isSignedIn else { return }
+        async let layoutResult = try? client().layout()
+        async let goalsResult = try? client().goals()
+        if let value = await layoutResult { layout = value }
+        if let value = await goalsResult { goalValues = value }
+    }
+
+    func saveLayout(_ next: DashboardLayout) async {
+        layout = next
+        do { try await client().saveLayout(next) } catch { self.error = error.localizedDescription }
+    }
+
+    func saveGoals(_ next: GoalValues) async {
+        goalValues = next
+        do {
+            try await client().saveGoals(next)
+            await load()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func loadHistory() async {
+        guard isSignedIn else { return }
+        history = (try? await client().history()) ?? []
+    }
+
+    func saveHistory(date: String, totalExpenditure: Double?, restingEnergy: Double?,
+                     activeEnergy: Double?, consumed: Double?) async {
+        do {
+            try await client().saveHistory(date: date, totalExpenditure: totalExpenditure,
+                                           restingEnergy: restingEnergy, activeEnergy: activeEnergy,
+                                           consumed: consumed)
+            await loadHistory()
+            await load()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func updateFood(_ entry: FoodEntry, description: String, meal: String?, portion: String?,
+                    calories: Double?, protein: Double?, carbs: Double?, fat: Double?, fiber: Double?) async {
+        do {
+            try await client().updateFood(id: entry.id, description: description, meal: meal, portion: portion,
+                                          calories: calories, protein: protein, carbs: carbs,
+                                          fat: fat, fiber: fiber)
+            await load()
+        } catch { self.error = error.localizedDescription }
     }
 
     func loadContext() async {

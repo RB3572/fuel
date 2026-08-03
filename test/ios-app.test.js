@@ -70,3 +70,48 @@ test('logging opens the camera, with typing one tap away', () => {
   assert.match(camera, /store\.logPhoto\(data, note: nil\)/)
   assert.match(camera, /askingForContext = true/)
 })
+
+test('the dashboard replicates the website: every section, box and nutrient', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  const web = read('../src/App.tsx')
+
+  // The same eight sections, by the same keys, so a layout saved on either surface
+  // means the same thing on the other.
+  for (const key of ['nutrition', 'detailedNutrition', 'foodConsumed', 'fitness',
+                     'workouts', 'steps', 'vitals', 'recovery']) {
+    assert.match(today, new RegExp(`case "${key}"`), `the app must render the ${key} section`)
+  }
+  for (const box of ['totalBurned', 'consumed', 'active', 'resting', 'deficit', 'rolling24']) {
+    assert.match(today, new RegExp(`boxes.contains\\("${box}"\\)`), `${box} must be renderable`)
+  }
+
+  // The nutrient grid is transcribed, not summarised: every key the website can show,
+  // the app can show. A missing one silently renders nothing.
+  const webKeys = [...web.matchAll(/\['([a-zA-Z0-9]+)','[^']+','[^']*',\d\]/g)].map((m) => m[1])
+  assert.ok(webKeys.length >= 39, `expected the website's nutrient list, found ${webKeys.length}`)
+  for (const key of webKeys) {
+    assert.match(today, new RegExp(`key: "${key}"`), `nutrient ${key} is missing from the app`)
+  }
+})
+
+test('the edit controls post the envelopes the server actually reads', () => {
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  const mlog = read('../api/mlog.js')
+
+  // Both of these answer 200 for a wrongly-shaped body and quietly save nothing, so
+  // the shape is the contract and has to be pinned on both sides.
+  assert.match(mlog, /saveDashboardLayout\(auth\.id, unwrap\(req\.body\)\.layout\)/)
+  assert.match(client, /body: \["layout": inner\]/)
+
+  assert.match(mlog, /saveDailyHistory\(auth\.id, text\(body\.date\), body\.values \|\| \{\}\)/)
+  assert.match(client, /body: \["date": date, "values": values\]/)
+})
+
+test('goals are editable from the app, not just readable', () => {
+  const goals = read('../api/goals.js')
+  // Goals were session-only, which left the app able to show targets it could never
+  // change. Same three credentials as the rest of the API now, in the same order.
+  assert.match(goals, /const user = await userForSyncToken\(token\)\.catch\(\(\) => null\)/)
+  assert.match(goals, /verifyAccessToken\(token, requiredScopes\)/)
+  assert.match(goals, /req\.method === 'GET' \? \['fuel:read'\] : \['fuel:write'\]/)
+})
