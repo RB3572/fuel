@@ -17,8 +17,8 @@ import UIKit
 // nothing new: each anchored query returns empty and no upload happens.
 
 enum BackgroundSync {
-    static let refreshTaskID = "com.rishib.HealthLogger.refresh"
-    static let fullSyncTaskID = "com.rishib.HealthLogger.fullsync"
+    static let refreshTaskID = "com.labloggercompany.healthlogger.refresh"
+    static let fullSyncTaskID = "com.labloggercompany.healthlogger.fullsync"
 
     // Must run before the app finishes launching (called from HealthLoggerApp.init).
     static func registerTasks() {

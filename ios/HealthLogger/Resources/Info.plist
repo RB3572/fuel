@@ -4,8 +4,8 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.rishib.HealthLogger.refresh</string>
-		<string>com.rishib.HealthLogger.fullsync</string>
+		<string>com.labloggercompany.healthlogger.refresh</string>
+		<string>com.labloggercompany.healthlogger.fullsync</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>

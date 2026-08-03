@@ -2,7 +2,7 @@
 # The project file is generated, not checked in, so diffs stay readable.
 name: HealthLogger
 options:
-  bundleIdPrefix: com.rishib
+  bundleIdPrefix: com.labloggercompany
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -34,11 +34,11 @@ targets:
           text to be present.
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
-          - com.rishib.HealthLogger.refresh
-          - com.rishib.HealthLogger.fullsync
+          - com.labloggercompany.healthlogger.refresh
+          - com.labloggercompany.healthlogger.fullsync
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.rishib.HealthLogger
+        PRODUCT_BUNDLE_IDENTIFIER: com.labloggercompany.healthlogger
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
