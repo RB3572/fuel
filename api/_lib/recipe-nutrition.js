@@ -1,4 +1,4 @@
-import { callGemini, DEFAULT_MODEL } from './meal-plan.js'
+import { callGemini, DEFAULT_MODEL, parseJsonResponse } from './meal-plan.js'
 import { NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients } from './nutrients.js'
 
 // Estimates a per-serving nutrition breakdown for a saved recipe from its name,
@@ -100,13 +100,8 @@ export async function estimateRecipeNutrition(recipe) {
     throw error
   }
 
-  const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') || ''
-  let parsed
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error('Fuel AI returned an unreadable nutrition estimate.')
-  }
+  const { text, value: parsed } = parseJsonResponse(payload)
+  if (!parsed) throw new Error(`Fuel AI returned an unreadable nutrition estimate: ${text.slice(0, 160)}`)
 
   const macro = (value) => {
     const parsedValue = Number(value)

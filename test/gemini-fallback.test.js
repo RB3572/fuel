@@ -16,7 +16,7 @@ process.env.TOKEN_ENCRYPTION_KEY ||= Buffer.alloc(32, 7).toString('base64')
 process.env.SESSION_SECRET ||= 'test-secret'
 delete process.env.GEMINI_MODEL
 
-const { callGemini, DEFAULT_MODEL, GEMINI_MODEL_FALLBACKS } = await import('../api/_lib/meal-plan.js')
+const { callGemini, DEFAULT_MODEL, GEMINI_MODEL_FALLBACKS, responseText, parseJsonResponse } = await import('../api/_lib/meal-plan.js')
 const { asNutritionQuotaError } = await import('../api/_lib/recipe-nutrition.js')
 
 const OK = { candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] }
@@ -171,4 +171,46 @@ test('the fill-nutrients route distinguishes retryable from terminal', () => {
   assert.match(app, /hit the free Gemini rate limit/)
   // Partial progress must survive a mid-batch rate limit.
   assert.match(app, /r\.status===429&&filled/)
+})
+
+// A thinking model returns its reasoning as extra parts in the same array. Joining
+// those in front of the answer produces a string that cannot be parsed — which is what
+// "Fuel AI returned an unreadable answer" was, on every AI feature at once.
+const withParts = (parts) => ({ candidates: [{ finishReason: 'STOP', content: { parts } }] })
+
+test('reasoning parts are excluded from the answer', () => {
+  const payload = withParts([
+    { thought: true, text: 'Let me work out the macros for this bowl...' },
+    { text: '{"foods":[{"description":"Burrito bowl"}]}' },
+  ])
+  // The naive join is exactly what used to happen, and it does not parse.
+  assert.throws(() => JSON.parse(payload.candidates[0].content.parts.map((p) => p.text).join('')))
+  assert.equal(parseJsonResponse(payload).value.foods[0].description, 'Burrito bowl')
+})
+
+test('an answer wrapped in prose or a code fence is still recovered', () => {
+  assert.deepEqual(parseJsonResponse(withParts([{ text: '```json\n{"a":1}\n```' }])).value, { a: 1 })
+  assert.deepEqual(parseJsonResponse(withParts([{ text: 'Here you go:\n{"a":1}' }])).value, { a: 1 })
+  // Multi-part answers must still be joined.
+  assert.deepEqual(parseJsonResponse(withParts([{ text: '{"a":' }, { text: '1}' }])).value, { a: 1 })
+})
+
+test('unparseable output returns the text so the error can quote it', () => {
+  const result = parseJsonResponse(withParts([{ text: 'I cannot help with that.' }]))
+  assert.equal(result.value, null)
+  assert.match(result.text, /cannot help/)
+})
+
+test('a blocked or thought-only response yields empty text rather than crashing', () => {
+  assert.equal(responseText({ candidates: [{ finishReason: 'MAX_TOKENS', content: { role: 'model' } }] }), '')
+  assert.equal(responseText({}), '')
+  assert.equal(parseJsonResponse(withParts([{ thought: true, text: 'thinking' }])).text, '')
+})
+
+test('every Gemini caller parses through the shared helper', () => {
+  for (const path of ['../api/_lib/quick-log.js', '../api/_lib/food-nutrition.js', '../api/_lib/recipe-nutrition.js']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8')
+    assert.match(source, /parseJsonResponse\(payload\)/, `${path} must not hand-roll the parse`)
+    assert.doesNotMatch(source, /parts\?\.map\(\(part\) => part\.text\)/, `${path} still joins raw parts`)
+  }
 })

@@ -36,7 +36,12 @@ function clearSticky() { stickyMessage = false; say('') }
 // escapes — a rejected promise from the fire-and-forget click handler, a script error,
 // anything — has to end up visible, or a failure looks exactly like a dead button.
 window.addEventListener('error', (event) => {
-  say(`Something went wrong: ${event.message || 'unknown error'}`, 'error', { sticky: true })
+  // A bare "Script error." is what browsers report for a cross-origin script and
+  // carries no detail at all, so name the file and line when they are available —
+  // otherwise the message is true and useless.
+  const where = event.filename ? ` (${String(event.filename).split('/').pop()}:${event.lineno || '?'})` : ''
+  const detail = event.error?.message || event.message || 'unknown error'
+  say(`Something went wrong: ${detail}${where}`, 'error', { sticky: true })
 })
 window.addEventListener('unhandledrejection', (event) => {
   const reason = event.reason

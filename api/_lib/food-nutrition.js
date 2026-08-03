@@ -1,4 +1,4 @@
-import { callGemini, DEFAULT_MODEL } from './meal-plan.js'
+import { callGemini, DEFAULT_MODEL, parseJsonResponse } from './meal-plan.js'
 import { asNutritionQuotaError, NutritionQuotaError } from './recipe-nutrition.js'
 import { NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients } from './nutrients.js'
 
@@ -105,15 +105,14 @@ export async function estimateFoodNutritionBatch(entries) {
   }
 
   const candidate = payload?.candidates?.[0]
-  const text = candidate?.content?.parts?.map((part) => part.text).join('') || ''
+  const { text, value: parsed } = parseJsonResponse(payload)
   if (!text) {
     const reason = String(candidate?.finishReason || payload?.promptFeedback?.blockReason || 'no reason given')
     if (/MAX_TOKENS/i.test(reason)) throw new Error('Fuel AI ran out of output space before finishing the estimates.')
     if (/SAFETY|BLOCK|RECITATION/i.test(reason)) throw new Error(`Fuel AI declined to estimate these entries (${reason}).`)
     throw new Error(`Fuel AI returned an empty nutrition estimate (${reason}).`)
   }
-  let parsed
-  try { parsed = JSON.parse(text) } catch { throw new Error(`Fuel AI returned unreadable JSON: ${text.slice(0, 120)}`) }
+  if (!parsed) throw new Error(`Fuel AI returned unreadable JSON: ${text.slice(0, 160)}`)
 
   const estimates = new Map()
   for (const item of Array.isArray(parsed?.items) ? parsed.items : []) {

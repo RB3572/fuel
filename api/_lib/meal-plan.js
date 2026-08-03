@@ -793,6 +793,34 @@ function retryDelayMs(details) {
   return null
 }
 
+// Reading a model's answer out of a response is not `parts.map(p => p.text)`.
+//
+// Thinking models return their reasoning as extra parts in the same array, flagged
+// `thought: true`. Concatenating those in front of the JSON produces a string that
+// cannot be parsed — which is what "Fuel AI returned an unreadable answer" was. The
+// filter is harmless on models that emit no thoughts, and correct on the ones that do.
+export function responseText(payload) {
+  const parts = payload?.candidates?.[0]?.content?.parts
+  if (!Array.isArray(parts)) return ''
+  return parts.filter((part) => part?.thought !== true).map((part) => part?.text || '').join('').trim()
+}
+
+// Even with a responseSchema, an answer can arrive fenced in markdown or with a
+// sentence in front of it. Parse what is there rather than insisting it be pristine:
+// the alternative is discarding a perfectly good estimate over punctuation.
+export function parseJsonResponse(payload) {
+  const text = responseText(payload)
+  if (!text) return { text: '', value: null }
+  const unfenced = stripCodeFence(text)
+  try { return { text: unfenced, value: JSON.parse(unfenced) } } catch { /* fall through */ }
+  const first = unfenced.indexOf('{')
+  const last = unfenced.lastIndexOf('}')
+  if (first >= 0 && last > first) {
+    try { return { text: unfenced, value: JSON.parse(unfenced.slice(first, last + 1)) } } catch { /* fall through */ }
+  }
+  return { text: unfenced, value: null }
+}
+
 function buildPlanPrompt({ dashboard, context, budget, location, localTime, timeZone }) {
   const entries = dashboard?.today?.foodEntries || []
   const foods = entries.map((entry) => {

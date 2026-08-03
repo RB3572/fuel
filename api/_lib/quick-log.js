@@ -1,5 +1,5 @@
 import { sql } from './db.js'
-import { callGemini, DEFAULT_MODEL } from './meal-plan.js'
+import { callGemini, DEFAULT_MODEL, parseJsonResponse } from './meal-plan.js'
 import { NUTRIENT_JSON_SCHEMA_PROPERTIES, normalizeNutrients, nutrientColumns } from './nutrients.js'
 
 // One photo in, food entries out. This is the whole of /quicklog: no conversation, no
@@ -75,13 +75,12 @@ export async function logPhoto(userId, photo, { mealHint = '', localTime = '' } 
   }, false, TIMEOUT_MS)
 
   const candidate = payload?.candidates?.[0]
-  const text = candidate?.content?.parts?.map((part) => part.text).join('') || ''
+  const { text, value: parsed } = parseJsonResponse(payload)
   if (!text) {
     const reason = String(candidate?.finishReason || payload?.promptFeedback?.blockReason || 'no reason given')
     throw new Error(`Fuel AI could not read that photo (${reason}).`)
   }
-  let parsed
-  try { parsed = JSON.parse(text) } catch { throw new Error('Fuel AI returned an unreadable answer for that photo.') }
+  if (!parsed) throw new Error(`Fuel AI returned an unreadable answer for that photo: ${text.slice(0, 160)}`)
 
   const foods = (Array.isArray(parsed?.foods) ? parsed.foods : []).slice(0, MAX_FOODS)
     .map(normalizeFood)

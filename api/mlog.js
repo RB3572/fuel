@@ -16,7 +16,7 @@ import { clearLocationHistory, getPlaceHeatmap, identifyPlace, recordLocation, r
 import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 import { logRecipeAsFood } from './_lib/food-entries.js'
 import { getRolling24h } from './_lib/rolling-energy.js'
-import { callGemini, GEMINI_MODEL_FALLBACKS } from './_lib/meal-plan.js'
+import { callGemini, GEMINI_MODEL_FALLBACKS, responseText } from './_lib/meal-plan.js'
 import { logPhoto } from './_lib/quick-log.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
@@ -618,7 +618,7 @@ async function probeGemini() {
       ok: true,
       ms: Date.now() - started,
       finishReason: candidate?.finishReason || null,
-      text: (candidate?.content?.parts?.map((part) => part.text).join('') || '').slice(0, 200),
+      text: responseText(payload).slice(0, 200),
       usage: payload?.usageMetadata || null,
     }
   } catch (error) {
