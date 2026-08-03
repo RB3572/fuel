@@ -3,15 +3,26 @@ import CoreGraphics
 import ImageIO
 import UniformTypeIdentifiers
 
-// Renders the Health Logger app icon at 1024pt.
-// A pink heart on white, with an export arrow rising out of it: health data, leaving
-// for wherever you send it. The arrow is knocked out of the heart in white so the mark
-// stays two flat colours and survives being shrunk to a home-screen icon.
+// Renders the Health Logger app icon at 1024pt:
+//
+//   swift makeicon.swift Assets.xcassets/AppIcon.appiconset/icon-1024.png
+//
+// A pink heart on white with an export arrow rising out of it: health data, leaving for
+// wherever you send it.
+//
+// The heart is wider than it is tall (0.83 x 0.77 of its box) with a short tip. The
+// obvious construction — a tall box and a long tapering point — reads as a heart that
+// has been stretched vertically, which is what it is.
+//
+// Colour is a deep rose falling to a light pink, lit by one broad soft highlight in the
+// upper left. That highlight is what makes it matte rather than glossy: gloss is a small
+// hard specular with a defined edge, so this is deliberately the opposite — large, low
+// opacity, fading to nothing well before the edges.
 
 let size: CGFloat = 1024
 let white = CGColor(red: 1, green: 1, blue: 1, alpha: 1)
-let pinkTop = CGColor(red: 1.0, green: 0.42, blue: 0.60, alpha: 1)     // #FF6B99
-let pinkBottom = CGColor(red: 0.98, green: 0.20, blue: 0.42, alpha: 1) // #FA336B
+let deepPink = CGColor(red: 0.729, green: 0.078, blue: 0.318, alpha: 1)  // #BA1451
+let lightPink = CGColor(red: 0.988, green: 0.549, blue: 0.706, alpha: 1)  // #FC8CB4
 
 let space = CGColorSpace(name: CGColorSpace.sRGB)!
 let ctx = CGContext(data: nil, width: Int(size), height: Int(size), bitsPerComponent: 8,
@@ -26,55 +37,73 @@ ctx.setFillColor(white)
 ctx.fill(CGRect(x: 0, y: 0, width: size, height: size))
 
 let s = size
+let box = s * 0.82          // the heart's unit box
 let cx = s * 0.5
-let cy = s * 0.505
-let h = s * 0.66
+let cy = s * 0.5
 
-// A unit-box heart (0…1, y-down), mapped into a centred box of side `h`.
-func u(_ x: CGFloat) -> CGFloat { cx + (x - 0.5) * h }
-func v(_ y: CGFloat) -> CGFloat { cy + (y - 0.5) * h }
-func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: u(x), y: v(y)) }
+// Unit coordinates (0…1, y-down) mapped into a box centred on the icon. The 0.507
+// offset centres the heart's ink rather than its bounding box.
+func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+    CGPoint(x: cx + (x - 0.5) * box, y: cy + (y - 0.507) * box)
+}
 
+// Spans 0.083…0.917 wide by 0.125…0.890 tall — broad shoulders, short tip.
 let heart = CGMutablePath()
-heart.move(to: p(0.50, 0.94))
-heart.addCurve(to: p(0.26, 0.10), control1: p(0.06, 0.58), control2: p(0.02, 0.22))
-heart.addCurve(to: p(0.50, 0.28), control1: p(0.42, 0.02), control2: p(0.50, 0.14))
-heart.addCurve(to: p(0.74, 0.10), control1: p(0.50, 0.14), control2: p(0.58, 0.02))
-heart.addCurve(to: p(0.50, 0.94), control1: p(0.98, 0.22), control2: p(0.94, 0.58))
+heart.move(to: p(0.5000, 0.8896))
+heart.addLine(to: p(0.4396, 0.8346))
+heart.addCurve(to: p(0.0833, 0.3542), control1: p(0.2250, 0.6400), control2: p(0.0833, 0.5117))
+heart.addCurve(to: p(0.3125, 0.1250), control1: p(0.0833, 0.2258), control2: p(0.1842, 0.1250))
+heart.addCurve(to: p(0.5000, 0.2121), control1: p(0.3850, 0.1250), control2: p(0.4546, 0.1588))
+heart.addCurve(to: p(0.6875, 0.1250), control1: p(0.5454, 0.1588), control2: p(0.6150, 0.1250))
+heart.addCurve(to: p(0.9167, 0.3542), control1: p(0.8158, 0.1250), control2: p(0.9167, 0.2258))
+heart.addCurve(to: p(0.5604, 0.8350), control1: p(0.9167, 0.5117), control2: p(0.7750, 0.6400))
 heart.closeSubpath()
 
 ctx.saveGState()
 ctx.addPath(heart)
 ctx.clip()
-let gradient = CGGradient(colorsSpace: space, colors: [pinkTop, pinkBottom] as CFArray, locations: [0, 1])!
-ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: v(0.0)), end: CGPoint(x: 0, y: v(1.0)), options: [])
+
+// Body: deep rose at the top falling to light pink at the bottom.
+let body = CGGradient(colorsSpace: space, colors: [deepPink, lightPink] as CFArray, locations: [0, 1])!
+ctx.drawLinearGradient(body, start: p(0.5, 0.05), end: p(0.5, 0.95),
+                       options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+
+// Matte sheen: one broad diffuse highlight, no hard edge anywhere.
+let sheenColors = [
+    CGColor(red: 1, green: 1, blue: 1, alpha: 0.20),
+    CGColor(red: 1, green: 1, blue: 1, alpha: 0.06),
+    CGColor(red: 1, green: 1, blue: 1, alpha: 0.0),
+] as CFArray
+let sheen = CGGradient(colorsSpace: space, colors: sheenColors, locations: [0, 0.45, 1])!
+ctx.drawRadialGradient(sheen,
+                       startCenter: p(0.30, 0.40), startRadius: 0,
+                       endCenter: p(0.30, 0.40), endRadius: box * 0.55,
+                       options: [])
 ctx.restoreGState()
 
-// The export mark, in white: an arrow leaving through the top, standing on an open
-// tray — the same idea as the system share glyph, sized to read at 60pt.
+// The export mark, in white: an arrow lifting off a baseline.
 ctx.setStrokeColor(white)
-ctx.setLineWidth(s * 0.055)
+ctx.setLineWidth(s * 0.052)
 ctx.setLineCap(.round)
 ctx.setLineJoin(.round)
 
 let shaft = CGMutablePath()
-shaft.move(to: p(0.50, 0.66))
-shaft.addLine(to: p(0.50, 0.30))
+shaft.move(to: p(0.50, 0.655))
+shaft.addLine(to: p(0.50, 0.325))
 ctx.addPath(shaft)
 ctx.strokePath()
 
 let head = CGMutablePath()
-head.move(to: p(0.33, 0.46))
-head.addLine(to: p(0.50, 0.29))
-head.addLine(to: p(0.67, 0.46))
+head.move(to: p(0.345, 0.470))
+head.addLine(to: p(0.500, 0.315))
+head.addLine(to: p(0.655, 0.470))
 ctx.addPath(head)
 ctx.strokePath()
 
-// A short baseline the arrow lifts off from. Kept narrow so it stays inside the
-// heart, which tapers fast below the midline.
+// Kept narrow so it stays inside the heart, which tapers below the midline.
 let base = CGMutablePath()
-base.move(to: p(0.37, 0.74))
-base.addLine(to: p(0.63, 0.74))
+base.move(to: p(0.385, 0.725))
+base.addLine(to: p(0.615, 0.725))
 ctx.addPath(base)
 ctx.strokePath()
 

@@ -22,7 +22,7 @@ targets:
       properties:
         CFBundleDisplayName: Health Logger
         CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSHealthShareUsageDescription: >-
@@ -51,5 +51,5 @@ targets:
         # The LAB LOGGER INC. team that owns com.labloggercompany.healthlogger.
         # Without this, `xcodebuild archive` fails with "requires a development team".
         DEVELOPMENT_TEAM: 9VVDB6UALA
-        CURRENT_PROJECT_VERSION: 2
+        CURRENT_PROJECT_VERSION: 3
         MARKETING_VERSION: "1.0"
