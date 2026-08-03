@@ -2,6 +2,9 @@ import Foundation
 
 // The wire format for /api/health/sync/v1 and the client that speaks it.
 // Mirrors api/_lib/health-sync.js exactly — that file is the contract's other half.
+//
+// Nothing here is Fuel-specific beyond the default URL: any server implementing this
+// contract is a valid destination, and the file export writes these same payloads.
 
 struct SyncPayload: Encodable {
     var syncVersion = 1
@@ -144,8 +147,8 @@ enum FuelAPIError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notConfigured: return "Add your Fuel sync token first."
-        case .http(let status, let message): return "Fuel responded \(status): \(message)"
+        case .notConfigured: return "That destination URL is not valid."
+        case .http(let status, let message): return "Server responded \(status): \(message)"
         }
     }
 }
@@ -155,15 +158,24 @@ struct FuelAPI {
     let token: String
 
     init(endpoint: String, token: String) throws {
-        guard !token.isEmpty, let url = URL(string: endpoint) else { throw FuelAPIError.notConfigured }
+        // A token is required for Fuel but optional in general: a self-hosted endpoint
+        // may authenticate some other way, or not at all on a private network.
+        guard let url = URL(string: endpoint), url.scheme != nil, url.host != nil else {
+            throw FuelAPIError.notConfigured
+        }
         self.endpoint = url
         self.token = token
+    }
+
+    private func authorized(_ request: inout URLRequest) {
+        guard !token.isEmpty else { return }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     }
 
     /// GET — anchors and limits, so a fresh install resumes instead of re-uploading.
     func state() async throws -> SyncState {
         var request = URLRequest(url: endpoint)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        authorized(&request)
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.check(response, data)
         return try JSONDecoder().decode(SyncState.self, from: data)
@@ -173,7 +185,7 @@ struct FuelAPI {
     func upload(_ payload: SyncPayload) async throws -> SyncResponse {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        authorized(&request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
         request.httpBody = try JSONEncoder().encode(payload)

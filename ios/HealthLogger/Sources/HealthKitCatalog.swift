@@ -77,10 +77,19 @@ enum HealthKitCatalog {
         quantityTypes.first { $0.0 == identifier }?.1 ?? .count()
     }
 
+    /// A handful of identifiers begin with an acronym, which the generic
+    /// lowercase-the-first-letter rule mangles: "VO2Max" would become "vO2Max".
+    private static let wireNameOverrides = [
+        "VO2Max": "vo2Max",
+        "UVExposure": "uvExposure",
+        "BMI": "bmi",
+    ]
+
     /// "HKQuantityTypeIdentifierStepCount" -> "stepCount"
     static func wireName(_ raw: String) -> String {
         for prefix in ["HKQuantityTypeIdentifier", "HKCategoryTypeIdentifier", "HKWorkoutTypeIdentifier"] where raw.hasPrefix(prefix) {
-            let stripped = raw.dropFirst(prefix.count)
+            let stripped = String(raw.dropFirst(prefix.count))
+            if let override = wireNameOverrides[stripped] { return override }
             return stripped.prefix(1).lowercased() + stripped.dropFirst()
         }
         return raw

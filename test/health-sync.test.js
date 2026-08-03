@@ -74,6 +74,37 @@ test('a JSON null in the payload is stored as SQL NULL, not the jsonb string "nu
   }
 })
 
+test('acronym type names survive the wire-name rule', () => {
+  // "HKQuantityTypeIdentifierVO2Max" -> "vo2Max", not the mangled "vO2Max" the plain
+  // lowercase-the-first-letter rule produces.
+  const catalog = read('../ios/HealthLogger/Sources/HealthKitCatalog.swift')
+  assert.match(catalog, /"VO2Max": "vo2Max"/)
+  assert.match(catalog, /if let override = wireNameOverrides\[stripped\] \{ return override \}/)
+})
+
+test('the destination is pluggable and the file export cannot disturb a sync', () => {
+  const sink = read('../ios/HealthLogger/Sources/SyncSink.swift')
+  const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
+  // Two destinations behind one protocol: a server, and a file.
+  assert.match(sink, /final class ServerSink: SyncSink/)
+  assert.match(sink, /final class FileExportSink: SyncSink/)
+  // The export reads everything and must never move the anchors, or the app would
+  // believe the server has data that only ever went to a file.
+  assert.match(sink, /final class FileExportSink[\s\S]{0,1200}var advancesAnchors: Bool \{ false \}/)
+  assert.match(engine, /if sink\.advancesAnchors \{ await SyncStore\.shared\.saveAnchor\(encoded, for: wireName\) \}/)
+  assert.match(engine, /run\(sink: sink, fromScratch: true, reason: "export"\)/)
+})
+
+test('Fuel stays the one-tap default while any endpoint is allowed', () => {
+  const store = read('../ios/HealthLogger/Sources/SyncStore.swift')
+  const api = read('../ios/HealthLogger/Sources/FuelAPI.swift')
+  assert.match(store, /static let fuelEndpoint = "https:\/\/fuel\.rishib\.com\/api\/health\/sync\/v1"/)
+  assert.match(store, /func useFuel\(\)/)
+  // Fuel requires a token; a self-hosted destination may authenticate some other way.
+  assert.match(store, /isFuelDestination \? !token\.isEmpty : !endpoint\.isEmpty/)
+  assert.match(api, /guard !token\.isEmpty else \{ return \}/)
+})
+
 test('the legacy Shortcut import is untouched', () => {
   const legacy = read('../api/health/import.js')
   assert.match(legacy, /PARSER_VERSION = 14/)

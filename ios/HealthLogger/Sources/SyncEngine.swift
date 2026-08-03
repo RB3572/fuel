@@ -39,26 +39,56 @@ final class SyncEngine {
     /// observer callback — overlapping calls collapse into one.
     @discardableResult
     func sync(reason: String) async -> Bool {
+        let store = await SyncStore.shared
+        let (token, endpoint, isFuel) = await (store.token, store.endpoint, store.isFuelDestination)
+        guard !isFuel || !token.isEmpty else {
+            await setStatus(.failed("Add your Fuel sync token first."))
+            return false
+        }
+        guard let api = try? FuelAPI(endpoint: endpoint, token: token) else {
+            await setStatus(.failed("That destination URL is not valid."))
+            return false
+        }
+        return await run(sink: ServerSink(api: api), fromScratch: false, reason: reason)
+    }
+
+    /// Writes the entire Health history to a file the user can keep or hand to another
+    /// service. Deliberately ignores the anchors in both directions: it always reads
+    /// everything, and it never advances them, so exporting cannot perturb a sync.
+    func export() async -> URL? {
+        guard let sink = try? FileExportSink() else {
+            await setStatus(.failed("Could not create the export file."))
+            return nil
+        }
+        let ok = await run(sink: sink, fromScratch: true, reason: "export")
+        sink.finish()
+        guard ok else { return nil }
+        await MainActor.run { SyncStore.shared.lastSyncSummary = "exported \(sink.batches) batches" }
+        return sink.url
+    }
+
+    /// One pass over everything, into whichever destination. `fromScratch` starts every
+    /// type at a nil anchor (a complete read) without disturbing the stored ones.
+    @discardableResult
+    private func run(sink: SyncSink, fromScratch: Bool, reason: String) async -> Bool {
         if running { return true }
         running = true
         defer { running = false }
 
         let store = await SyncStore.shared
-        let (token, endpoint) = await (store.token, store.endpoint)
-        guard let api = try? FuelAPI(endpoint: endpoint, token: token) else {
-            await setStatus(.failed("Add your Fuel sync token first."))
-            return false
-        }
 
         do {
-            var anchors = await store.loadAnchors()
+            var anchors = fromScratch ? [:] : await store.loadAnchors()
             let isFullSync = anchors.isEmpty
 
-            // A reinstalled app adopts the server's anchors instead of re-uploading
+            // A reinstalled app adopts the destination's anchors instead of re-uploading
             // years of history it already sent.
-            if isFullSync, let remote = try? await api.state(), !remote.anchors.isEmpty {
-                anchors = remote.anchors
-                await store.replaceAnchors(anchors)
+            if isFullSync, !fromScratch {
+                let remote = await sink.knownAnchors()
+                if !remote.isEmpty {
+                    anchors = remote
+                    await store.replaceAnchors(anchors)
+                }
             }
 
             var uploadedSamples = 0
@@ -67,7 +97,7 @@ final class SyncEngine {
             for (identifier, unit) in HealthKitCatalog.quantityTypes {
                 guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { continue }
                 let wire = HealthKitCatalog.wireName(identifier.rawValue)
-                uploadedSamples += try await drain(type: type, wireName: wire, api: api, fullSync: isFullSync, anchors: &anchors) { samples in
+                uploadedSamples += try await drain(type: type, wireName: wire, sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
                     var tables = SyncPayload.Tables()
                     tables.quantitySamples = samples.compactMap { sample in
                         guard let quantity = sample as? HKQuantitySample, quantity.quantity.is(compatibleWith: unit) else { return nil }
@@ -90,7 +120,7 @@ final class SyncEngine {
             for identifier in HealthKitCatalog.categoryTypes {
                 guard let type = HKObjectType.categoryType(forIdentifier: identifier) else { continue }
                 let wire = HealthKitCatalog.wireName(identifier.rawValue)
-                uploadedSamples += try await drain(type: type, wireName: wire, api: api, fullSync: isFullSync, anchors: &anchors) { samples in
+                uploadedSamples += try await drain(type: type, wireName: wire, sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
                     var tables = SyncPayload.Tables()
                     tables.categorySamples = samples.compactMap { sample in
                         guard let category = sample as? HKCategorySample else { return nil }
@@ -110,7 +140,7 @@ final class SyncEngine {
             }
 
             // ---- Workouts (with routes) ---------------------------------------------
-            uploadedSamples += try await drain(type: HKObjectType.workoutType(), wireName: "workout", api: api, fullSync: isFullSync, anchors: &anchors) { samples in
+            uploadedSamples += try await drain(type: HKObjectType.workoutType(), wireName: "workout", sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
                 var tables = SyncPayload.Tables()
                 for sample in samples {
                     guard let workout = sample as? HKWorkout else { continue }
@@ -126,13 +156,15 @@ final class SyncEngine {
             payload.tables.dailyTotals = try await dailyTotals(days: days)
             payload.snapshot = try await todaySnapshot()
             payload.anchors = anchors
-            _ = try await api.upload(payload)
+            try await sink.send(payload)
 
             let stamp = Date()
             await MainActor.run {
-                SyncStore.shared.lastSyncAt = stamp
-                SyncStore.shared.lastSyncSummary = "\(reason): \(uploadedSamples) samples"
-                SyncStore.shared.initialSyncComplete = true
+                if sink.advancesAnchors {
+                    SyncStore.shared.lastSyncAt = stamp
+                    SyncStore.shared.lastSyncSummary = "\(reason): \(uploadedSamples) samples"
+                    SyncStore.shared.initialSyncComplete = true
+                }
                 SyncStore.shared.status = .idle
             }
             return true
@@ -149,7 +181,7 @@ final class SyncEngine {
     private func drain(
         type: HKSampleType,
         wireName: String,
-        api: FuelAPI,
+        sink: SyncSink,
         fullSync: Bool,
         anchors: inout [String: String],
         convert: ([HKSample]) async -> SyncPayload.Tables
@@ -178,13 +210,13 @@ final class SyncEngine {
             }
 
             if !payload.tables.isEmpty || !payload.deleted.isEmpty {
-                _ = try await api.upload(payload)
+                try await sink.send(payload)
             }
 
-            // The server has this page; only now does the anchor move forward.
+            // The destination has this page; only now does the anchor move forward.
             if let next = page.newAnchor, let encoded = encodeAnchor(next) {
                 anchors[wireName] = encoded
-                await SyncStore.shared.saveAnchor(encoded, for: wireName)
+                if sink.advancesAnchors { await SyncStore.shared.saveAnchor(encoded, for: wireName) }
                 anchor = next
             }
             uploaded += page.samples.count

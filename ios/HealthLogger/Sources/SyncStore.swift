@@ -25,15 +25,30 @@ final class SyncStore: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
+    /// The one-tap default. Anything else is a custom destination that must speak the
+    /// same /api/health/sync/v1 protocol — see HEALTH_SYNC.md for the contract.
+    static let fuelEndpoint = "https://fuel.rishib.com/api/health/sync/v1"
+
+    /// Remembered separately from `endpoint`, so switching to Fuel and back does not
+    /// make the user retype their own server's URL.
+    @Published var customEndpoint: String { didSet { defaults.set(customEndpoint, forKey: "customEndpoint") } }
+
+    var isFuelDestination: Bool { endpoint == Self.fuelEndpoint }
+
+    func useFuel() { endpoint = Self.fuelEndpoint }
+    func useCustom() { endpoint = customEndpoint }
+
     private init() {
         token = Keychain.get("fuel-sync-token") ?? ""
-        endpoint = defaults.string(forKey: "endpoint") ?? "https://fuel.rishib.com/api/health/sync/v1"
+        customEndpoint = defaults.string(forKey: "customEndpoint") ?? ""
+        endpoint = defaults.string(forKey: "endpoint") ?? Self.fuelEndpoint
         lastSyncAt = defaults.object(forKey: "lastSyncAt") as? Date
         lastSyncSummary = defaults.string(forKey: "lastSyncSummary") ?? ""
         initialSyncComplete = defaults.bool(forKey: "initialSyncComplete")
     }
 
-    var isConfigured: Bool { !token.isEmpty }
+    /// Fuel needs a token; a self-hosted destination only needs somewhere to send to.
+    var isConfigured: Bool { isFuelDestination ? !token.isEmpty : !endpoint.isEmpty }
 
     // MARK: Anchors — one opaque HKQueryAnchor per data type, base64-encoded.
 

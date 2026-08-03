@@ -4,6 +4,10 @@ Fuel gets its Apple Health data from **Health Logger**, a SwiftUI iOS app that l
 [`ios/HealthLogger`](ios/HealthLogger). The app is a HealthKit bridge and nothing else:
 Fuel on the web keeps analytics, charts, AI, calorie math, goals and the UI.
 
+Fuel is the one-tap default, not a hard wiring. The same app will sync to **any server
+implementing the protocol below**, or skip servers entirely and **export** your whole
+Health history to a file — see [Other destinations](#other-destinations).
+
 ```
 HealthKit ──▶ Health Logger ──▶ POST /api/health/sync/v1 ──▶ normalized tables ──▶ health_daily (derived) ──▶ Fuel web
 ```
@@ -95,6 +99,34 @@ cd ios/HealthLogger && xcodegen generate && open HealthLogger.xcodeproj
   3. a nightly `BGProcessingTask` catch-all — plus a sync on every app open.
 - **Adding a type** = one line in `HealthKitCatalog.swift` (+ a backend column mapping
   only if it should surface in `health_daily`). The protocol does not change.
+
+## Other destinations
+
+The engine collects the same way regardless of where batches end up; only the sink
+differs (`Sources/SyncSink.swift`), so adding a destination is one small conformer.
+
+- **Fuel** (default) — pick *Fuel* in Destination, paste the token, done.
+- **Your own server** — pick *Custom server* and enter a URL. It must speak the
+  contract above: accept `POST` batches and, ideally, answer `GET` with
+  `{ anchors, maxSamplesPerRequest }` so reinstalls resume. The bearer token is
+  optional here; leave it empty for a server that authenticates some other way or
+  runs on a private network. The custom URL is remembered separately, so toggling
+  back to Fuel and out again doesn't lose it.
+- **A file** — *Export all Health data* writes the entire history to NDJSON and hands
+  it to the system share sheet (Files, AirDrop, Mail). One JSON batch per line, each
+  line byte-identical to what would have been POSTed, so an export is directly
+  replayable against any endpoint:
+
+  ```bash
+  while read -r line; do
+    curl -s -X POST "$ENDPOINT" -H 'content-type: application/json' -d "$line"
+  done < health-export-*.ndjson
+  ```
+
+  Export is deliberately isolated from sync: it always reads *everything* (ignoring the
+  anchors) and never advances them, so exporting can't make the app think Fuel received
+  data that only ever went to a file. Because it streams a line at a time, a decade of
+  samples never has to fit in memory.
 
 ## Migration plan
 
