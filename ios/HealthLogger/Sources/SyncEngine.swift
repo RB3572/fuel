@@ -159,10 +159,13 @@ final class SyncEngine {
             try await sink.send(payload)
 
             let stamp = Date()
+            // Snapshot the counter before crossing to the main actor: capturing the
+            // mutable local directly is an error under Swift 6 concurrency.
+            let total = uploadedSamples
             await MainActor.run {
                 if sink.advancesAnchors {
                     SyncStore.shared.lastSyncAt = stamp
-                    SyncStore.shared.lastSyncSummary = "\(reason): \(uploadedSamples) samples"
+                    SyncStore.shared.lastSyncSummary = "\(reason): \(total) samples"
                     SyncStore.shared.initialSyncComplete = true
                 }
                 SyncStore.shared.status = .idle
