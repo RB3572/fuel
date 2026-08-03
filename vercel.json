@@ -4,6 +4,10 @@
   },
   "rewrites": [
     {
+      "source": "/api/health/sync/v1",
+      "destination": "/api/mlog?fuel_route=health-sync-v1"
+    },
+    {
       "source": "/quicklog",
       "destination": "/quicklog.html"
     },

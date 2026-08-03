@@ -1,0 +1,47 @@
+# XcodeGen spec — `xcodegen generate` in this directory produces HealthLogger.xcodeproj.
+# The project file is generated, not checked in, so diffs stay readable.
+name: HealthLogger
+options:
+  bundleIdPrefix: com.rishib
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+targets:
+  HealthLogger:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    entitlements:
+      path: Resources/HealthLogger.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.background-delivery: true
+        com.apple.developer.healthkit.access: []
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Health Logger
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSHealthShareUsageDescription: >-
+          Health Logger reads your Apple Health data — activity, heart, sleep, body,
+          vitals, workouts and mobility — and securely syncs it to your private Fuel
+          dashboard. Nothing is shared with anyone else.
+        NSHealthUpdateUsageDescription: >-
+          Health Logger only reads Health data; it never writes any. iOS requires this
+          text to be present.
+        UIBackgroundModes: [fetch, processing]
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.rishib.HealthLogger.refresh
+          - com.rishib.HealthLogger.fullsync
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rishib.HealthLogger
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
+        CODE_SIGN_STYLE: Automatic
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"

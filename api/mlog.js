@@ -18,6 +18,7 @@ import { logRecipeAsFood } from './_lib/food-entries.js'
 import { getRolling24h } from './_lib/rolling-energy.js'
 import { callGemini, GEMINI_MODEL_FALLBACKS, responseText } from './_lib/meal-plan.js'
 import { logPhoto } from './_lib/quick-log.js'
+import { handleHealthSyncV1 } from './_lib/health-sync.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
@@ -99,6 +100,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'quicklog') {
     await handleQuickLog(req, res)
+    return
+  }
+  if (integrationRoute === 'health-sync-v1') {
+    await handleHealthSyncV1(req, res)
     return
   }
   if (integrationRoute === 'meal-plan') {
