@@ -191,3 +191,30 @@ test('the Google handoff never puts tokens in the redirect URL', () => {
   // And no browser session is set for the app's flow.
   assert.match(callback, /redirect\(res, `fuel:\/\/auth\?code=\$\{encodeURIComponent\(handoff\)\}`, baseCookies\)/)
 })
+
+test('the iOS Google client and its redirect scheme agree', () => {
+  const project = read('../ios/Fuel/project.yml')
+  const clientID = project.match(/GoogleClientID: (\S+)/)?.[1]
+  assert.ok(clientID && clientID.endsWith('.apps.googleusercontent.com'),
+    'an iOS OAuth client ID must be configured')
+
+  // Google redirects to the reversed client ID. If the scheme and the ID disagree the
+  // browser sheet opens, the user signs in, and the callback never comes back — with no
+  // error anywhere. Cheap to assert, miserable to debug.
+  const expected = 'com.googleusercontent.apps.' + clientID.replace('.apps.googleusercontent.com', '')
+  assert.ok(project.includes(expected), `CFBundleURLSchemes must contain ${expected}`)
+
+  // fuel:// stays registered for Apple's return and the no-client fallback.
+  assert.match(project, /CFBundleURLSchemes: \[fuel\]/)
+})
+
+test('the app prefers the native Google client but still works without one', () => {
+  const signIn = read('../ios/Fuel/Sources/SignIn.swift')
+  // Native path: Google's own endpoint, PKCE, and no secret.
+  assert.match(signIn, /https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth/)
+  assert.match(signIn, /code_challenge_method/)
+  assert.doesNotMatch(signIn, /client_secret/)
+  // Fallback path: Fuel brokers it when no iOS client is configured.
+  assert.match(signIn, /await signInWithGoogleViaFuel\(\)/)
+  assert.match(signIn, /\/api\/auth\/google\/start/)
+})

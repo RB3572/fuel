@@ -28,10 +28,9 @@ test('the iOS app signs in with PKCE and never stores a password', () => {
   const signIn = read('../ios/Fuel/Sources/SignIn.swift')
   assert.match(signIn, /ASWebAuthenticationSession/)
   assert.match(signIn, /code_challenge/)
-  // No secret and no Google client ID in the app: the server brokers Google with the
-  // credentials it already holds.
+  // A client ID may ship — iOS OAuth clients are public by design. A secret may not.
   assert.doesNotMatch(signIn, /client_secret/)
-  assert.doesNotMatch(signIn, /apps\.googleusercontent\.com/)
+  assert.doesNotMatch(signIn, /GOCSPX/)
 })
 
 test('the AI runs on device, not through Gemini', () => {

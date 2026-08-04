@@ -27,6 +27,14 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
+			<string>com.labloggercompany.fuel.google</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.804091048275-1rdvu5hmflm6ald1t2ugvojeoi9s9jee</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
 			<string>com.labloggercompany.fuel.auth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
@@ -36,6 +44,8 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>GoogleClientID</key>
+	<string>804091048275-1rdvu5hmflm6ald1t2ugvojeoi9s9jee.apps.googleusercontent.com</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>

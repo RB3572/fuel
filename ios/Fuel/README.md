@@ -33,19 +33,25 @@ downgraded tokens in `test/native-auth.test.js`.
 | What | Where | Needed for |
 |---|---|---|
 | App ID `com.labloggercompany.fuel` with **HealthKit** + **Sign in with Apple** | Apple Developer portal | ✅ registered |
-| Google — nothing | — | ✅ uses Fuel's existing client, server-side |
+| `GOOGLE_IOS_CLIENT_ID` | Vercel env | ✅ set |
+| Google iOS client + reversed scheme | `ios/Fuel/project.yml` | ✅ set |
 | `APPLE_SERVICE_ID` | Vercel env | Sign in with Apple, **web only** |
 
-**Google needs no iOS OAuth client.** An iOS-type client would be a second registration
-to keep in sync, and a web client cannot redirect to a custom scheme. Instead the app
-opens Fuel's own Google flow at `/api/auth/google/start?native=1`: the user sees Google's
-account picker — the same one the website shows — and the callback hands back a
-short-lived code over `fuel://auth` instead of setting a browser session. The client
-secret stays on the server, which is the point, because a shipped app cannot keep one.
+**Google runs natively.** The system browser opens `accounts.google.com` — the same
+account picker the website shows — and the app comes back holding an ID token that
+`/api/auth/native` verifies against Google's JWKS. iOS OAuth clients are public by
+design, so the client ID ships in the app and PKCE is what makes the exchange safe;
+there is no secret anywhere in the bundle.
 
-The code is bound to a PKCE challenge the app generated, so another app that registered
-the `fuel://` scheme and intercepted the redirect still cannot redeem it. That binding is
-attacked directly in `test/native-auth.test.js`.
+If no iOS client is configured, it falls back to brokering through Fuel's own Google flow
+at `/api/auth/google/start?native=1`, which needs no client at all: the callback hands
+back a one-time code over `fuel://auth`, bound to a PKCE challenge so an app that
+hijacked the scheme cannot redeem it. Self-hosters get something that works either way.
+That binding is attacked directly in `test/native-auth.test.js`.
+
+The redirect scheme must be the reversed client ID. If the two disagree the sheet opens,
+the user signs in, and the callback never arrives — with no error anywhere — so a test
+asserts they match.
 
 **Sign in with Apple in the app** needs only the capability, which is registered. Build
 with your team and it runs; the simulator additionally needs an Apple ID signed in under
