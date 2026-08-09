@@ -176,14 +176,18 @@ final class OnDeviceAI {
     /// Called right after something is logged: what to eat for the rest of the day,
     /// given what has already gone in. This is the website's "log something, get a
     /// plan" rhythm, running locally.
-    func planRestOfDay(justLogged: String, summary: DaySummary, goals: Goals?, context: String) async throws -> String {
+    /// Builds a plan for the rest of the day. `justLogged` names the most recent meal
+    /// when there is one — passed for context only, it does not trigger this call; the
+    /// caller decides when a plan is actually built (the explicit "New plan" action).
+    func planRestOfDay(justLogged: String?, summary: DaySummary, goals: Goals?, context: String) async throws -> String {
         let remaining = (goals?.calories?.target).flatMap { target in
             summary.caloriesConsumed.map { target - $0 }
         }
         let proteinLeft = (goals?.protein?.target).flatMap { target in
             summary.protein.map { target - $0 }
         }
-        var facts = ["just logged: \(justLogged)"]
+        var facts: [String] = []
+        if let justLogged, !justLogged.isEmpty { facts.append("just logged: \(justLogged)") }
         if let value = summary.caloriesConsumed { facts.append("eaten today: \(Int(value)) kcal") }
         if let value = remaining { facts.append("calories left to target: \(Int(value))") }
         if let value = summary.protein { facts.append("protein so far: \(Int(value)) g") }
@@ -191,10 +195,10 @@ final class OnDeviceAI {
         if let value = summary.totalExpenditure { facts.append("burned today: \(Int(value)) kcal") }
 
         let instructions = """
-        You are a practical nutrition coach inside someone's private dashboard. They have \
-        just logged a meal. Suggest what to eat for the rest of the day so they land near \
-        their targets: name specific meals with rough portions. Three sentences at most. \
-        Use only the numbers given; never invent data. Never give medical advice.
+        You are a practical nutrition coach inside someone's private dashboard. Suggest \
+        what to eat for the rest of the day so they land near their targets: name \
+        specific meals with rough portions. Three sentences at most. Use only the \
+        numbers given; never invent data. Never give medical advice.
         \(context.isEmpty ? "" : "Background on this person: \(context)")
         """
         let response = try await session(instructions).respond(to: facts.joined(separator: ", "))

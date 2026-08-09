@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import { Activity, Bike, BookOpen, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LineChart, MapPin, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, Users, X } from 'lucide-react'
+import { Activity, Bike, BookOpen, Camera, Check, Clock3, Copy, Database, Dumbbell, Eye, EyeOff, Footprints, GripVertical, HeartPulse, Home, LayoutGrid, LineChart, MapPin, LogOut, Moon, Pencil, Plus, RefreshCw, Route, Save, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, Users, X } from 'lucide-react'
 import type { LiftPlan } from './workouts'
 // Code-split: the workout dataset and its stylesheet only download when the user
 // actually opens the Lifting tab, keeping them out of the dashboard's first paint.
@@ -382,6 +382,7 @@ function TopNav({current,user,goDashboard,goLifting,goCompare,goCharts,goPlaces,
   return <header className="topbar"><div className="brand"><BrandAvatar user={user}/><div className="brand-text"><h1>Fuel</h1><p className="brand-date"><span className="date-long">{navDateLong()}</span><span className="date-short">{navDateShort()}</span></p></div></div><nav className="user" ref={navRef} aria-label="Fuel navigation">
     <button className={`nav-icon-button${current==='dashboard'?' nav-active':''}`} onClick={goDashboard} aria-current={current==='dashboard'?'page':undefined} aria-label="Dashboard" title="Dashboard"><Home size={18}/><span className="nav-label">Home</span></button>
     <a className="nav-icon-button" href="/meal-plan.html" aria-label="Fuel AI" title="Fuel AI"><Sparkles size={18}/><span className="nav-label">AI</span></a>
+    <a className="nav-icon-button" href="/quicklog" aria-label="Quick log" title="Quick log a photo"><Camera size={18}/><span className="nav-label">Quick log</span></a>
     <a className="nav-icon-button" href="/recipes.html" aria-label="Recipes" title="Recipes"><BookOpen size={18}/><span className="nav-label">Recipes</span></a>
     <button className={`nav-icon-button${current==='lifting'?' nav-active':''}`} onClick={goLifting} aria-current={current==='lifting'?'page':undefined} aria-label="Lifting" title="Lifting"><Dumbbell size={18}/><span className="nav-label">Lifting</span></button>
     <button className={`nav-icon-button${current==='compare'?' nav-active':''}`} onClick={goCompare} aria-current={current==='compare'?'page':undefined} aria-label="Compare" title="Compare to your age group"><Users size={18}/><span className="nav-label">Compare</span></button>

@@ -36,9 +36,14 @@ function clearSticky() { stickyMessage = false; say('') }
 // escapes — a rejected promise from the fire-and-forget click handler, a script error,
 // anything — has to end up visible, or a failure looks exactly like a dead button.
 window.addEventListener('error', (event) => {
-  // A bare "Script error." is what browsers report for a cross-origin script and
-  // carries no detail at all, so name the file and line when they are available —
-  // otherwise the message is true and useless.
+  // A bare "Script error." with no filename is what every browser reports for an error
+  // it cannot inspect — a cross-origin script, or (in practice, the common case on a
+  // phone) a browser's own injected overlay script running alongside the page. Arc in
+  // particular injects its "Arc Max" scripts into every page it loads. quicklog.js is
+  // entirely same-origin, so any real error in this page's own code always carries a
+  // filename; one that does not is never ours to report or fix, and blocking the camera
+  // over someone else's script is worse than saying nothing.
+  if (!event.filename && event.message === 'Script error.') return
   const where = event.filename ? ` (${String(event.filename).split('/').pop()}:${event.lineno || '?'})` : ''
   const detail = event.error?.message || event.message || 'unknown error'
   say(`Something went wrong: ${detail}${where}`, 'error', { sticky: true })
@@ -52,6 +57,14 @@ window.addEventListener('unhandledrejection', (event) => {
 async function startCamera() {
   stopCamera()
   say('Starting the camera…')
+  // Some in-app/embedded browser modes expose no camera API at all rather than
+  // rejecting a request for one — catching that here gives a fixable answer instead of
+  // a raw TypeError from calling getUserMedia on undefined.
+  if (!navigator.mediaDevices?.getUserMedia) {
+    shutter.disabled = true
+    say('This browser does not support camera capture here. Try opening this page in Safari or Chrome.', 'error')
+    return
+  }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       // `ideal` rather than `exact`: a laptop with only a front camera should still

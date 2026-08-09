@@ -22,7 +22,12 @@ const els={
 const MAX_IMAGE_DIMENSION=1280
 const JPEG_QUALITY=.82
 const PLAN_REQUEST_TIMEOUT_MS=35000
-const CHAT_REQUEST_TIMEOUT_MS=42000
+// Kept just under the server's own 60s function ceiling (vercel.json) rather than a
+// short client-side guess: the server already saves the reply to the conversation
+// before it ever tries to respond, so it finishes the message whether or not this tab
+// is still around to hear back — the client should only give up once the server would
+// have too, not sooner.
+const CHAT_REQUEST_TIMEOUT_MS=58000
 
 function loadImage(dataUrl){
   return new Promise((resolve,reject)=>{
@@ -74,9 +79,11 @@ function setStatus(message,{error=false,loading=false}={}){
 }
 
 function hideStatus(){els.status.hidden=true}
-function showGenerationError(message){setStatus(message,{error:true});const retry=document.createElement('button');retry.type='button';retry.className='status-retry';retry.textContent='Try again';retry.addEventListener('click',()=>void generatePlan(),{once:true});els.status.append(retry)}
-async function timedFetch(url,options={},timeoutMs=PLAN_REQUEST_TIMEOUT_MS){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{return await fetch(url,{...options,signal:controller.signal})}catch(error){if(error?.name==='AbortError')throw new Error('Fuel AI took too long to respond. Try again.');throw error}finally{clearTimeout(timer)}}
+function showGenerationError(message){setStatus(message,{error:true});const retry=document.createElement('button');retry.type='button';retry.className='status-retry';retry.textContent='Try again';retry.addEventListener('click',()=>void generatePlan(true),{once:true});els.status.append(retry)}
+async function timedFetch(url,options={},timeoutMs=PLAN_REQUEST_TIMEOUT_MS,timeoutMessage='Fuel AI took too long to respond. Try again.'){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{return await fetch(url,{...options,signal:controller.signal})}catch(error){if(error?.name==='AbortError')throw new Error(timeoutMessage);throw error}finally{clearTimeout(timer)}}
 
+// Plans are only ever built when the user taps "New plan" — never automatically on
+// load. If none exists yet, the chat shell still opens so that button is reachable.
 async function loadPlanner(){
   setStatus('Checking today’s Fuel data…',{loading:true})
   try{
@@ -87,14 +94,11 @@ async function loadPlanner(){
       return
     }
     if(!response.ok)throw new Error(payload.error||'Unable to load the meal planner.')
+    sessionStorage.removeItem('fuelGeminiReauthAttempted')
     state.payload=payload
-    if(payload.plan&&!payload.needsGeneration){
-      sessionStorage.removeItem('fuelGeminiReauthAttempted')
-      renderConversation(payload)
-      hideStatus()
-      return
-    }
-    await generatePlan()
+    renderConversation(payload)
+    if(payload.plan)hideStatus()
+    else setStatus('No plan yet. Tap “New plan” to build one from today’s Fuel data.')
   }catch(error){
     setStatus(error instanceof Error?error.message:'Unable to load the meal planner.',{error:true})
   }
@@ -182,7 +186,6 @@ async function clearChat(){
 
 function renderConversation(payload){
   const messages=Array.isArray(payload?.messages)?payload.messages:[]
-  if(!payload?.plan&&!messages.length)return
   els.chat.hidden=false
   els.thread.innerHTML=''
   // Plans are ordinary messages in the thread now (kind:'plan' just picks the styling),
@@ -229,7 +232,7 @@ function renderSources(sources){
   }
 }
 
-async function sendMessage(message,{retried=false,image=null}={}){
+async function sendMessage(message,{image=null}={}){
   const text=String(message||'').trim()
   if((!text&&!image)||state.busy)return
   state.busy=true
@@ -249,26 +252,29 @@ async function sendMessage(message,{retried=false,image=null}={}){
         localTime:new Date().toString(),
         timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Los_Angeles',
       }),
-    },CHAT_REQUEST_TIMEOUT_MS)
+      // Lets the browser keep sending the request even if this tab closes or navigates
+      // away mid-flight, instead of cutting the upload off. Only for text messages: a
+      // photo's base64 payload blows well past the keepalive body-size limit (~64 KB),
+      // so requesting it there would just make the send fail outright.
+      ...(image?{}:{keepalive:true}),
+    },CHAT_REQUEST_TIMEOUT_MS,"This is taking longer than expected. Fuel AI may still finish the message in the background — check back in a bit, or reopen this page.")
     const payload=await response.json()
     removeTypingBubble()
-    if(response.status===409&&payload.code==='plan_stale'&&!retried){
-      state.busy=false
-      await generatePlan()
-      await sendMessage(text,{retried:true,image})
-      return
-    }
     if(!response.ok)throw new Error(payload.error||'Unable to answer that message.')
     state.payload=payload
     // Always append rather than re-render: a full re-render rebuilds from the server's
-    // text-only history and would drop the photo the user just sent. A regenerated plan
-    // is simply the next bubble after the reply.
+    // text-only history and would drop the photo the user just sent.
     appendBubble('assistant',payload.reply)
-    if(payload.planUpdated&&payload.updatedPlan)appendBubble('assistant',payload.updatedPlan,true)
     renderSources(payload.sources||[])
     els.thread.scrollTop=els.thread.scrollHeight
   }catch(error){
     removeTypingBubble()
+    // The server saves a reply before it ever tries to respond to this request, so an
+    // error here — a timeout, the tab losing its connection, anything — does not mean
+    // the message was lost. It very likely finished (or will) on the server; only the
+    // confirmation didn't make it back to this tab. Refreshing from the server, next
+    // load or next time the tab is visible again, is what actually shows the truth —
+    // this bubble is just an in-the-moment note, not the final word.
     appendBubble('assistant',friendlyClientError(error instanceof Error?error.message:'Unable to answer that message.'))
   }finally{
     state.busy=false
@@ -276,6 +282,24 @@ async function sendMessage(message,{retried=false,image=null}={}){
     focusComposerOnDesktop()
   }
 }
+
+// Fuel AI keeps working server-side even if this tab is backgrounded, put to sleep, or
+// closed entirely — the reply is saved before the server ever tries to respond. Catch
+// up with whatever happened whenever the user comes back to look, rather than leaving
+// a stale or errored-looking thread sitting there until a manual reload.
+async function refreshConversation(){
+  if(state.busy)return
+  try{
+    const response=await timedFetch('/api/meal-plan',{cache:'no-store',headers:{Accept:'application/json'}},15000)
+    if(!response.ok)return
+    const payload=await response.json()
+    state.payload=payload
+    renderConversation(payload)
+  }catch{/* best effort — the next visibility change or reload will retry */}
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshConversation()})
+window.addEventListener('pageshow',(event)=>{if(event.persisted)void refreshConversation()})
+window.addEventListener('online',()=>void refreshConversation())
 
 function appendTypingBubble(){
   const article=document.createElement('article')

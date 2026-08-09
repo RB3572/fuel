@@ -20,6 +20,9 @@ struct ChatMessage: Identifiable, Equatable {
     /// Set when the message is a logged meal, so the transcript shows what went in.
     var loggedFood: String?
     var photo: Data?
+    /// Set when this message IS a generated day plan, so the transcript can find and
+    /// drop the previous one when a new plan is built — only one is ever kept.
+    var isPlan: Bool = false
 }
 
 @MainActor
@@ -158,15 +161,14 @@ final class AppStore {
                                        calories: nutrition?.calories, protein: nutrition?.protein,
                                        carbs: nutrition?.carbs, fat: nutrition?.fat, fiber: nutrition?.fiber)
             await load()
-            await announceLogged(description, nutrition: nutrition, photo: nil)
+            announceLogged(description, nutrition: nutrition, photo: nil)
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    /// The camera path: identify on device, log it, and let the coach react — the same
-    /// rhythm as the website, where logging something prompts a plan for the rest of
-    /// the day.
+    /// The camera path: identify on device and log it. The coach no longer reacts
+    /// automatically — a plan is only ever built by the explicit "New plan" action.
     func logPhoto(_ photo: Data, note: String?) async {
         logging = true
         defer { logging = false }
@@ -182,7 +184,7 @@ final class AppStore {
                                        notes: note)
             lastLogged = identified.name
             await load()
-            await announceLogged(identified.name, nutrition: identified.nutrition, photo: photo)
+            announceLogged(identified.name, nutrition: identified.nutrition, photo: photo)
             // Clear the confirmation after a beat so the camera goes back to being a camera.
             try? await Task.sleep(for: .seconds(3))
             lastLogged = nil
@@ -192,20 +194,27 @@ final class AppStore {
         }
     }
 
-    /// Drops the meal into the Coach transcript and asks for a plan for what's left of
-    /// the day, given everything already eaten and burned.
-    private func announceLogged(_ food: String, nutrition: EstimatedNutrition?, photo: Data?) async {
+    /// Drops the meal into the Coach transcript. Logging never builds a plan by
+    /// itself — only the explicit "New plan" action (generateNewPlan) does that.
+    private func announceLogged(_ food: String, nutrition: EstimatedNutrition?, photo: Data?) {
         let macros = nutrition.map {
             " (\(Format.kcal($0.calories)) kcal, \(Format.number($0.protein)) g protein)"
         } ?? ""
         messages.append(ChatMessage(role: .user, text: "Logged \(food)\(macros)", loggedFood: food, photo: photo))
+    }
+
+    /// The only way a plan is ever (re)built — the explicit "New plan" action. Any
+    /// earlier plan message is dropped first, so only the most recent plan is ever
+    /// shown in the transcript.
+    func generateNewPlan() async {
         guard let summary = dashboard?.today.summary, OnDeviceAI.shared.availability.isReady else { return }
         coachThinking = true
         defer { coachThinking = false }
         do {
             let plan = try await OnDeviceAI.shared.planRestOfDay(
-                justLogged: food, summary: summary, goals: dashboard?.goals, context: context)
-            messages.append(ChatMessage(role: .coach, text: plan))
+                justLogged: lastLogged, summary: summary, goals: dashboard?.goals, context: context)
+            messages.removeAll { $0.isPlan }
+            messages.append(ChatMessage(role: .coach, text: plan, isPlan: true))
         } catch {
             messages.append(ChatMessage(role: .coach, text: "I couldn't put a plan together just now."))
         }

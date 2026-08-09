@@ -82,6 +82,15 @@ test('nothing on the page can fail silently', () => {
   assert.ok(page.indexOf('let stickyMessage') < page.indexOf("addEventListener('error'"), 'the traps must not run before say() is usable')
 })
 
+test('an opaque cross-context script error does not block the camera', () => {
+  // A bare "Script error." with no filename is what every browser reports for an error
+  // it cannot inspect — e.g. a browser's own injected overlay script (Arc's "Arc Max"
+  // in particular). quicklog.js is entirely same-origin, so a real error in this page's
+  // own code always carries a filename; the handler must ignore the filename-less case
+  // rather than surfacing someone else's error as "Something went wrong".
+  assert.match(page, /if \(!event\.filename && event\.message === 'Script error\.'\) return/)
+})
+
 test('the busy overlay names the stage it is on', () => {
   assert.match(page, /Uploading photo \(\$\{Math\.round\(dataUrl\.length \/ 1024\)\} KB\)…/)
   assert.match(page, /busyText\.textContent = 'Reading your photo…'/)

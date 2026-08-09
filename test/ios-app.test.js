@@ -114,3 +114,15 @@ test('goals are editable from the app, not just readable', () => {
   assert.match(goals, /verifyAccessToken\(token, requiredScopes\)/)
   assert.match(goals, /req\.method === 'GET' \? \['fuel:read'\] : \['fuel:write'\]/)
 })
+
+test('the Coach only builds a plan on the explicit "New plan" action, and keeps just the newest one', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  const coach = read('../ios/Fuel/Sources/CoachView.swift')
+  // Logging food no longer awaits or triggers plan generation.
+  assert.doesNotMatch(store, /await announceLogged/)
+  assert.match(store, /func generateNewPlan\(\) async \{/)
+  assert.match(store, /messages\.removeAll \{ \$0\.isPlan \}/)
+  // The plan action is reachable from the UI as its own button, disabled while busy.
+  assert.match(coach, /store\.generateNewPlan\(\)/)
+  assert.match(coach, /\.disabled\(store\.coachThinking \|\| store\.dashboard == nil \|\| !ai\.availability\.isReady\)/)
+})

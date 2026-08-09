@@ -4,8 +4,9 @@ import FoundationModels
 // Fuel AI as a conversation, not a form. It has the whole dashboard — today, goals,
 // every meal, the last week's trend — so it can be asked about nutrition, a specific
 // meal, or a health metric without switching modes. Logging something from the camera
-// drops into the same transcript and the coach answers with a plan for the rest of the
-// day, which is the rhythm the website has.
+// drops into the same transcript, but a day plan is only ever built when the user taps
+// the plan button — never automatically — and only the most recent plan stays in the
+// transcript once built.
 //
 // All of it runs on this phone. No quota, no round trip, and the photos stay put.
 
@@ -26,6 +27,17 @@ struct CoachView: View {
             .background(Palette.background(scheme))
             .navigationTitle("Coach")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await store.generateNewPlan() }
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(store.coachThinking || store.dashboard == nil || !ai.availability.isReady)
+                    .accessibilityLabel("New plan")
+                }
+            }
         }
     }
 
@@ -60,7 +72,7 @@ struct CoachView: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 12) {
             Panel(title: "Fuel AI") {
-                Text("Ask about your meals, macros, sleep, workouts or trends — the coach can see your whole dashboard. Log a photo and it will plan the rest of your day.")
+                Text("Ask about your meals, macros, sleep, workouts or trends — the coach can see your whole dashboard. Tap the plan button above for a plan for the rest of your day.")
                     .font(.footnote).foregroundStyle(Palette.muted(scheme))
                 if case .unavailable(let why) = ai.availability {
                     Divider()
