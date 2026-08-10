@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { calculateCalorieTarget } from '../api/_lib/energy-reference.js'
-import { cleanReplyText, parseStructuredChatResponse } from '../api/_lib/meal-plan.js'
+import { cleanReplyText, parseStructuredChatResponse, responseText } from '../api/_lib/meal-plan.js'
 
 test('calorie targets are calculated from average burn and percentage balance', () => {
   assert.equal(calculateCalorieTarget(2200, 0), 2200)
@@ -70,4 +70,54 @@ test('a chat message finishes processing on the server and reappears even if the
   assert.match(client, /addEventListener\('visibilitychange'/)
   assert.match(client, /addEventListener\('pageshow'/)
   assert.match(client, /addEventListener\('online'/)
+})
+
+test('a thinking model\'s reasoning is excluded before the chat/plan JSON is parsed', () => {
+  // This was the actual cause of "Fuel AI could not produce a complete response" (the
+  // user's "invalid response") on an otherwise-fine answer: reasoning parts flagged
+  // thought:true, concatenated in front of the real JSON, produce a string that cannot
+  // be parsed. Already fixed once for quick-log's parseJsonResponse; answerChat and
+  // parsePlanPayload had the same bare `parts.map` bug until now.
+  const payload = {
+    candidates: [{
+      content: {
+        parts: [
+          { text: 'Reasoning about the request before answering...', thought: true },
+          { text: '{"reply":"Here is your answer.","foods":[]}' },
+        ],
+      },
+    }],
+  }
+  const raw = responseText(payload)
+  assert.doesNotMatch(raw, /Reasoning about/)
+  const parsed = parseStructuredChatResponse(raw)
+  assert.equal(parsed.valid, true)
+  assert.equal(parsed.reply, 'Here is your answer.')
+})
+
+test('answerChat and parsePlanPayload read the model answer through responseText, not a raw parts.map', () => {
+  const mealPlan = readFileSync(new URL('../api/_lib/meal-plan.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(mealPlan, /candidate\?\.content\?\.parts\?\.map\(\(part\) => part\?\.text \|\| ''\)\.join\(''\)\.trim\(\)/)
+  const matches = mealPlan.match(/= responseText\(payload\)/g) || []
+  assert.ok(matches.length >= 3, 'parsePlanPayload and both answerChat reads (initial + retry) must use responseText')
+})
+
+test('a genuinely incomplete response names why, instead of a bare "could not produce" message', () => {
+  const mealPlan = readFileSync(new URL('../api/_lib/meal-plan.js', import.meta.url), 'utf8')
+  assert.match(mealPlan, /function incompleteReasonLabel\(candidate, raw\)/)
+  assert.match(mealPlan, /the answer ran out of room before it finished/)
+  assert.match(mealPlan, /the response was blocked by a safety filter/)
+  assert.match(mealPlan, /no response text came back/)
+  assert.match(mealPlan, /Fuel AI could not produce a complete response \(\$\{incompleteReasonLabel\(candidate, raw\)\}\)/)
+  assert.match(mealPlan, /Fuel AI could not produce a complete meal plan \(\$\{incompleteReasonLabel\(parsed\.candidate, raw\)\}\)/)
+})
+
+test('the meal plan collapses in the chat thread', () => {
+  const client = readFileSync(new URL('../public/meal-plan.js', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../public/meal-plan.css', import.meta.url), 'utf8')
+  assert.match(client, /const details=document\.createElement\('details'\)/)
+  assert.match(client, /details\.className='plan-details'/)
+  assert.match(client, /details\.open=true/)
+  assert.match(css, /\.plan-details \{/)
+  assert.match(css, /\.plan-details\[open\] \.plan-chevron \{ transform: rotate\(180deg\); \}/)
 })

@@ -352,15 +352,31 @@ async function generateMealPlan({ state, location, localTime, timeZone }) {
     parsed = parsePlanPayload(payload)
   }
   if (!parsed.valid) {
-    throw geminiError('Fuel AI could not produce a complete meal plan. Please try again.', 502, 'gemini_incomplete_plan')
+    const raw = responseText(payload)
+    console.error('Fuel AI plan: unparseable response after retry', { finishReason: parsed.candidate?.finishReason, rawLength: raw.length, rawPreview: raw.slice(0, 300) })
+    throw geminiError(`Fuel AI could not produce a complete meal plan (${incompleteReasonLabel(parsed.candidate, raw)}). Please try again.`, 502, 'gemini_incomplete_plan')
   }
   const text = formatPlanPayload(parsed)
   return { text, sources: [], model }
 }
 
+// Turns a failed candidate into a specific, useful reason instead of a bare "it
+// didn't work" — cut off vs blocked vs genuinely unreadable are different problems
+// with different fixes, and a user (or a screenshot of one) can tell them apart.
+function incompleteReasonLabel(candidate, raw) {
+  const reason = candidate?.finishReason
+  if (reason === 'MAX_TOKENS') return 'the answer ran out of room before it finished'
+  if (reason === 'SAFETY' || reason === 'RECITATION' || reason === 'BLOCKLIST' || reason === 'PROHIBITED_CONTENT') return 'the response was blocked by a safety filter'
+  if (!raw) return 'no response text came back'
+  return 'the response could not be read as valid data'
+}
+
 function parsePlanPayload(payload) {
   const candidate = payload?.candidates?.[0]
-  const raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
+  // Must exclude thought:true reasoning parts (see responseText's own comment) — a
+  // thinking model's reasoning concatenated in front of the JSON is what produced
+  // "Fuel AI could not produce a complete meal plan" on an otherwise-fine answer.
+  const raw = responseText(payload)
   if (!raw) return { valid: false, target: '', plan: '', estimatedPlanTotal: '', whyThisFits: '', candidate }
   try {
     const value = JSON.parse(raw)
@@ -446,7 +462,11 @@ async function answerChat({ state, cache, message, image }) {
   }
   let payload = await callGemini(model, request, false, GEMINI_CHAT_TIMEOUT_MS)
   let candidate = payload?.candidates?.[0]
-  let raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
+  // Must exclude thought:true reasoning parts, same as parsePlanPayload and quick-log's
+  // parseJsonResponse — a thinking model's reasoning concatenated in front of the JSON
+  // produces a string that cannot be parsed, which read to the user as a generic
+  // "invalid"/incomplete response even though the model actually answered fine.
+  let raw = responseText(payload)
   let parsed = parseStructuredChatResponse(raw)
   if (!parsed.valid || candidate?.finishReason === 'MAX_TOKENS') {
     payload = await callGemini(model, {
@@ -455,10 +475,13 @@ async function answerChat({ state, cache, message, image }) {
       generationConfig: { ...request.generationConfig, maxOutputTokens: 2400 },
     }, false, GEMINI_RETRY_TIMEOUT_MS)
     candidate = payload?.candidates?.[0]
-    raw = candidate?.content?.parts?.map((part) => part?.text || '').join('').trim()
+    raw = responseText(payload)
     parsed = parseStructuredChatResponse(raw)
   }
-  if (!parsed.valid) throw geminiError('Fuel AI could not produce a complete response. Please try that message again.', 502, 'gemini_incomplete_response')
+  if (!parsed.valid) {
+    console.error('Fuel AI chat: unparseable response after retry', { finishReason: candidate?.finishReason, rawLength: raw.length, rawPreview: raw.slice(0, 300) })
+    throw geminiError(`Fuel AI could not produce a complete response (${incompleteReasonLabel(candidate, raw)}). Please try that message again.`, 502, 'gemini_incomplete_response')
+  }
   const text = limitedText(cleanReplyText(parsed.reply), 12000)
   if (!text) throw geminiError('Gemini returned an empty response.', 502, 'gemini_empty_response')
   return {

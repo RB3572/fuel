@@ -222,6 +222,36 @@ button:focus-visible, a:focus-visible, textarea:focus-visible {
 }
 .user-bubble .bubble-label { color: rgba(255, 255, 255, .72); }
 .plan-bubble .bubble-label { color: #91b9ff; }
+.plan-details { width: 100%; }
+.plan-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -2px 0 0;
+  padding: 2px 0;
+  color: inherit;
+  font-size: 15px;
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.plan-summary::-webkit-details-marker { display: none; }
+.plan-summary:focus-visible { outline: 2px solid #91b9ff; outline-offset: 3px; border-radius: 6px; }
+.plan-chevron {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform .18s ease;
+}
+.plan-details[open] .plan-chevron { transform: rotate(180deg); }
+.plan-details .bubble-content { margin-top: 10px; }
 .bubble-content {
   min-width: 0;
   max-width: 100%;

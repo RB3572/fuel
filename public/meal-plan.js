@@ -212,7 +212,22 @@ function appendBubble(role,text,isPlan=false,imageUrl=null){
     image.alt='Food photo'
     article.append(image)
   }
-  if(text){
+  if(text&&isPlan){
+    // The plan is usually the longest thing in the thread, so it is collapsible to
+    // save space once read — starts open since it is new/current when it appears.
+    const details=document.createElement('details')
+    details.className='plan-details'
+    details.open=true
+    const summary=document.createElement('summary')
+    summary.className='plan-summary'
+    summary.innerHTML='<span>Meal plan</span><svg class="plan-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>'
+    details.append(summary)
+    const content=document.createElement('div')
+    content.className='bubble-content'
+    renderAssistantContent(content,text)
+    details.append(content)
+    article.append(details)
+  }else if(text){
     const content=document.createElement('div')
     content.className='bubble-content'
     if(role==='user')content.textContent=String(text)
