@@ -13,7 +13,8 @@ const dashboard = read('../api/_lib/neon-dashboard.js')
 // forever and could not be corrected by hand.
 
 test('the deficit chart still suppresses days that are genuinely in progress', () => {
-  assert.match(dashboard, /energyBalance: health\?\.partial_day \|\| calories == null \|\| expenditure == null \? null :/)
+  assert.match(dashboard, /energyBalance: partialDay \|\| calories == null \|\| expenditure == null \? null :/)
+  assert.match(dashboard, /const partialDay = Boolean\(health\?\.partial_day\)/)
 })
 
 test('a manual edit clears partial_day, on both insert and update', () => {

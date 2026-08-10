@@ -12,6 +12,9 @@ const DEFAULTS = {
   stand: 120,
   steps: 10000,
   sleepHours: 8,
+  // 0 means the floor is off — unlike the other goals, this one is meant to be unset
+  // for most users, so it has no positive fallback.
+  restingCaloriesFloor: 0,
 }
 
 export async function ensureGoalsTable() {
@@ -37,6 +40,10 @@ export async function ensureGoalsTable() {
     )
   `
   await db`ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS calorie_balance_percent double precision`
+  // A personal floor for resting calories: HealthKit sometimes under-reports a day's
+  // resting energy (watch not worn, a sync gap), which understates that day's total
+  // expenditure and inflates its apparent deficit. Null means the feature is off.
+  await db`ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS resting_calories_floor double precision`
 }
 
 export async function getUserGoals(userId) {
@@ -61,15 +68,18 @@ export async function saveUserGoals(userId, input) {
   const heightCm = heightIn == null ? current.profile?.heightIn == null ? null : current.profile.heightIn * 2.54 : heightIn * 2.54
   const weightKg = weightLb == null ? current.profile?.weightLb == null ? null : current.profile.weightLb / 2.2046226218 : weightLb / 2.2046226218
   const calories = calculateCalorieTarget(current.averageExpenditure, goals.calorieBalancePercent)
+  // 0 from the client means "off"; stored as null so it is ignored (not treated as an
+  // actual 0-calorie floor) everywhere it is read.
+  const restingCaloriesFloor = goals.restingCaloriesFloor > 0 ? goals.restingCaloriesFloor : null
   const db = sql()
   await db`
     INSERT INTO user_goals (
       user_id, calories_kcal, calorie_balance_percent, protein_g, carbs_g, fat_g, fiber_g,
-      move_kcal, exercise_minutes, stand_minutes, steps, sleep_hours,
+      move_kcal, exercise_minutes, stand_minutes, steps, sleep_hours, resting_calories_floor,
       height_cm, weight_kg, age_years, objective, updated_at
     ) VALUES (
       ${userId}, ${calories}, ${goals.calorieBalancePercent}, ${goals.protein}, ${goals.carbs}, ${goals.fat}, ${goals.fiber},
-      ${goals.move}, ${goals.exercise}, ${goals.stand}, ${goals.steps}, ${goals.sleepHours},
+      ${goals.move}, ${goals.exercise}, ${goals.stand}, ${goals.steps}, ${goals.sleepHours}, ${restingCaloriesFloor},
       ${heightCm}, ${weightKg}, ${age}, ${objective}, now()
     )
     ON CONFLICT (user_id) DO UPDATE SET
@@ -84,6 +94,7 @@ export async function saveUserGoals(userId, input) {
       stand_minutes = EXCLUDED.stand_minutes,
       steps = EXCLUDED.steps,
       sleep_hours = EXCLUDED.sleep_hours,
+      resting_calories_floor = EXCLUDED.resting_calories_floor,
       height_cm = COALESCE(EXCLUDED.height_cm, user_goals.height_cm),
       weight_kg = COALESCE(EXCLUDED.weight_kg, user_goals.weight_kg),
       age_years = COALESCE(EXCLUDED.age_years, user_goals.age_years),
@@ -102,6 +113,10 @@ export async function automaticallySetGoals(userId, input) {
   if (!(weightLb > 60 && weightLb < 700)) throw new Error('Enter a valid weight in pounds.')
   if (!(age >= 16 && age <= 100)) throw new Error('Enter a valid age.')
 
+  // getEnergyReference now reads user_goals.resting_calories_floor directly, so the
+  // table (and that column) must exist before it runs — unlike getUserGoals, this
+  // function had no earlier call that guaranteed that.
+  await ensureGoalsTable()
   const reference = await getEnergyReference(userId)
   const weightKg = weightLb / 2.2046226218
   const fallbackBurn = weightKg * 33
@@ -163,6 +178,7 @@ function normalizeRow(row, reference) {
     stand: finite(row.stand_minutes) ?? DEFAULTS.stand,
     steps: finite(row.steps) ?? DEFAULTS.steps,
     sleepHours: finite(row.sleep_hours) ?? DEFAULTS.sleepHours,
+    restingCaloriesFloor: finite(row.resting_calories_floor) ?? DEFAULTS.restingCaloriesFloor,
     profile: {
       heightIn: finite(row.height_cm) == null ? null : finite(row.height_cm) / 2.54,
       weightLb: weightKg == null ? null : weightKg * 2.2046226218,
@@ -177,6 +193,8 @@ function sanitizeGoals(input, fallback) {
   const ranges = {
     calorieBalancePercent: [-50, 50], protein: [20, 400], carbs: [20, 1000], fat: [15, 300], fiber: [5, 100],
     move: [100, 2500], exercise: [5, 240], stand: [15, 360], steps: [1000, 50000], sleepHours: [4, 12],
+    // 0 is a valid value here (it means "off"), unlike every other goal in this map.
+    restingCaloriesFloor: [0, 3000],
   }
   const result = {}
   for (const [key, [minimum, maximum]] of Object.entries(ranges)) {

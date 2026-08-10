@@ -6,6 +6,17 @@ import { listRecipes } from './recipes.js'
 
 const TIME_ZONE = 'America/Los_Angeles'
 
+// A personal resting-calories floor (Preferences > Goals): once a day is no longer in
+// progress, a resting figure under the floor is bumped up to it, carrying the same
+// delta into total expenditure (derived as active + resting — see health-sync.js
+// normalizeDailyTotal) so the day's deficit/surplus reflects the correction too, not
+// just the resting number on its own.
+function applyRestingFloor(resting, total, floor, partialDay) {
+  if (partialDay || floor == null || resting == null || resting >= floor) return { resting, total }
+  const delta = floor - resting
+  return { resting: floor, total: total == null ? null : total + delta }
+}
+
 export async function getNeonDashboard(userId) {
   if (!userId) throw new Error('Authenticated user ID is required')
   await ensureNutrientSchema()
@@ -37,18 +48,21 @@ export async function getNeonDashboard(userId) {
     const key = dateKey(date)
     const health = healthByDate.get(key) || null
     const totals = sumFoods(foodsByDate.get(key) || [])
-    const expenditure = number(health?.total_expenditure_kcal)
+    const partialDay = Boolean(health?.partial_day)
+    const { resting: restingEnergy, total: expenditure } = applyRestingFloor(
+      number(health?.resting_energy_kcal), number(health?.total_expenditure_kcal), userGoals.restingCaloriesFloor, partialDay,
+    )
     // A manually edited day stores its intake as an override, since consumed is
     // otherwise derived by summing food entries. The override wins when present.
     const calories = number(health?.calories_consumed_override) ?? (totals.calories || null)
     trends.push({
       date: key,
-      partialDay: Boolean(health?.partial_day),
+      partialDay,
       caloriesConsumed: calories,
-      restingEnergy: number(health?.resting_energy_kcal),
+      restingEnergy,
       activeEnergy: number(health?.active_energy_kcal),
       totalExpenditure: expenditure,
-      energyBalance: health?.partial_day || calories == null || expenditure == null ? null : calories - expenditure,
+      energyBalance: partialDay || calories == null || expenditure == null ? null : calories - expenditure,
       protein: totals.protein || null,
       carbs: totals.carbs || null,
       fat: totals.fat || null,
@@ -80,17 +94,20 @@ export async function getNeonDashboard(userId) {
     })
   }
 
-  const totalExpenditure = number(todayHealth?.total_expenditure_kcal)
+  const todayPartialDay = todayHealth ? Boolean(todayHealth.partial_day) : true
+  const { resting: restingEnergyToday, total: totalExpenditure } = applyRestingFloor(
+    number(todayHealth?.resting_energy_kcal), number(todayHealth?.total_expenditure_kcal), userGoals.restingCaloriesFloor, todayPartialDay,
+  )
   // Use one consumed figure everywhere, so an edited day's balance matches its intake.
   const consumedToday = number(todayHealth?.calories_consumed_override) ?? (nutrition.calories || null)
   const summary = {
     date: today,
-    partialDay: todayHealth ? Boolean(todayHealth.partial_day) : true,
+    partialDay: todayPartialDay,
     caloriesConsumed: consumedToday,
-    restingEnergy: number(todayHealth?.resting_energy_kcal),
+    restingEnergy: restingEnergyToday,
     activeEnergy: number(todayHealth?.active_energy_kcal),
     totalExpenditure,
-    energyBalance: todayHealth?.partial_day || !consumedToday || !totalExpenditure ? null : consumedToday - totalExpenditure,
+    energyBalance: todayPartialDay || !consumedToday || !totalExpenditure ? null : consumedToday - totalExpenditure,
     protein: nutrition.protein || null,
     carbs: nutrition.carbs || null,
     fat: nutrition.fat || null,
@@ -156,6 +173,7 @@ export async function getNeonDashboard(userId) {
       stand: range(userGoals.stand),
       steps: range(userGoals.steps),
       sleepHours: range(userGoals.sleepHours),
+      restingCaloriesFloor: range(userGoals.restingCaloriesFloor),
     },
     goalProfile: userGoals.profile,
     trends,
