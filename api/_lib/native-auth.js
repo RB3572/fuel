@@ -148,7 +148,7 @@ export async function handleNativeAuth(req, res) {
       const payload = redeemNativeHandoffCode(body.code, body.codeVerifier)
       const tokens = await issueTokenPair({
         userId: payload.userId,
-        clientId: 'fuel-ios-handoff',
+        clientId: 'fuel-native',
         resource: RESOURCE,
         scopes: ['fuel:read', 'fuel:write'],
       })
@@ -197,7 +197,7 @@ export async function handleNativeAuth(req, res) {
 
     const tokens = await issueTokenPair({
       userId: user.id,
-      clientId: `fuel-${provider}-native`,
+      clientId: 'fuel-native',
       resource: RESOURCE,
       scopes: ['fuel:read', 'fuel:write'],
     })
