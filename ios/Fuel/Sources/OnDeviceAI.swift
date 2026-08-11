@@ -1,6 +1,7 @@
 import Foundation
 import FoundationModels
 import Vision
+import UIKit
 
 // Fuel's AI, running on the phone.
 //
@@ -100,6 +101,16 @@ final class OnDeviceAI {
     estimate for a typical preparation of the described food at the described portion. \
     Use kilocalories and grams. If a field genuinely cannot be estimated, leave it empty \
     rather than guessing wildly. Do not explain your reasoning.
+
+    Calibration anchors — use these to sanity-check the *magnitude* of your estimate, \
+    never repeat one back verbatim: a slice of cheese pizza is ~285 kcal; a cup of \
+    cooked white rice is ~205 kcal; a 6oz grilled chicken breast is ~280 kcal and ~53g \
+    protein; a medium banana is ~105 kcal; a fast-food cheeseburger is ~300-500 kcal; a \
+    cup of whole milk is ~150 kcal; a tablespoon of oil or butter is ~100-120 kcal; a \
+    restaurant entrée with sides commonly totals 700-1200 kcal, not 300-400 — sides and \
+    cooking fat add up fast. When unsure between two plausible portions, prefer the \
+    larger, realistic one: people under-photograph how much is actually on the plate \
+    far more often than they over-photograph it.
     """
 
     /// Fills macros for one logged food. This is the on-device replacement for
@@ -113,32 +124,142 @@ final class OnDeviceAI {
         return response.content
     }
 
+    /// Estimates one serving of a shared recipe from its ingredients. On-device
+    /// replacement for /api/mlog?fuel_route=recipe-nutrition's Gemini call — every AI
+    /// task in this app runs on the phone, including this one, even though the recipe
+    /// bank itself is a shared server-side resource. Only the resulting numbers (never
+    /// the estimate itself) are sent to the server, via FuelClient.saveRecipeNutrition.
+    func estimateRecipeNutrition(name: String, ingredients: [String], serving: String?) async throws -> EstimatedNutrition {
+        let servingText = (serving?.isEmpty == false) ? " One serving is: \(serving!)." : " Assume the recipe makes a single serving."
+        let ingredientText = ingredients.isEmpty ? "(no ingredients listed)" : ingredients.map { "- \($0)" }.joined(separator: "\n")
+        let response = try await session(Self.nutritionist).respond(
+            to: """
+            Recipe: \(name).\(servingText)
+            Estimate the nutrition of ONE SERVING of the finished dish from these ingredients:
+            \(ingredientText)
+            """,
+            generating: EstimatedNutrition.self
+        )
+        return response.content
+    }
+
     /// Identifies a meal from a photo and estimates its nutrition — the on-device
     /// replacement for the /quicklog pipeline. The image never leaves the device.
     ///
-    /// Two on-device stages, because the system language model takes text only: Vision
-    /// classifies the picture, then the model reasons over the labels. Passing the
-    /// labels rather than a guess keeps the model honest about what was actually seen.
+    /// Three on-device stages, because the system language model takes text only:
+    /// Vision classifies the scene AND reads any printed text, then the model reasons
+    /// over both. Classification alone is a general "what kind of scene is this"
+    /// classifier (Apple's Photos-app taxonomy) — it has no notion of a specific
+    /// packaged product, so a milk carton or nutrition label reads as visual noise to
+    /// it and it was guessing plausible-sounding dishes ("chicken sandwich") from weak
+    /// labels. A carton or label carries its own answer printed on it — OCR reads the
+    /// brand and product name directly, which is far more reliable than a scene guess
+    /// for anything packaged rather than plated.
     func identifyMeal(photo: Data, note: String?) async throws -> IdentifiedMeal {
         let labels = try Self.classify(photo)
-        var prompt = "A food photo was classified on this device. Candidate labels, most likely first: "
-            + (labels.isEmpty ? "(none recognised)" : labels.joined(separator: ", ")) + "."
-        if let note, !note.isEmpty { prompt += " The person described it as: \(note)." }
-        prompt += " Decide the single most likely dish, give a realistic portion, and estimate its nutrition."
+        let text = try Self.recognizeText(photo)
+        var prompt = "A food photo was analyzed on this device.\n"
+        if labels.isEmpty {
+            prompt += "Scene classifier found nothing confident."
+        } else {
+            // Confidence is shown, not just rank, so a 4% guess isn't weighed like a
+            // 60% one — the small on-device classifier's top-10-by-rank list used to
+            // read as equally plausible options, which is how weak labels like "floor"
+            // could end up steering the answer as easily as the correct one.
+            prompt += "Scene classifier guesses, with confidence (weigh these proportionally — "
+                + "anything under ~10% is likely noise, not a real second candidate): "
+                + labels.map { "\($0.name) (\(Int(($0.confidence * 100).rounded()))%)" }.joined(separator: ", ") + "."
+        }
+        if !text.isEmpty {
+            prompt += "\nText read directly off the packaging or label (this is the most reliable signal if present — "
+                + "prefer identifying the exact branded product it names over the scene labels above): "
+                + text.joined(separator: " | ")
+        }
+        if let note, !note.isEmpty { prompt += "\nThe person described it as: \(note)." }
+        prompt += "\nDecide the single most likely food or drink, give a realistic portion, and estimate its nutrition."
         let response = try await session(Self.nutritionist).respond(to: prompt, generating: IdentifiedMeal.self)
         return response.content
     }
 
-    /// Vision's built-in classifier, filtered to food-ish confidence. Runs locally and
-    /// needs no model download.
-    private static func classify(_ photo: Data) throws -> [String] {
-        let request = VNClassifyImageRequest()
-        try VNImageRequestHandler(data: photo, options: [:]).perform([request])
-        let results = (request.results ?? [])
-            .filter { $0.confidence > 0.05 }
+    private struct VisionLabel { let name: String; let confidence: Float }
+
+    /// Vision's built-in classifier, filtered to food-ish confidence, run on the full
+    /// frame and — when Vision finds one — a saliency-cropped region, so a dish that
+    /// only fills part of the photo (a bowl on a busy table, a cup in a hand) also gets
+    /// classified at closer range, the way physically pointing the camera closer would.
+    /// The crop is a second opinion only: it can add candidate labels but never removes
+    /// what the full frame found, and any failure in it is silently skipped so a bad
+    /// crop degrades to "just the full-frame pass," never to an error or a worse guess.
+    private static func classify(_ photo: Data) throws -> [VisionLabel] {
+        var best: [String: Float] = [:]
+        func merge(_ data: Data) throws {
+            let request = VNClassifyImageRequest()
+            try VNImageRequestHandler(data: data, options: [:]).perform([request])
+            for result in request.results ?? [] where result.confidence > 0.05 {
+                let name = result.identifier.replacingOccurrences(of: "_", with: " ")
+                best[name] = max(best[name] ?? 0, result.confidence)
+            }
+        }
+        try merge(photo)
+        if let cropped = salientCrop(photo) { try? merge(cropped) }
+        return best.map { VisionLabel(name: $0.key, confidence: $0.value) }
             .sorted { $0.confidence > $1.confidence }
-            .prefix(10)
-        return results.map { $0.identifier.replacingOccurrences(of: "_", with: " ") }
+            .prefix(6)
+            .map { $0 }
+    }
+
+    /// Crops to Vision's most visually salient region, padded so a tight box doesn't
+    /// slice into the food itself. Returns nil on anything unexpected rather than
+    /// throwing — callers treat this as an optional bonus pass, not a dependency.
+    private static func salientCrop(_ photo: Data) -> Data? {
+        guard let original = UIImage(data: photo) else { return nil }
+        // Bake in EXIF orientation first: CGImage's raw buffer ignores it, but the
+        // normalized boundingBox Vision reports below assumes the upright image, so
+        // cropping the raw buffer directly against that box would crop the wrong
+        // region on any photo not already shot in the sensor's native orientation.
+        let upright = original.normalizedToUpOrientation()
+        guard let cgImage = upright.cgImage,
+              let box = try? classifySaliency(cgImage) else { return nil }
+        let w = CGFloat(cgImage.width), h = CGFloat(cgImage.height)
+        let padded = box.insetBy(dx: -0.08, dy: -0.08).intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        // Vision's origin is bottom-left with y increasing upward; CGImage cropping
+        // expects top-left with y increasing downward, hence the flip.
+        let rect = CGRect(x: padded.minX * w, y: (1 - padded.maxY) * h,
+                           width: padded.width * w, height: padded.height * h)
+        guard rect.width > 40, rect.height > 40, let cropped = cgImage.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: cropped).jpegData(compressionQuality: 0.85)
+    }
+
+    private static func classifySaliency(_ cgImage: CGImage) throws -> CGRect? {
+        let request = VNGenerateAttentionBasedSaliencyImageRequest()
+        try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+        return request.results?.first?.salientObjects?.first?.boundingBox
+    }
+
+    /// Reads any text printed in the photo — the brand and product name on a carton,
+    /// wrapper, or nutrition label. Empty for a plain plated meal, which is fine: the
+    /// prompt falls back to the scene labels above when there's nothing to read.
+    private static func recognizeText(_ photo: Data) throws -> [String] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        try VNImageRequestHandler(data: photo, options: [:]).perform([request])
+        let lines = (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first }
+            .filter { $0.confidence > 0.3 }
+            .map(\.string)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        // Cap both count and total length: a dense nutrition-facts panel can produce
+        // dozens of short lines, and the point is naming the product, not transcribing
+        // the whole label.
+        var out: [String] = []
+        var length = 0
+        for line in lines.prefix(30) {
+            length += line.count
+            if length > 600 { break }
+            out.append(line)
+        }
+        return out
     }
 
     /// A short read on the day, from the numbers already on screen. Deliberately given
@@ -277,5 +398,17 @@ final class OnDeviceAI {
         return "CONVERSATION SO FAR:\n" + recent
             .map { "\($0.role == .user ? "Them" : "You"): \($0.text)" }
             .joined(separator: "\n")
+    }
+}
+
+private extension UIImage {
+    /// Re-renders with orientation `.up` baked into the pixel buffer. `CGImage` has no
+    /// orientation of its own — a photo shot in portrait is commonly stored as a
+    /// landscape buffer plus an EXIF tag, which `.cgImage` ignores. Anything that crops
+    /// or measures the raw `CGImage` needs this first, or it works in the wrong frame.
+    func normalizedToUpOrientation() -> UIImage {
+        guard imageOrientation != .up else { return self }
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in draw(in: CGRect(origin: .zero, size: size)) }
     }
 }

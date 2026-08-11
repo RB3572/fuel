@@ -9,6 +9,8 @@ struct MoreView: View {
     @Environment(OnDeviceAI.self) private var ai
     @Environment(\.colorScheme) private var scheme
     @State private var syncing = false
+    @State private var showContext = false
+    @AppStorage("fuelDarkMode") private var darkMode = false
 
     var body: some View {
         @Bindable var store = store
@@ -82,12 +84,40 @@ struct MoreView: View {
                         .keyboardType(.URL)
                         .font(.system(.footnote, design: .monospaced))
                     Button(role: .destructive) {
-                        store.auth.signOut()
+                        store.signOut()
                     } label: { Text("Sign out") }
                 } header: {
                     Text("Account")
                 } footer: {
                     Text("The same account as the website — sign in with Google or Apple and you see the same data. Point Fuel at your own server if you self-host.")
+                }
+
+                Section {
+                    Toggle(isOn: $darkMode) {
+                        Label("Dark Mode", systemImage: darkMode ? "moon.fill" : "sun.max.fill")
+                    }
+                } header: {
+                    Text("Appearance")
+                }
+
+                Section {
+                    NavigationLink { LiftingView() } label: { Label("Lifting", systemImage: "dumbbell.fill") }
+                    NavigationLink { CompareView() } label: { Label("Compare", systemImage: "person.2.fill") }
+                    NavigationLink { ExploreView() } label: { Label("Explore", systemImage: "chart.xyaxis.line") }
+                    NavigationLink { PlacesView() } label: { Label("Places", systemImage: "mappin.and.ellipse") }
+                    NavigationLink { RecipesView() } label: { Label("Recipes", systemImage: "book.closed.fill") }
+                } header: {
+                    Text("Browse")
+                } footer: {
+                    Text("The same tabs as the website's top nav, all reading and writing the same account.")
+                }
+
+                Section {
+                    Button { showContext = true } label: {
+                        Label("Preferences & context", systemImage: "person.text.rectangle")
+                    }
+                } footer: {
+                    Text("Food preferences, allergies, activity and durable guidance the Coach and MCP clients read.")
                 }
 
                 Section {
@@ -104,6 +134,7 @@ struct MoreView: View {
                 }
             }
             .navigationTitle("More")
+            .sheet(isPresented: $showContext) { ContextEditorSheet() }
         }
     }
 }

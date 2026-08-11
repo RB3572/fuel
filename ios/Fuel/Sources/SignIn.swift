@@ -40,6 +40,14 @@ final class SignIn: NSObject {
     private var webSession: ASWebAuthenticationSession?
     private var appleContinuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
     private var appleNonce: String?
+    /// The server's refresh tokens are single-use and rotate on redemption. At launch
+    /// and on foreground, several call sites ask for an access token within
+    /// milliseconds of each other; each independently seeing the same stale token and
+    /// racing to redeem it means only the first succeeds — the rest get an
+    /// already-used refresh token, silently fail, and are left permanently stranded on
+    /// the old token pair until sign-out/sign-in. Everyone joins one in-flight refresh
+    /// instead of starting their own.
+    private var refreshTask: Task<Void, Never>?
 
     init(baseURL: String) {
         self.baseURL = baseURL
@@ -54,12 +62,21 @@ final class SignIn: NSObject {
         Keychain.set("", for: "fuel-tokens")
     }
 
-    /// A valid access token, refreshed if it has aged out.
+    /// A valid access token, refreshed if it has aged out. Concurrent callers during
+    /// the same expiry window join one refresh rather than each redeeming the
+    /// single-use refresh token themselves — see `refreshTask`.
     func accessToken() async -> String? {
         guard let tokens else { return nil }
         if tokens.isFresh { return tokens.accessToken }
         guard let refresh = tokens.refreshToken else { return nil }
-        try? await refreshTokens(refresh)
+        if let refreshTask {
+            await refreshTask.value
+        } else {
+            let task = Task { _ = try? await self.refreshTokens(refresh) }
+            refreshTask = task
+            await task.value
+            refreshTask = nil
+        }
         return self.tokens?.accessToken
     }
 

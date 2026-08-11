@@ -126,3 +126,141 @@ test('the Coach only builds a plan on the explicit "New plan" action, and keeps 
   assert.match(coach, /store\.generateNewPlan\(\)/)
   assert.match(coach, /\.disabled\(store\.coachThinking \|\| store\.dashboard == nil \|\| !ai\.availability\.isReady\)/)
 })
+
+test('the website\'s Lifting, Compare, Explore, Places and Recipes tabs are all reachable from More', () => {
+  const more = read('../ios/Fuel/Sources/MoreView.swift')
+  for (const [view, label] of [
+    ['LiftingView', 'Lifting'], ['CompareView', 'Compare'], ['ExploreView', 'Explore'],
+    ['PlacesView', 'Places'], ['RecipesView', 'Recipes'],
+  ]) {
+    assert.match(more, new RegExp(`NavigationLink \\{ ${view}\\(\\) \\} label: \\{ Label\\("${label}"`),
+      `${view} must be reachable from the More tab`)
+  }
+  // Editing preferences & context (the website's other More-menu item) is reachable too.
+  assert.match(more, /showContext = true/)
+  assert.match(more, /\.sheet\(isPresented: \$showContext\) \{ ContextEditorSheet\(\) \}/)
+})
+
+test('the resting-calories-floor goal is editable from the app, matching the website', () => {
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  const sheets = read('../ios/Fuel/Sources/EditSheets.swift')
+  assert.match(client, /var restingCaloriesFloor: Double\?/)
+  // Read on appear, written on save — a field that's only read would silently drop edits.
+  assert.match(sheets, /"restingCaloriesFloor": text\(g\.restingCaloriesFloor\)/)
+  assert.match(sheets, /next\.restingCaloriesFloor = Double\(values\["restingCaloriesFloor"\] \?\? ""\)/)
+})
+
+test('location capture is one fix per app open, never continuous background tracking', () => {
+  const sampler = read('../ios/Fuel/Sources/LocationSampler.swift')
+  // requestLocation() is a single fix-and-stop API; startUpdatingLocation() would
+  // subscribe to a continuous stream, which this app never asks for.
+  assert.match(sampler, /manager\.requestLocation\(\)/)
+  assert.doesNotMatch(sampler, /startUpdatingLocation/)
+  assert.doesNotMatch(sampler, /allowsBackgroundLocationUpdates/)
+  // A denied or restricted prompt is respected, not retried.
+  assert.match(sampler, /case \.denied, \.restricted:\s*\n\s*return/)
+  // Off by default is not the goal here (the website defaults tracking on too), but
+  // the toggle must exist and must gate the capture.
+  assert.match(sampler, /var trackingEnabled: Bool/)
+  // Never prompted before sign-in either — matches the website's own
+  // useLocationCapture(session.authenticated) gate.
+  assert.match(sampler, /guard AppStore\.shared\.isSignedIn, trackingEnabled else \{ return \}/)
+  const places = read('../ios/Fuel/Sources/PlacesView.swift')
+  assert.match(places, /LocationSampler\.shared\.trackingEnabled = value/)
+})
+
+test('logging a recipe estimates missing nutrition on-device, at most once, before giving up', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  const match = store.match(/func logRecipe\(_ recipe: Recipe\) async -> Bool \{[\s\S]*?\n    \}/)
+  assert.ok(match, 'logRecipe should be defined on AppStore')
+  const body = match[0]
+  // A single conditional retry, not a loop — an unbounded retry against a recipe that
+  // can never be estimated would hang the log button forever.
+  assert.doesNotMatch(body, /while |for /)
+  assert.match(body, /OnDeviceAI\.shared\.estimateRecipeNutrition\(/)
+  assert.match(body, /client\(\)\.saveRecipeNutrition\(recipeId: outcome\.recipeId \?\? id, nutrition: estimate\)/)
+})
+
+test('recipe nutrition — like every other AI task in the app — runs on device, never through Gemini', () => {
+  const ai = read('../ios/Fuel/Sources/OnDeviceAI.swift')
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(ai, /func estimateRecipeNutrition\(name: String, ingredients: \[String\], serving: String\?\)/)
+  // FuelClient may only ever PUT an already-computed estimate (pure storage) for this
+  // route — a POST here would be the website's Gemini-backed path, which must never
+  // be reachable from the app.
+  assert.doesNotMatch(client, /fuel_route=recipe-nutrition["'], method: "POST"/)
+  assert.match(client, /fuel_route=recipe-nutrition["'], method: "PUT"/)
+  assert.match(store, /OnDeviceAI\.shared\.estimateRecipeNutrition\(/)
+  // The mlog.js PUT branch this calls must be pure storage too — no Gemini import used
+  // to serve it.
+  const mlog = read('../api/mlog.js')
+  const put = mlog.match(/if \(req\.method === 'PUT'\) \{[\s\S]*?saveEstimatedNutrition\(recipeId,[\s\S]*?\n {6}\}/)
+  assert.ok(put, 'handleRecipeNutrition should have a PUT branch that stores a client-supplied estimate')
+  assert.doesNotMatch(put[0], /callGemini|estimateRecipeNutrition\(recipe\)/)
+})
+
+test('the recipe bank and places heatmap decode the server\'s actual response shape', () => {
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  const recipes = read('../api/_lib/recipes.js')
+  const places = read('../api/_lib/places.js')
+  // recipes.js nests nutrition under a `nutrition` object; a flat `calories` field on
+  // Recipe (the app's original stub) would silently decode every recipe as empty.
+  assert.match(recipes, /nutrition: \{/)
+  assert.match(client, /var nutrition: RecipeNutrition\?/)
+  // places.js returns bucketsPerDay/windowDays/daysCovered — pinning these catches a
+  // renamed server field before it ships as "Places always shows zero check-ins."
+  assert.match(places, /bucketsPerDay: BUCKETS_PER_DAY/)
+  assert.match(client, /var bucketsPerDay: Int/)
+  assert.match(client, /var daysCovered: Int/)
+})
+
+test('concurrent access-token requests join one refresh instead of racing', () => {
+  // The server's refresh tokens are single-use. Two callers redeeming the same stale
+  // one at once means one succeeds and the other is silently stranded on a dead token
+  // until sign-out/sign-in — this pins the fix so it can't quietly regress.
+  const signIn = read('../ios/Fuel/Sources/SignIn.swift')
+  assert.match(signIn, /private var refreshTask: Task<Void, Never>\?/)
+  assert.match(signIn, /if let refreshTask \{\s*\n\s*await refreshTask\.value/)
+  assert.match(signIn, /refreshTask = task\b[\s\S]{0,80}await task\.value[\s\S]{0,40}refreshTask = nil/)
+})
+
+test('the app fetches its own health-sync token instead of reusing its OAuth token', () => {
+  // /api/health/sync/v1 only ever accepted the dedicated sync-token model (see
+  // health-sync.test.js) — sending it an OAuth access token 401s every time. The app
+  // must mint/fetch a real sync token via /api/health/token and use that instead.
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /\/api\/health\/token/)
+  assert.match(store, /func ensureHealthSyncToken\(\) async -> String\?/)
+  assert.match(store, /guard let token = await ensureHealthSyncToken\(\) else \{ return \}/)
+  // client() must not stomp SyncStore's token with the OAuth token on every API call —
+  // that was the actual bug: it silently overwrote a correct sync token if one was ever
+  // set.
+  const clientFn = store.match(/private func client\(\) async throws -> FuelClient \{[\s\S]*?\n {4}\}/)
+  assert.ok(clientFn)
+  assert.doesNotMatch(clientFn[0], /SyncStore/)
+})
+
+test('signing out clears the cached health-sync token, not just the OAuth session', () => {
+  // Otherwise a second account signed into the same device would sync HealthKit data
+  // under the first account's identity — the server trusts whichever account the sync
+  // token was minted for, regardless of who is now signed in.
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  const signOutFn = store.match(/func signOut\(\) \{[\s\S]*?\n {4}\}/)
+  assert.ok(signOutFn)
+  assert.match(signOutFn[0], /healthSyncToken = nil/)
+  assert.match(signOutFn[0], /auth\.signOut\(\)/)
+  const moreView = read('../ios/Fuel/Sources/MoreView.swift')
+  assert.match(moreView, /store\.signOut\(\)/)
+  assert.doesNotMatch(moreView, /store\.auth\.signOut\(\)/)
+})
+
+test('/api/health/token accepts an OAuth bearer as well as the website session cookie', () => {
+  const token = read('../api/health/token.js')
+  assert.match(token, /import \{ bearerToken, verifyAccessToken \} from '\.\.\/_lib\/mcp-auth\.js'/)
+  assert.match(token, /verifyAccessToken\(bearerToken\(req\), \['fuel:read'\]\)/)
+  // The data endpoint itself must stay exactly as locked-down as health-sync.test.js
+  // pins — only the endpoint that mints a token gained a new way to authenticate.
+  const sync = read('../api/_lib/health-sync.js')
+  assert.doesNotMatch(sync, /verifyAccessToken/)
+})

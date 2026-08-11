@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import HealthKit
+import CoreLocation
 
 // Everything the app knows, in one observable place.
 //
@@ -49,6 +50,7 @@ final class AppStore {
     var layout = DashboardLayout.default
     var goalValues = GoalValues()
     var history: [HistoryDay] = []
+    var places: PlaceHeatmap?
 
     let auth: SignIn
 
@@ -71,18 +73,42 @@ final class AppStore {
     }
 
     /// Keep the health-sync endpoint pointed at whatever server the app talks to, so
-    /// switching to a self-hosted Fuel moves both halves together.
+    /// switching to a self-hosted Fuel moves both halves together. A server change
+    /// invalidates any cached sync token from the old one.
     private func syncEndpointFromBase() {
         SyncStore.shared.endpoint = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             + "/api/health/sync/v1"
-        // The sync engine authenticates with the same OAuth access token.
-        Task { SyncStore.shared.token = await auth.accessToken() ?? "" }
+        healthSyncToken = nil
     }
 
     private func client() async throws -> FuelClient {
         guard let token = await auth.accessToken() else { throw FuelClientError.notConfigured }
-        SyncStore.shared.token = token
         return try FuelClient(baseURL: baseURL, token: token)
+    }
+
+    /// The dedicated long-lived bearer token /api/health/sync/v1 requires — a
+    /// different credential from the OAuth access token the rest of the API uses, and
+    /// on purpose: it is a separate, narrower trust boundary that a Shortcut or the
+    /// Health Logger app can hold indefinitely without ever seeing a Google session.
+    /// Minted once via GET /api/health/token (itself authenticated with the OAuth
+    /// token) and cached here rather than refetched on every sync.
+    private var healthSyncToken: String?
+
+    private struct HealthSyncTokenResponse: Decodable { let token: String }
+
+    private func ensureHealthSyncToken() async -> String? {
+        if let healthSyncToken { return healthSyncToken }
+        guard let accessToken = await auth.accessToken(),
+              let url = URL(string: baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/health/token")
+        else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let decoded = try? JSONDecoder().decode(HealthSyncTokenResponse.self, from: data)
+        else { return nil }
+        healthSyncToken = decoded.token
+        return decoded.token
     }
 
     // MARK: - Loading
@@ -107,6 +133,14 @@ final class AppStore {
         async let goalsResult = try? client().goals()
         if let value = await layoutResult { layout = value }
         if let value = await goalsResult { goalValues = value }
+    }
+
+    /// Re-fetches goals on demand — used when the Goals sheet opens, so it never shows
+    /// stale (or, if the one-shot loadEditableState() call raced or failed silently,
+    /// still-default/empty) values.
+    func loadGoals() async {
+        guard isSignedIn else { return }
+        do { goalValues = try await client().goals() } catch { self.error = error.localizedDescription }
     }
 
     func saveLayout(_ next: DashboardLayout) async {
@@ -138,6 +172,108 @@ final class AppStore {
         } catch { self.error = error.localizedDescription }
     }
 
+    // MARK: - Places
+
+    func loadPlaces(days: Int = 30) async {
+        guard isSignedIn else { return }
+        do { places = try await client().places(days: days) } catch { self.error = error.localizedDescription }
+    }
+
+    func renamePlace(_ placeId: String, label: String) async {
+        do { try await client().renamePlace(placeId, label: label); await loadPlaces() }
+        catch { self.error = error.localizedDescription }
+    }
+
+    func clearPlaces() async {
+        do { try await client().clearPlaces(); await loadPlaces() }
+        catch { self.error = error.localizedDescription }
+    }
+
+    /// Gives unnamed places a real name, one at a time and spaced out — the lookup is
+    /// rate-limited upstream and cached server-side, exactly like the website's version.
+    func identifyPendingPlaces() async {
+        guard let pending = places?.places.filter({ $0.label == nil && !$0.identified && $0.samples > 0 }),
+              !pending.isEmpty else { return }
+        for place in pending {
+            guard let result = try? await client().identifyPlace(place.id) else { continue }
+            if let index = places?.places.firstIndex(where: { $0.id == place.id }) {
+                places?.places[index].suggestedLabel = result.suggestedLabel
+                places?.places[index].suggestedDetail = result.suggestedDetail
+                places?.places[index].identified = result.identified ?? true
+            }
+            try? await Task.sleep(for: .seconds(1.1))
+        }
+    }
+
+    /// Fire-and-forget, mirroring the website's own capture: a failure here (offline,
+    /// inaccurate fix, throttled) is never worth surfacing to the user.
+    func recordLocation(_ location: CLLocation) async {
+        guard isSignedIn else { return }
+        let accuracy = location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil
+        _ = try? await client().recordLocation(latitude: location.coordinate.latitude,
+                                               longitude: location.coordinate.longitude, accuracy: accuracy)
+    }
+
+    // MARK: - Recipes
+
+    /// Logs one serving of a shared recipe. A recipe with no nutrition yet is estimated
+    /// on-device once, then logged — matching the website's single-retry
+    /// backfill-then-log flow, except the estimate itself never leaves this phone; only
+    /// the resulting numbers are sent to the server.
+    @discardableResult
+    func logRecipe(_ recipe: Recipe) async -> Bool {
+        guard let id = recipe.id else { return false }
+        do {
+            var outcome = try await client().logRecipe(recipeId: id)
+            if !outcome.ok, outcome.needsNutrition {
+                if let estimate = try? await OnDeviceAI.shared.estimateRecipeNutrition(
+                    name: recipe.name ?? "Recipe", ingredients: recipe.ingredients ?? [], serving: recipe.serving) {
+                    _ = try? await client().saveRecipeNutrition(recipeId: outcome.recipeId ?? id, nutrition: estimate)
+                }
+                outcome = try await client().logRecipe(recipeId: id)
+            }
+            if outcome.ok { await load() }
+            return outcome.ok
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
+    func fillRecipeNutrition(_ recipe: Recipe) async {
+        guard let id = recipe.id else { return }
+        do {
+            let estimate = try await OnDeviceAI.shared.estimateRecipeNutrition(
+                name: recipe.name ?? "Recipe", ingredients: recipe.ingredients ?? [], serving: recipe.serving)
+            _ = try await client().saveRecipeNutrition(recipeId: id, nutrition: estimate)
+            await load()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Fills in every recipe missing nutrition, one on-device estimate at a time. No
+    /// quota to run into and nothing to batch — the reason the web version needed
+    /// both — so this just walks the list once (mirrors fillMissingNutrition's own
+    /// reasoning for food entries).
+    @discardableResult
+    func fillPendingRecipeNutrition() async -> Int {
+        var filled = 0
+        do {
+            let pending = try await client().recipesNeedingNutrition()
+            for entry in pending {
+                guard let recipe = dashboard?.recipes?.first(where: { $0.id == entry.id }) else { continue }
+                guard let estimate = try? await OnDeviceAI.shared.estimateRecipeNutrition(
+                    name: recipe.name ?? entry.name, ingredients: recipe.ingredients ?? [], serving: recipe.serving) else { continue }
+                if (try? await client().saveRecipeNutrition(recipeId: entry.id, nutrition: estimate)) != nil { filled += 1 }
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+        if filled > 0 { await load() }
+        return filled
+    }
+
     func updateFood(_ entry: FoodEntry, description: String, meal: String?, portion: String?,
                     calories: Double?, protein: Double?, carbs: Double?, fat: Double?, fiber: Double?) async {
         do {
@@ -151,6 +287,12 @@ final class AppStore {
     func loadContext() async {
         guard isSignedIn, context.isEmpty else { return }
         context = (try? await client().userContext()) ?? ""
+    }
+
+    /// Replaces the complete stored context, exactly as the website's editor does.
+    func saveContext(_ text: String) async {
+        do { context = try await client().saveUserContext(text) }
+        catch { self.error = error.localizedDescription }
     }
 
     // MARK: - Food
@@ -293,9 +435,18 @@ final class AppStore {
 
     func syncHealth(reason: String) async {
         guard isSignedIn, healthAuthorized else { return }
-        SyncStore.shared.token = await auth.accessToken() ?? ""
+        guard let token = await ensureHealthSyncToken() else { return }
+        SyncStore.shared.token = token
         _ = await SyncEngine.shared.sync(reason: reason)
         await load()
+    }
+
+    /// Wraps auth.signOut() so the cached sync token — minted for whoever was signed
+    /// in — never survives into a different account's session on the same device.
+    func signOut() {
+        healthSyncToken = nil
+        SyncStore.shared.token = ""
+        auth.signOut()
     }
 
     var healthStatus: String {
