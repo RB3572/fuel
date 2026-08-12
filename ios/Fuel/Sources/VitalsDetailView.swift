@@ -60,17 +60,37 @@ struct VitalsDetailView: View {
 
 /// One vital: today's number, its baseline, and the history the comparison is made
 /// against, with the usual-range band drawn behind the line.
+///
+/// The x axis is real `Date`s, not date strings. Strings gave Charts a categorical axis,
+/// which labelled every single day — thirty labels overlapping into an unreadable smear —
+/// placed points by their order in the array rather than by when they happened, and
+/// rendered the range band over one category instead of spanning the plot. Dates fix all
+/// three at once, and let the tick density follow the zoom.
 struct VitalTrendPanel: View {
     @Environment(\.colorScheme) private var scheme
     let item: VitalItem
     let trends: [DaySummary]
     let today: String?
 
+    /// Days shown at once. Pinch changes it; the axis thins its labels to match.
+    @State private var visibleDays: Double = 30
+    @GestureState private var magnifyBy: CGFloat = 1
+
     private var theme: DashboardTheme { DashboardTheme.shared }
 
-    private var points: [(date: String, value: Double)] {
-        trends.compactMap { day in item.key.value(day).map { (day.date, $0) } }
+    /// Sorted, de-duplicated and parsed. Sorting is not decoration: a line chart connects
+    /// points in array order, so a single out-of-order or repeated day draws a stray
+    /// segment doubling back across the whole plot.
+    private var points: [(date: Date, value: Double)] {
+        var byDay: [Date: Double] = [:]
+        for day in trends {
+            guard let value = item.key.value(day), let date = VitalAxis.parse(day.date) else { continue }
+            byDay[date] = value
+        }
+        return byDay.sorted { $0.key < $1.key }.map { (date: $0.key, value: $0.value) }
     }
+
+    private var todayDate: Date? { today.flatMap(VitalAxis.parse) }
 
     /// The band the score actually uses: median ± the same sigma the z-score divides by,
     /// floored at the vital's minimum meaningful spread. Drawing it makes the floor
@@ -81,6 +101,11 @@ struct VitalTrendPanel: View {
         }
         let sigma = abs((item.today - center) / z)
         return (center - 2 * sigma, center + 2 * sigma)
+    }
+
+    private var window: Double {
+        let span = Double(points.count)
+        return min(max(4, visibleDays / Double(magnifyBy)), max(4, span))
     }
 
     var body: some View {
@@ -106,53 +131,110 @@ struct VitalTrendPanel: View {
             }
 
             if points.count > 1 {
-                Chart {
-                    if let band {
-                        RectangleMark(
-                            xStart: .value("From", points.first!.date),
-                            xEnd: .value("To", points.last!.date),
-                            yStart: .value("Low", band.low),
-                            yEnd: .value("High", band.high)
-                        )
-                        .foregroundStyle(theme.accent.opacity(0.10))
-                    }
-                    if let center = item.center {
-                        RuleMark(y: .value("Usual", center))
-                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                            .foregroundStyle(Palette.muted(scheme).opacity(0.6))
-                    }
-                    ForEach(points, id: \.date) { point in
-                        LineMark(x: .value("Day", point.date), y: .value(item.key.label, point.value))
-                            .foregroundStyle(theme.accent)
-                            .interpolationMethod(.monotone)
-                        if point.date == today {
-                            PointMark(x: .value("Day", point.date), y: .value(item.key.label, point.value))
-                                .foregroundStyle(item.flagged ? .red : item.watch ? .orange : theme.accent)
-                                .symbolSize(70)
-                        }
-                    }
-                }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                        AxisValueLabel {
-                            if let raw = value.as(String.self) {
-                                Text(DateAxis.short(raw)).font(.system(size: 9))
-                            }
-                        }
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                        AxisGridLine().foregroundStyle(Palette.muted(scheme).opacity(0.15))
-                        AxisValueLabel {
-                            if let v = value.as(Double.self) {
-                                Text(Format.number(v, decimals: item.key.decimals)).font(.system(size: 9))
-                            }
-                        }
-                    }
-                }
-                .frame(height: 130)
+                chart
+                Text("Pinch to zoom · scroll for older days")
+                    .font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
             }
         }
     }
+
+    private var chart: some View {
+        let series = points
+        let ticks = VitalAxis.ticks(forVisibleDays: window)
+        return Chart {
+            if let band, let first = series.first?.date, let last = series.last?.date {
+                // One day past the last point: a day-unit x value marks the *start* of
+                // its day, so ending at `last` would stop the band short of the final
+                // reading rather than covering it.
+                let end = Calendar.current.date(byAdding: .day, value: 1, to: last) ?? last
+                RectangleMark(
+                    xStart: .value("From", first), xEnd: .value("To", end),
+                    yStart: .value("Low", band.low), yEnd: .value("High", band.high)
+                )
+                .foregroundStyle(theme.accent.opacity(0.10))
+            }
+            if let center = item.center {
+                RuleMark(y: .value("Usual", center))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .foregroundStyle(Palette.muted(scheme).opacity(0.6))
+            }
+            ForEach(series, id: \.date) { point in
+                // Straight segments, deliberately: a smoothed curve would invent readings
+                // between days that were never measured.
+                LineMark(x: .value("Day", point.date, unit: .day),
+                         y: .value(item.key.label, point.value))
+                    .foregroundStyle(theme.accent)
+                if point.date == todayDate {
+                    PointMark(x: .value("Day", point.date, unit: .day),
+                              y: .value(item.key.label, point.value))
+                        .foregroundStyle(item.flagged ? .red : item.watch ? .orange : theme.accent)
+                        .symbolSize(70)
+                }
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .stride(by: ticks.unit, count: ticks.count)) { value in
+                AxisGridLine().foregroundStyle(Palette.muted(scheme).opacity(0.12))
+                AxisValueLabel {
+                    if let date = value.as(Date.self) {
+                        Text(VitalAxis.label(date, ticks.unit)).font(.system(size: 9))
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                AxisGridLine().foregroundStyle(Palette.muted(scheme).opacity(0.15))
+                AxisValueLabel {
+                    if let v = value.as(Double.self) {
+                        Text(Format.number(v, decimals: item.key.decimals)).font(.system(size: 9))
+                    }
+                }
+            }
+        }
+        .chartScrollableAxes(.horizontal)
+        .chartXVisibleDomain(length: window * 86_400)
+        .chartScrollPosition(initialX: series.last?.date ?? Date())
+        .frame(height: 150)
+        .gesture(
+            MagnifyGesture()
+                .updating($magnifyBy) { value, state, _ in state = value.magnification }
+                .onEnded { value in
+                    visibleDays = min(max(4, visibleDays / value.magnification), max(4, Double(series.count)))
+                }
+        )
+    }
+}
+
+/// Date parsing and tick spacing for the vitals charts.
+enum VitalAxis {
+    static func parse(_ iso: String) -> Date? { formatter.date(from: iso) }
+
+    /// How often to draw a labelled tick, given how many days are on screen. Zoomed out
+    /// to a month you get one a week; zoomed in to a few days you get one a day. The
+    /// alternative — a label per day at every zoom — is what made the axis unreadable.
+    static func ticks(forVisibleDays days: Double) -> (unit: Calendar.Component, count: Int) {
+        switch days {
+        case ..<8: return (.day, 1)
+        case ..<15: return (.day, 2)
+        case ..<32: return (.weekOfYear, 1)
+        case ..<70: return (.weekOfYear, 2)
+        case ..<200: return (.month, 1)
+        default: return (.month, 3)
+        }
+    }
+
+    static func label(_ date: Date, _ unit: Calendar.Component) -> String {
+        let out = DateFormatter()
+        out.dateFormat = unit == .month ? "MMM" : "MMM d"
+        return out.string(from: date)
+    }
+
+    private static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = .current
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 }

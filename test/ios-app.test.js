@@ -683,3 +683,42 @@ test('tapping a widget opens the tab it came from', () => {
     assert.match(app, new RegExp(`case "${tab}": tab = \\.${tab}`), `fuel://${tab} must route`)
   }
 })
+
+test('the vitals charts plot dates, not date strings', () => {
+  const src = read('../ios/Fuel/Sources/VitalsDetailView.swift')
+  // A String x gave Charts a categorical axis: one label per day (an unreadable smear at
+  // 30 days), points placed by array order rather than by date, and a range band that
+  // covered one category instead of spanning the plot.
+  assert.match(src, /x: \.value\("Day", point\.date, unit: \.day\)/)
+  assert.doesNotMatch(src, /points: \[\(date: String/)
+  // Sorted and de-duplicated: a line connects points in array order, so one repeated or
+  // out-of-order day draws a stray segment back across the whole chart.
+  assert.match(src, /var byDay: \[Date: Double\] = \[:\]/)
+  assert.match(src, /byDay\.sorted \{ \$0\.key < \$1\.key \}/)
+  // No smoothing — it would invent readings between days that were never measured.
+  assert.doesNotMatch(src, /interpolationMethod/)
+})
+
+test('vitals axis ticks thin out as you zoom out', () => {
+  const src = read('../ios/Fuel/Sources/VitalsDetailView.swift')
+  assert.match(src, /static func ticks\(forVisibleDays days: Double\)/)
+  const cases = [...src.matchAll(/case \.\.<(\d+): return \(\.(\w+), (\d+)\)/g)]
+    .map(m => ({ upTo: Number(m[1]), unit: m[2], count: Number(m[3]) }))
+  assert.ok(cases.length >= 4, 'expected several zoom bands')
+  // Thresholds ascend, and each band is coarser than the one before it — otherwise
+  // zooming out could somehow produce denser labels.
+  const rank = { day: 1, weekOfYear: 7, month: 30 }
+  let prevUpTo = 0, prevSpacing = 0
+  for (const c of cases) {
+    assert.ok(c.upTo > prevUpTo, `thresholds must ascend, ${c.upTo} follows ${prevUpTo}`)
+    const spacing = rank[c.unit] * c.count
+    assert.ok(spacing > prevSpacing, `${c.unit} x${c.count} is not coarser than the previous band`)
+    prevUpTo = c.upTo; prevSpacing = spacing
+  }
+  // Zoomed all the way in, a tick per day.
+  assert.equal(cases[0].unit, 'day')
+  assert.equal(cases[0].count, 1)
+  // And the chart is actually zoomable, or the density would never change.
+  assert.match(src, /MagnifyGesture\(\)/)
+  assert.match(src, /\.chartXVisibleDomain\(length: window \* 86_400\)/)
+})
