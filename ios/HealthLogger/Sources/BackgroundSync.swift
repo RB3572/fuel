@@ -90,7 +90,7 @@ enum BackgroundSync {
         }
 
         for (type, frequency) in wanted {
-            store.enableBackgroundDelivery(for: type, frequency: frequency) { _, _ in }
+            try? await store.enableBackgroundDelivery(for: type, frequency: frequency)
             let query = HKObserverQuery(sampleType: type, predicate: nil) { _, completionHandler, error in
                 guard error == nil else { completionHandler(); return }
                 Task {

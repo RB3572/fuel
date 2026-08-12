@@ -364,6 +364,16 @@ extension SignIn: ASAuthorizationControllerDelegate, ASAuthorizationControllerPr
     @MainActor
     private static func anchor() -> ASPresentationAnchor {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes.first?.keyWindow ?? ASPresentationAnchor()
+        if let key = scenes.first?.keyWindow { return key }
+        // A window has to belong to a scene as of iOS 26. The frame-based fallback is
+        // only reachable if we are asked to present with no window scene at all, which
+        // means there is no UI to present over in the first place.
+        guard let scene = scenes.first else {
+            // Every way of making a window without a scene is deprecated as of iOS 26,
+            // and there is nothing sensible to return: being asked to present sign-in
+            // with no window scene means there is no UI to present over.
+            fatalError("Sign-in asked for a presentation anchor with no window scene")
+        }
+        return UIWindow(windowScene: scene)
     }
 }
