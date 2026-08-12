@@ -581,3 +581,39 @@ test('the common-foods table carries published per-serving values', () => {
   }
   assert.match(foods, /static func matches\(_ query: String/)
 })
+
+test('a vital that barely moves cannot manufacture a huge z-score', () => {
+  // Reported symptom: cardio recovery read 44 against a 44 baseline and came back
+  // "Low ↓ · z 8.4", which alone dragged the day to 1/10. The cause is MAD-derived
+  // sigma collapsing toward zero when a vital reads the same number most days, so a
+  // difference below the sensor's precision divides out to a huge z.
+  const swift = read('../ios/Fuel/Sources/VitalsSignal.swift')
+  assert.match(swift, /var minimumMeaningfulSpread: Double/)
+  assert.match(swift, /sigma = max\(sigma, key\.minimumMeaningfulSpread\)/)
+  // Every vital needs a floor; a missing case would silently keep the old behavior.
+  for (const key of ['restingHeartRate', 'hrv', 'respiratoryRate', 'bloodOxygen',
+                     'walkingHeartRateAverage', 'cardioRecovery']) {
+    assert.match(swift, new RegExp(`case \\.${key}: return \\d`), `${key} needs a spread floor`)
+  }
+  // The website runs the same statistic and had the same bug.
+  const web = read('../src/App.tsx')
+  assert.match(web, /minSpread:number/)
+  assert.match(web, /sigma=Math\.max\(sigma,def\.minSpread\)/)
+  for (const key of ['restingHeartRate', 'hrv', 'cardioRecovery']) {
+    assert.match(web, new RegExp(`key:'${key}'[^}]*minSpread:`), `${key} needs a spread floor`)
+  }
+})
+
+test('the vitals banner opens a page charting every vital against its history', () => {
+  const detail = read('../ios/Fuel/Sources/VitalsDetailView.swift')
+  assert.match(detail, /struct VitalsDetailView: View/)
+  // Every vital the signal evaluates gets a chart, not just the flagged ones.
+  assert.match(detail, /ForEach\(signal\.items, id: \\\.key\)/)
+  // The band drawn is the one the score actually uses, floor included — otherwise the
+  // picture and the verdict could disagree.
+  assert.match(detail, /minimumMeaningfulSpread/)
+  assert.match(detail, /RuleMark\(y: \.value\("Usual", center\)\)/)
+  const bar = read('../ios/Fuel/Sources/VitalsSignal.swift')
+  assert.match(bar, /See all vitals and their trends/)
+  assert.match(bar, /VitalsDetailView\(trends: trends, summary: summary\)/)
+})

@@ -138,14 +138,19 @@ function useInView<T extends HTMLElement>(){const ref=useRef<T|null>(null);const
 //    likely to be chance). 10 = today looks just like your history, 1 = highly unusual.
 // Informational only — this is not a medical diagnosis.
 type VitalKey='restingHeartRate'|'hrv'|'respiratoryRate'|'bloodOxygen'|'walkingHeartRateAverage'|'cardioRecovery'
-type VitalDef={key:VitalKey;label:string;unit:string;decimals:number}
+type VitalDef={key:VitalKey;label:string;unit:string;decimals:number;minSpread:number}
+// `minSpread` is the smallest change in a vital worth calling unusual, and it floors
+// the MAD-derived sigma. Without it a vital that barely moves — a cardio recovery that
+// reads the same number most days — gets a near-zero sigma, and a difference below the
+// sensor's own precision divides out to a huge z: 44 bpm against a 44 bpm baseline came
+// back as "Low, z 8.4", which then dragged the whole day's score to 1/10.
 const VITAL_DEFS:VitalDef[]=[
-  {key:'restingHeartRate',label:'Resting heart rate',unit:'bpm',decimals:0},
-  {key:'hrv',label:'HRV',unit:'ms',decimals:0},
-  {key:'respiratoryRate',label:'Respiratory rate',unit:'/min',decimals:1},
-  {key:'bloodOxygen',label:'Blood oxygen',unit:'%',decimals:1},
-  {key:'walkingHeartRateAverage',label:'Walking heart rate',unit:'bpm',decimals:0},
-  {key:'cardioRecovery',label:'Cardio recovery',unit:'bpm',decimals:0},
+  {key:'restingHeartRate',label:'Resting heart rate',unit:'bpm',decimals:0,minSpread:2},
+  {key:'hrv',label:'HRV',unit:'ms',decimals:0,minSpread:5},
+  {key:'respiratoryRate',label:'Respiratory rate',unit:'/min',decimals:1,minSpread:0.5},
+  {key:'bloodOxygen',label:'Blood oxygen',unit:'%',decimals:1,minSpread:0.5},
+  {key:'walkingHeartRateAverage',label:'Walking heart rate',unit:'bpm',decimals:0,minSpread:3},
+  {key:'cardioRecovery',label:'Cardio recovery',unit:'bpm',decimals:0,minSpread:3},
 ]
 const VITALS_MIN_HISTORY=7
 type VitalItem=VitalDef&{today:number;center?:number;z?:number;p?:number;direction?:'up'|'down';insufficient?:boolean;flagged?:boolean;watch?:boolean}
@@ -166,7 +171,7 @@ function computeVitalsSignal(trends:TrendPoint[],summary:Summary|undefined):Vita
     const mad=median(baseline.map(v=>Math.abs(v-m)))
     let sigma=1.4826*mad
     if(!(sigma>0)){const mean=baseline.reduce((a,b)=>a+b,0)/baseline.length;sigma=Math.sqrt(baseline.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(1,baseline.length-1))}
-    if(!(sigma>0)){items.push({...def,today:todayVal,center:m,insufficient:true});continue}
+    sigma=Math.max(sigma,def.minSpread)
     const z=(todayVal-m)/sigma
     const p=Math.min(1,erfc(Math.abs(z)/Math.SQRT2))
     items.push({...def,today:todayVal,center:m,z,p,direction:z>=0?'up':'down'})

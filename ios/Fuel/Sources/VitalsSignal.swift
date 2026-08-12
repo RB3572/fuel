@@ -36,6 +36,22 @@ enum VitalKey: String, CaseIterable {
     }
     var decimals: Int { self == .respiratoryRate || self == .bloodOxygen ? 1 : 0 }
 
+    /// The smallest change in this vital that is worth calling unusual, used as a floor
+    /// under the MAD-derived sigma. Without it a vital that barely moves — a cardio
+    /// recovery that reads the same number most days — gets a near-zero sigma, and then
+    /// a difference far below the sensor's own precision divides out to a huge z. That
+    /// is how a 44 bpm reading against a 44 bpm baseline came back as "Low, z 8.4".
+    var minimumMeaningfulSpread: Double {
+        switch self {
+        case .restingHeartRate: return 2
+        case .hrv: return 5
+        case .respiratoryRate: return 0.5
+        case .bloodOxygen: return 0.5
+        case .walkingHeartRateAverage: return 3
+        case .cardioRecovery: return 3
+        }
+    }
+
     func value(_ s: DaySummary) -> Double? {
         switch self {
         case .restingHeartRate: return s.restingHeartRate
@@ -104,10 +120,7 @@ func computeVitalsSignal(trends: [DaySummary], summary: DaySummary?) -> VitalsSi
             let variance = baseline.reduce(0.0) { $0 + ($1 - mean) * ($1 - mean) } / Double(max(1, baseline.count - 1))
             sigma = variance.squareRoot()
         }
-        if !(sigma > 0) {
-            items.append(VitalItem(key: key, today: todayVal, center: m, insufficient: true))
-            continue
-        }
+        sigma = max(sigma, key.minimumMeaningfulSpread)
         let z = (todayVal - m) / sigma
         let p = min(1, erfc(abs(z) / 2.0.squareRoot()))
         items.append(VitalItem(key: key, today: todayVal, center: m, z: z, p: p, direction: z >= 0 ? "up" : "down"))
@@ -141,6 +154,7 @@ struct VitalsSignalBar: View {
     let trends: [DaySummary]
     let summary: DaySummary?
     @State private var open = false
+    @State private var showingAll = false
 
     private var signal: VitalsSignalResult { computeVitalsSignal(trends: trends, summary: summary) }
 
@@ -176,6 +190,20 @@ struct VitalsSignalBar: View {
                 if open {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(s.items, id: \.key) { item in vitalRow(item) }
+                        Button { showingAll = true } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "chart.xyaxis.line")
+                                Text("See all vitals and their trends")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 11))
+                            }
+                            .font(.system(size: 13, weight: .medium))
+                            .padding(.vertical, 9).padding(.horizontal, 11)
+                            .background(Palette.surface(scheme), in: RoundedRectangle(cornerRadius: 9))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DashboardTheme.shared.accent)
+                        .padding(.top, 4)
                         Text("Today vs. your own history using a modified z-score (median/MAD), Bonferroni-corrected across \(s.evaluated) vital\(s.evaluated == 1 ? "" : "s"). 10 = typical for you, 1 = highly unusual. Informational only — not a medical diagnosis.")
                             .font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
                             .padding(.top, 4)
@@ -187,6 +215,16 @@ struct VitalsSignalBar: View {
             .background(backgroundTint(s.status))
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor(s.status), lineWidth: 1))
+            .sheet(isPresented: $showingAll) {
+                NavigationStack {
+                    VitalsDetailView(trends: trends, summary: summary)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showingAll = false }
+                            }
+                        }
+                }
+            }
         }
     }
 

@@ -21,6 +21,7 @@
 		55A5DC93B5930CFD60DC26F0 /* SignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FC3C7B7D4B5951095EF487C /* SignIn.swift */; };
 		6A85BEE5B833F09BEE7DC5EF /* PlacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE8BBF80AB6D80821F0788BC /* PlacesView.swift */; };
 		6EA4432B193045BDE4B40D83 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F28885825E18C8C99FB8B952 /* MarkdownText.swift */; };
+		72282C3F7794F06140CC8121 /* VitalsDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B417868D2A54C8AC1695F522 /* VitalsDetailView.swift */; };
 		7C52EAB35296E5963F5779EE /* VitalsSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD75E91607669954578FEB5 /* VitalsSignal.swift */; };
 		7DC7F53D08B51AF61925B231 /* CommonFoods.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2F578A82AEFA5F7B226AC2 /* CommonFoods.swift */; };
 		7DE5EFE41422522226BCEFB0 /* LiftingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0ACD7889A0B189EB6BB06B1 /* LiftingView.swift */; };
@@ -60,6 +61,7 @@
 		994F8C24D9312F72DAFA2A12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9BD75E91607669954578FEB5 /* VitalsSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalsSignal.swift; sourceTree = "<group>"; };
 		AE8BBF80AB6D80821F0788BC /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
+		B417868D2A54C8AC1695F522 /* VitalsDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalsDetailView.swift; sourceTree = "<group>"; };
 		C3603D8F4D4375B05FDCAD92 /* RemoteAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAI.swift; sourceTree = "<group>"; };
 		C440567FECEB2E771E84314D /* BackgroundSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSync.swift; sourceTree = "<group>"; };
 		C6C2EA6227B2FD6E2349E050 /* OnDeviceAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceAI.swift; sourceTree = "<group>"; };
@@ -135,6 +137,7 @@
 				41AAF989E677DB59A259D7D6 /* Theme.swift */,
 				8F75273FDA28EE1A341AA5A3 /* TodayView.swift */,
 				4101886BC814B0DD968C954D /* TrendsView.swift */,
+				B417868D2A54C8AC1695F522 /* VitalsDetailView.swift */,
 				9BD75E91607669954578FEB5 /* VitalsSignal.swift */,
 			);
 			path = Sources;
@@ -267,6 +270,7 @@
 				E289C905EAB6D00EA9E10917 /* Theme.swift in Sources */,
 				8CEECA600976103398056182 /* TodayView.swift in Sources */,
 				7F8F36885619CD796831614C /* TrendsView.swift in Sources */,
+				72282C3F7794F06140CC8121 /* VitalsDetailView.swift in Sources */,
 				7C52EAB35296E5963F5779EE /* VitalsSignal.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -400,7 +404,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -425,7 +429,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
