@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const sync = read('../api/_lib/health-sync.js')
@@ -172,4 +172,24 @@ test('raw samples expire but everything the UI reads is kept forever', () => {
   const pruneCall = sync.indexOf('await pruneExpiredSamples(db, userId)')
   const firstInsert = sync.indexOf('INSERT INTO hk_quantity_samples')
   assert.ok(pruneCall > 0 && pruneCall < firstInsert, 'prune must run before the first insert')
+})
+
+test('every query goes through one client, pointed at the current database', () => {
+  const db = read('../api/_lib/db.js')
+  // The Neon integration for the current database registers under the NEW_FUEL_ prefix
+  // because a second Neon install cannot claim the unprefixed names. DATABASE_URL still
+  // resolves to the original project, so reading it first would silently keep the whole
+  // app on the old data even though the migration is complete.
+  assert.match(db, /process\.env\.NEW_FUEL_DATABASE_URL \|\| process\.env\.DATABASE_URL/)
+  const newAt = db.indexOf('NEW_FUEL_DATABASE_URL')
+  const oldAt = db.indexOf('process.env.DATABASE_URL')
+  assert.ok(newAt > 0 && newAt < oldAt, 'the new database must be preferred over DATABASE_URL')
+
+  // One chokepoint: any module building its own client would bypass that precedence and
+  // quietly keep talking to whichever URL it happened to read.
+  const files = readdirSync(new URL('../api/_lib/', import.meta.url))
+  for (const file of files.filter((f) => f.endsWith('.js') && f !== 'db.js')) {
+    const source = read(`../api/_lib/${file}`)
+    assert.doesNotMatch(source, /\bneon\(/, `${file} must use sql() from db.js, not its own client`)
+  }
 })
