@@ -722,3 +722,18 @@ test('vitals axis ticks thin out as you zoom out', () => {
   assert.match(src, /MagnifyGesture\(\)/)
   assert.match(src, /\.chartXVisibleDomain\(length: window \* 86_400\)/)
 })
+
+test('the widget scheme names a widget kind, so Run works on it', () => {
+  // Running a widget extension asks SpringBoard to show ONE widget, and it refuses
+  // without _XCWidgetKind: "SBAvocadoDebuggingControllerErrorDomain Code=2".
+  const spec = read('../ios/Fuel/project.yml')
+  assert.match(spec, /_XCWidgetKind: (\w+)/)
+  const kind = spec.match(/_XCWidgetKind: (\w+)/)[1]
+  // It has to be a kind the bundle actually registers, or Run fails the same way.
+  assert.match(read('../ios/FuelWidgets/Sources/FuelWidgetBundle.swift'),
+    new RegExp(`kind: "${kind}"`), `${kind} is not a registered widget kind`)
+  // Both schemes are shared, so the generated project always exposes them.
+  const scheme = read('../ios/Fuel/Fuel.xcodeproj/xcshareddata/xcschemes/FuelWidgets.xcscheme')
+  assert.match(scheme, /key = "_XCWidgetKind"/)
+  assert.match(scheme, new RegExp(`value = "${kind}"`))
+})

@@ -28,6 +28,9 @@ targets:
     dependencies:
       - target: FuelWidgets
         embed: true
+    # Shared explicitly, so adding the widget scheme above does not leave the app's own
+    # scheme as an unshared local one.
+    scheme: {}
     entitlements:
       path: Resources/Fuel.entitlements
       properties:
@@ -97,6 +100,14 @@ targets:
     sources:
       - path: ../FuelWidgets/Sources
       - path: Sources/WidgetShared.swift
+    # Running a widget extension directly asks SpringBoard to show one widget, and it
+    # refuses unless the scheme names which of the sixteen kinds it should be. Without
+    # this, Run on the FuelWidgets scheme fails with SBAvocadoDebuggingController code 2.
+    # Change the value to preview a different widget; Run the Fuel scheme to launch the
+    # app normally.
+    scheme:
+      environmentVariables:
+        _XCWidgetKind: FuelEnergyRings
     entitlements:
       path: ../FuelWidgets/FuelWidgets.entitlements
       properties:
