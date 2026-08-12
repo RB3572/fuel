@@ -201,7 +201,7 @@ struct TodayView: View {
                 }
                 .padding(.top, 6)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    ForEach(DashboardLayout.allCharts, id: \.self) { key in chartToggleTile(key) }
+                    ForEach(Array(Self.chartLabels.keys.sorted()), id: \.self) { key in chartToggleTile(key) }
                 }
                 .padding(.top, 8)
             } else {
@@ -231,15 +231,13 @@ struct TodayView: View {
                 }
                 Divider()
                 NetBalanceTrendChart(trends: Array((store.dashboard?.trends ?? []).suffix(30)))
-                if activeLayout.charts.contains("components") {
-                    Divider()
-                    EnergyComponentsChart(days: rangeVisible)
-                }
             }
         }
     }
 
-    private static let chartLabels = ["intraday": "Daily intake", "components": "Energy components"]
+    // "components" stays in the layout schema (the server and website still round-trip
+    // it) but the grouped-bar chart it controlled is gone, so it is not offered here.
+    private static let chartLabels = ["intraday": "Daily intake"]
 
     /// Same shape as energyBoxTile — a compact chip that's both the preview and the
     /// toggle — but for the two big charts rather than a numeric stat, so there's
@@ -847,12 +845,23 @@ struct NetBalanceTrendChart: View {
 
     @State private var visibleCount: Double
     @GestureState private var magnifyBy: CGFloat = 1
-    @State private var scrollPosition: String = ""
     @State private var selectedDate: String?
+
+    /// Today plus the previous three. A month of daily bars at phone width is a smear,
+    /// and the question this chart answers is almost always about the last few days.
+    private static let defaultWindow = 4
 
     init(trends: [DaySummary]) {
         self.trends = trends
-        _visibleCount = State(initialValue: Double(min(5, max(trends.count, 1))))
+        _visibleCount = State(initialValue: Double(min(Self.defaultWindow, max(trends.count, 1))))
+    }
+
+    /// The date the visible window should start at so it *ends* on the most recent day.
+    /// chartScrollPosition anchors the leading edge, so scrolling to the last date alone
+    /// would park today at the far left with empty space after it.
+    private var initialScrollDate: String {
+        let start = max(0, points.count - Self.defaultWindow)
+        return points.indices.contains(start) ? points[start].date : (points.last?.date ?? "")
     }
 
     private var points: [(date: String, net: Double?)] {
@@ -893,8 +902,8 @@ struct NetBalanceTrendChart: View {
             HStack {
                 Text("Daily deficit and surplus").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink(scheme))
                 Spacer()
-                if points.count > 5 {
-                    Text("Scroll · pinch to zoom").font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
+                if points.count > Self.defaultWindow {
+                    Text("Tap a bar · scroll · pinch").font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
                 }
             }
             if points.allSatisfy({ $0.net == nil }) {
@@ -943,20 +952,31 @@ struct NetBalanceTrendChart: View {
                 // days are visible at once, matching the website's implicit zoom via
                 // its own bar width.
                 .chartScrollableAxes(.horizontal)
-                .chartXVisibleDomain(length: max(4, Int((visibleCount / magnifyBy).rounded())))
-                .chartScrollPosition(x: $scrollPosition)
-                .chartXSelection(value: $selectedDate)
+                .chartXVisibleDomain(length: max(3, Int((visibleCount / magnifyBy).rounded())))
+                // initialX rather than a bound position set in onAppear/task: the
+                // binding was applied before the scroll view had laid out and was
+                // silently discarded, which is why this opened weeks in the past.
+                .chartScrollPosition(initialX: initialScrollDate)
+                // A plain tap that toggles, instead of chartXSelection's press-and-hold
+                // (which also clears the moment you lift, so a reading never stayed up).
+                .chartOverlay { proxy in
+                    GeometryReader { geo in
+                        Rectangle().fill(.clear).contentShape(Rectangle())
+                            .onTapGesture { location in
+                                guard let plot = proxy.plotFrame else { return }
+                                let x = location.x - geo[plot].origin.x
+                                guard let date: String = proxy.value(atX: x) else { return }
+                                selectedDate = (selectedDate == date) ? nil : date
+                            }
+                    }
+                }
                 .simultaneousGesture(
                     MagnificationGesture()
                         .updating($magnifyBy) { value, state, _ in state = value }
                         .onEnded { value in
-                            visibleCount = min(Double(points.count), max(4, visibleCount / value))
+                            visibleCount = min(Double(points.count), max(3, visibleCount / value))
                         }
                 )
-                // Lands on the most recent days rather than wherever the domain starts.
-                // `.onAppear` alone fired before the scroll view had laid out and the
-                // position was ignored, which is why it opened weeks in the past.
-                .task(id: points.last?.date) { scrollPosition = points.last?.date ?? "" }
                 .frame(height: 130)
             }
         }
@@ -966,60 +986,6 @@ struct NetBalanceTrendChart: View {
         HStack(spacing: 4) {
             Capsule().fill(color).frame(width: 14, height: 5)
             Text(label).font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
-        }
-    }
-}
-
-/// The website's EnergyInteractiveChart: four grouped bars per day (consumed, resting,
-/// active, total burned), same colours as the website's own bar classes.
-struct EnergyComponentsChart: View {
-    @Environment(\.colorScheme) private var scheme
-    let days: [DaySummary]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Daily intake and energy components").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink(scheme))
-            HStack(spacing: 12) {
-                legendDot("Consumed", Palette.ink(scheme))
-                legendDot("Resting", DashboardTheme.shared.tertiary)
-                legendDot("Active", DashboardTheme.shared.secondary)
-                legendDot("Total burned", Palette.muted(scheme))
-            }
-            if days.isEmpty {
-                Text("No energy data").font(.footnote).foregroundStyle(Palette.muted(scheme))
-                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .center)
-            } else {
-                Chart {
-                    ForEach(days, id: \.date) { day in
-                        if let v = day.caloriesConsumed {
-                            BarMark(x: .value("Date", day.date), y: .value("kcal", v))
-                                .foregroundStyle(Palette.ink(scheme)).position(by: .value("Series", "Consumed"))
-                        }
-                        if let v = day.restingEnergy {
-                            BarMark(x: .value("Date", day.date), y: .value("kcal", v))
-                                .foregroundStyle(DashboardTheme.shared.tertiary).position(by: .value("Series", "Resting"))
-                        }
-                        if let v = day.activeEnergy {
-                            BarMark(x: .value("Date", day.date), y: .value("kcal", v))
-                                .foregroundStyle(DashboardTheme.shared.secondary).position(by: .value("Series", "Active"))
-                        }
-                        if let v = day.totalExpenditure {
-                            BarMark(x: .value("Date", day.date), y: .value("kcal", v))
-                                .foregroundStyle(Palette.muted(scheme)).position(by: .value("Series", "Burned"))
-                        }
-                    }
-                }
-                .chartXAxis { AxisMarks(values: .automatic(desiredCount: min(days.count, 5))) }
-                .chartYAxis { AxisMarks(values: .automatic(desiredCount: 3)) }
-                .frame(height: 190)
-            }
-        }
-    }
-
-    private func legendDot(_ label: String, _ color: Color) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(label).font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
         }
     }
 }

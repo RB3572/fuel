@@ -241,11 +241,19 @@ test('the Coach can act, but nothing mutates without an explicit confirmation', 
 
 test('the deficit chart opens on the most recent days and reads out a tapped bar', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
-  // onAppear fired before the scroll view had laid out, so the position was ignored and
-  // the chart opened weeks in the past.
-  assert.match(today, /\.task\(id: points\.last\?\.date\) \{ scrollPosition = points\.last\?\.date \?\? "" \}/)
-  assert.doesNotMatch(today, /\.onAppear \{ scrollPosition = points\.last/)
-  assert.match(today, /\.chartXSelection\(value: \$selectedDate\)/)
+  // A position bound in onAppear/task was applied before the scroll view had laid out
+  // and silently discarded, which is why this opened weeks in the past. initialX is
+  // applied at construction; it anchors the *leading* edge, so it has to be the start
+  // of the window rather than the last day or today parks at the far left.
+  assert.match(today, /\.chartScrollPosition\(initialX: initialScrollDate\)/)
+  assert.match(today, /let start = max\(0, points\.count - Self\.defaultWindow\)/)
+  assert.doesNotMatch(today, /scrollPosition = points\.last/)
+  // Today plus the previous three.
+  assert.match(today, /static let defaultWindow = 4/)
+  // A plain tap that toggles, not chartXSelection's press-and-hold — which also cleared
+  // on lift, so a reading never stayed up.
+  assert.doesNotMatch(today, /\.chartXSelection\(/)
+  assert.match(today, /selectedDate = \(selectedDate == date\) \? nil : date/)
   // Dates read as "Mon Aug 11", not an ISO string on a tick mark.
   assert.match(today, /setLocalizedDateFormatFromTemplate\("EEE MMM d"\)/)
   // The all-time average carries the same two colours as the bars, since its sign is
