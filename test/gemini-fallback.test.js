@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs'
 
 process.env.APP_URL ||= 'https://fuel.rishib.com'
 process.env.GEMINI_API_KEY ||= 'test-key-not-real'
-process.env.DATABASE_URL ||= 'postgres://unused/unused'
+process.env.NEW_FUEL_DATABASE_URL ||= 'postgres://unused/unused'
 process.env.TOKEN_ENCRYPTION_KEY ||= Buffer.alloc(32, 7).toString('base64')
 process.env.SESSION_SECRET ||= 'test-secret'
 delete process.env.GEMINI_MODEL

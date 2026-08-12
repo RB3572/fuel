@@ -2,15 +2,18 @@ import crypto from 'node:crypto'
 import { neon } from '@neondatabase/serverless'
 import { decryptJson, encryptJson } from './crypto.js'
 
-// NEW_FUEL_DATABASE_URL first, DATABASE_URL only as the fallback. The Neon integration
-// for the current database registers itself under the NEW_FUEL_ prefix (a second Neon
-// install cannot claim the unprefixed names), while DATABASE_URL still points at the
-// original project. Preferring the prefixed one is what actually moves the app across;
-// leaving DATABASE_URL as a fallback keeps any environment that never got the new
-// integration — a preview branch, a local .env — working instead of failing to boot.
+// NEW_FUEL_DATABASE_URL is the only database this app talks to. It comes from the Neon
+// integration for the project that owns this data; the prefix exists because a second
+// Neon install cannot claim the unprefixed variable names.
+//
+// There is deliberately no DATABASE_URL fallback. That variable pointed at a Neon
+// project on a different person's account, and a fallback is exactly how an app finds
+// its way back to a database nobody meant it to use — silently, and only noticed when
+// the data looks stale. Failing to boot is the correct outcome if the real database is
+// ever unconfigured.
 export function sql() {
-  const url = process.env.NEW_FUEL_DATABASE_URL || process.env.DATABASE_URL
-  if (!url) throw new Error('No database URL is configured (NEW_FUEL_DATABASE_URL or DATABASE_URL)')
+  const url = process.env.NEW_FUEL_DATABASE_URL
+  if (!url) throw new Error('NEW_FUEL_DATABASE_URL is not configured')
   return neon(url)
 }
 

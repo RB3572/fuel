@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-process.env.DATABASE_URL ||= 'postgres://unused/unused'
+process.env.NEW_FUEL_DATABASE_URL ||= 'postgres://unused/unused'
 
 const { DASHBOARD_SECTIONS, ENERGY_BOXES, CHARTS, normalizeLayout } = await import('../api/_lib/dashboard-layout.js')
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')

@@ -176,14 +176,13 @@ test('raw samples expire but everything the UI reads is kept forever', () => {
 
 test('every query goes through one client, pointed at the current database', () => {
   const db = read('../api/_lib/db.js')
-  // The Neon integration for the current database registers under the NEW_FUEL_ prefix
-  // because a second Neon install cannot claim the unprefixed names. DATABASE_URL still
-  // resolves to the original project, so reading it first would silently keep the whole
-  // app on the old data even though the migration is complete.
-  assert.match(db, /process\.env\.NEW_FUEL_DATABASE_URL \|\| process\.env\.DATABASE_URL/)
-  const newAt = db.indexOf('NEW_FUEL_DATABASE_URL')
-  const oldAt = db.indexOf('process.env.DATABASE_URL')
-  assert.ok(newAt > 0 && newAt < oldAt, 'the new database must be preferred over DATABASE_URL')
+  // NEW_FUEL_DATABASE_URL and nothing else. DATABASE_URL pointed at a Neon project on
+  // someone else's account; keeping it as a fallback is exactly how an app finds its
+  // way back to a database nobody meant it to use — silently, and only noticed when the
+  // data looks stale. Not booting is the correct failure here.
+  assert.match(db, /const url = process\.env\.NEW_FUEL_DATABASE_URL\s*$/m)
+  assert.doesNotMatch(db, /process\.env\.DATABASE_URL/,
+    'DATABASE_URL must not be readable as a fallback — it is a different account')
 
   // One chokepoint: any module building its own client would bypass that precedence and
   // quietly keep talking to whichever URL it happened to read.
