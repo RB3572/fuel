@@ -73,7 +73,38 @@ struct RootView: View {
                 Tab("Coach", systemImage: "sparkles", value: AppTab.coach) { CoachView(onBack: { tab = .today }) }
                 Tab("More", systemImage: "ellipsis", value: AppTab.more) { MoreView() }
             }
+            // Above the status bar and across every tab, because a sync is app-wide and
+            // can start from anywhere — launch, foreground, pull-to-refresh, background.
+            .overlay(alignment: .top) {
+                if store.isSyncing {
+                    SyncProgressBar()
+                        .transition(.opacity)
+                        .ignoresSafeArea(edges: .top)
+                }
+            }
+            .animation(.easeInOut(duration: 0.25), value: store.isSyncing)
         }
+    }
+}
+
+/// A hairline indeterminate bar. Deliberately not a spinner or a banner: a sync is
+/// frequent, usually quick, and never something to interrupt what you were reading.
+struct SyncProgressBar: View {
+    @State private var sliding = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            Capsule()
+                .fill(DashboardTheme.shared.accent)
+                .frame(width: width * 0.35, height: 3)
+                .offset(x: sliding ? width * 0.65 : -width * 0.35)
+                .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: false), value: sliding)
+        }
+        .frame(height: 3)
+        .background(DashboardTheme.shared.accent.opacity(0.15))
+        .onAppear { sliding = true }
+        .accessibilityLabel("Syncing health data")
     }
 }
 

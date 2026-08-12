@@ -327,3 +327,76 @@ private func ordinal(_ n: Int) -> String {
     default: return "\(n)th"
     }
 }
+
+/// A compact version of the Compare table for the Trends tab: the handful of metrics
+/// with published norms, each as a card showing your average against the age band.
+/// Deliberately not the full page — that stays behind More, with the sources, method
+/// note and the sex/age controls. This is the glanceable summary.
+struct CompareCards: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.colorScheme) private var scheme
+
+    private var sex: CompareSex {
+        UserDefaults.standard.string(forKey: "fuelCompareSex") == "f" ? .female : .male
+    }
+    private var trends: [DaySummary] { store.dashboard?.trends ?? [] }
+    private var bandIdx: Int { compareAgeBandIndex(store.dashboard?.goalProfile?.age) }
+    private var userValues: CompareUserValues {
+        CompareUserValues(trends: trends, energyAverages: store.dashboard?.energyAverages)
+    }
+
+    /// Only metrics that have both a reading and a reference band — a card that says
+    /// "—" against a norm teaches nothing.
+    private var cards: [(metric: CompareMetric, value: Double, ref: CompareRef)] {
+        guard bandIdx >= 0 else { return [] }
+        return compareMetrics.compactMap { metric in
+            guard let value = userValues.value(for: metric.key) else { return nil }
+            let table = metric.table(sex)
+            guard table.indices.contains(bandIdx) else { return nil }
+            return (metric, value, table[bandIdx])
+        }
+    }
+
+    var body: some View {
+        if !cards.isEmpty {
+            Panel(title: "How you compare") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                    ForEach(cards, id: \.metric.key) { card in
+                        let standing = compareStanding(card.value, card.ref, card.metric.better)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(card.metric.label)
+                                .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
+                                .lineLimit(1)
+                            Text(Format.number(card.value, decimals: card.metric.decimals))
+                                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Palette.ink(scheme))
+                            Text("\(compareOrdinal(standing.pct)) pct · \(standing.label)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(compareTone(standing.tone))
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Palette.surface(scheme))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+                NavigationLink { CompareView() } label: {
+                    Text("See all comparisons and sources")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DashboardTheme.shared.accent)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+}
+
+/// Shared with CompareMetricRow's own private helpers — exposed because CompareCards
+/// lives in the same file but is used from Trends.
+func compareOrdinal(_ n: Int) -> String { ordinal(n) }
+
+@MainActor
+func compareTone(_ tone: CompareTone) -> Color {
+    switch tone { case .good: return .green; case .ok: return DashboardTheme.shared.accent; case .watch: return .red }
+}

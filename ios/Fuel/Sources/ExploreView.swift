@@ -158,13 +158,20 @@ struct ExploreView: View {
         ZoomableDateChart(dates: windowed.map(\.date), height: 240, percentAxis: mode == .normalized) {
             ForEach(withData, id: \.key) { s in
                 ForEach(points(for: s), id: \.date) { point in
-                    LineMark(x: .value("Date", point.date), y: .value("Value", point.value), series: .value("Metric", s.key))
-                        .foregroundStyle(s.color)
+                    LineMark(x: .value("Date", point.date), y: .value("Value", point.value))
+                        // foregroundStyle(by:) + an explicit scale, rather than a literal
+                        // colour per mark: a per-mark colour on a multi-series line chart
+                        // was being resolved once for the whole plot, so every series
+                        // drew in whichever colour came last while the legend showed the
+                        // right ones. `by:` is also what groups the marks into separate
+                        // lines, replacing the manual `series:` argument.
+                        .foregroundStyle(by: .value("Metric", s.label))
                         .interpolationMethod(.monotone)
                 }
             }
         }
-        .id("\(days)-\(selected.joined(separator: ","))")
+        .chartForegroundStyleScale(domain: withData.map(\.label), range: withData.map(\.color))
+        .id("\(days)-\(mode == .normalized)-\(selected.joined(separator: ","))")
     }
 
     private func plotValue(_ s: Series, _ raw: Double) -> Double {

@@ -177,21 +177,47 @@ test('the palette themes the whole app, not just the Today charts', () => {
   assert.match(today, /net > 0 \? DashboardTheme\.shared\.positive : DashboardTheme\.shared\.negative/)
 })
 
-test('Energy and Macros plot one labelled line per component, and every trend zooms', () => {
+test('Trends plots two metrics on independent axes, and every chart zooms', () => {
   const trends = read('../ios/Fuel/Sources/TrendsView.swift')
-  // "Macros" as a single line is the shape of a question nobody asks — the read is how
-  // protein, carbs and fat move relative to each other.
-  for (const name of ['Protein', 'Carbs', 'Fat', 'Fiber']) {
-    assert.match(trends, new RegExp(`series\\("${name}"`), `Macros must plot ${name} as its own series`)
-  }
-  for (const name of ['Burned', 'Consumed', 'Active', 'Resting']) {
-    assert.match(trends, new RegExp(`series\\("${name}"`), `Energy must plot ${name} as its own series`)
-  }
-  // Shared zoom/scroll component, so Trends and Explore can't drift apart.
+  const explore = read('../ios/Fuel/Sources/ExploreView.swift')
+
+  // Two pickers, each driving its own vertical axis — steps (~10,000) against sleep
+  // (~7h) on one shared domain would flatten the smaller into a straight line.
+  assert.match(trends, /metricPicker\(title: "Left axis"/)
+  assert.match(trends, /metricPicker\(title: "Right axis"/)
+  assert.match(trends, /AxisMarks\(position: \.leading/)
+  assert.match(trends, /AxisMarks\(position: \.trailing/)
+  // The trailing axis is labelled in the secondary metric's own units even though its
+  // marks were rescaled into the primary's domain — that inverse is the whole trick.
+  assert.match(trends, /trailingAxis\.fromPrimary\(v\)/)
+  // A flat series must not divide by zero when rescaled.
+  assert.match(trends, /guard sourceSpan > 0 else \{ return target\.min \+ targetSpan \/ 2 \}/)
+
+  // Averages follow the selection rather than always showing the same energy figures.
+  assert.match(trends, /Panel\(title: "Averages · last \\\(trends\.count\) days"\)/)
+  assert.match(trends, /Stat\(label: primary\.def\.label/)
+
+  // One metric catalogue shared with Explore, so the two can't drift apart.
+  assert.match(trends, /private var metrics: \[ExploreMetric\] \{ exploreMetrics \}/)
+  // Shared zoom/scroll component and one date formatter for every axis.
   assert.match(trends, /struct ZoomableDateChart<Content: ChartContent>: View/)
   assert.match(trends, /\.chartScrollableAxes\(\.horizontal\)/)
   assert.match(trends, /MagnificationGesture\(\)/)
-  assert.match(read('../ios/Fuel/Sources/ExploreView.swift'), /ZoomableDateChart\(dates:/)
+  assert.match(trends, /Text\(DateAxis\.short\(iso\)\)/)
+  assert.match(explore, /ZoomableDateChart\(dates:/)
+})
+
+test('Explore colours each series correctly and keeps one x-ordering', () => {
+  const explore = read('../ios/Fuel/Sources/ExploreView.swift')
+  const trends = read('../ios/Fuel/Sources/TrendsView.swift')
+  // A literal per-mark colour resolved once for the whole plot, so every line drew in
+  // whichever colour came last while the legend showed the right ones.
+  assert.match(explore, /\.foregroundStyle\(by: \.value\("Metric", s\.label\)\)/)
+  assert.match(explore, /\.chartForegroundStyleScale\(domain: withData\.map\(\\.label\), range: withData\.map\(\\.color\)\)/)
+  assert.doesNotMatch(explore, /\.foregroundStyle\(s\.color\)/)
+  // Without an explicit domain each series contributed its own categories in its own
+  // order, so two metrics with different gaps crossed back over themselves.
+  assert.match(trends, /\.chartXScale\(domain: dates\)/)
 })
 
 test('Coach replies render markdown instead of showing raw asterisks', () => {

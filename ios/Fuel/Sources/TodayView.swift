@@ -1085,9 +1085,12 @@ struct EnergySummaryBars: View {
                             ZStack {
                                 DiagonalStripes(color: DashboardTheme.shared.primary)
                                 if gapWidth > 0.16 {
+                                    // Ink, not the accent: this sits on top of a hatched
+                                    // fill in that same accent, so tinting it too left
+                                    // the label barely legible against its own stripes.
                                     Text("\(Format.number(balanceAmount)) kcal \(balanceWord.lowercased())")
                                         .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(DashboardTheme.shared.primary)
+                                        .foregroundStyle(Palette.ink(scheme))
                                         .lineLimit(1)
                                         .minimumScaleFactor(0.6)
                                 }

@@ -39,6 +39,13 @@ final class AppStore {
     var error: String?
     var context: String = ""
 
+    /// How many health syncs are running. Drives the progress bar across the top of the
+    /// app: a sync fires on launch, on foreground, on pull-to-refresh and from the
+    /// background, and until now the only sign any of it was happening was the More
+    /// screen's status line.
+    private(set) var syncsInFlight = 0
+    var isSyncing: Bool { syncsInFlight > 0 }
+
     /// The Coach transcript. Kept in memory for the session and replayed into the model
     /// as conversation history, so follow-ups like "what about carbs?" make sense.
     var messages: [ChatMessage] = []
@@ -487,6 +494,11 @@ final class AppStore {
 
     func syncHealth(reason: String) async {
         guard isSignedIn, healthAuthorized else { return }
+        // Counted rather than a bare bool: a pull-to-refresh landing on top of the
+        // app-foreground sync would otherwise have the first one to finish clear the
+        // bar while the second is still running.
+        syncsInFlight += 1
+        defer { syncsInFlight = max(0, syncsInFlight - 1) }
         guard let token = await ensureHealthSyncToken() else { return }
         SyncStore.shared.token = token
         _ = await SyncEngine.shared.sync(reason: reason)
