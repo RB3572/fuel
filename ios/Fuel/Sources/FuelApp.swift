@@ -113,7 +113,7 @@ struct SyncProgressBar: View {
 
 enum AppTab: Hashable { case today, trends, log, coach, more }
 
-/// First run. The same credentials as the website: the Google account you already use,
+/// First run. Sign in with the Google account you already use,
 /// or Apple. Both are native sheets — there is no Fuel consent screen in the way.
 struct SetupView: View {
     @Environment(AppStore.self) private var store
@@ -171,7 +171,7 @@ struct SetupView: View {
 
                 if store.auth.busy { ProgressView().padding(.top, 4) }
 
-                Text("Use the same account as fuel.rishib.com and you'll see the same data.")
+                Text("Sign in to sync your data across your devices.")
                     .font(.caption).foregroundStyle(Palette.muted(scheme))
                     .multilineTextAlignment(.center)
 

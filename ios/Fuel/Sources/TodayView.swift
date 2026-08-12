@@ -959,15 +959,23 @@ struct NetBalanceTrendChart: View {
                 .chartScrollPosition(initialX: initialScrollDate)
                 // A plain tap that toggles, instead of chartXSelection's press-and-hold
                 // (which also clears the moment you lift, so a reading never stayed up).
+                //
+                // simultaneousGesture, not onTapGesture: an overlay that is hit-testable
+                // sits above the chart's own scroll view, and a plain tap handler there
+                // consumes the drag before the scroll view sees it — which is exactly how
+                // this chart stopped scrolling. Recognising alongside leaves the drag to
+                // the scroll view and the tap to us.
                 .chartOverlay { proxy in
                     GeometryReader { geo in
                         Rectangle().fill(.clear).contentShape(Rectangle())
-                            .onTapGesture { location in
-                                guard let plot = proxy.plotFrame else { return }
-                                let x = location.x - geo[plot].origin.x
-                                guard let date: String = proxy.value(atX: x) else { return }
-                                selectedDate = (selectedDate == date) ? nil : date
-                            }
+                            .simultaneousGesture(
+                                SpatialTapGesture().onEnded { value in
+                                    guard let plot = proxy.plotFrame else { return }
+                                    let x = value.location.x - geo[plot].origin.x
+                                    guard let date: String = proxy.value(atX: x) else { return }
+                                    selectedDate = (selectedDate == date) ? nil : date
+                                }
+                            )
                     }
                 }
                 .simultaneousGesture(

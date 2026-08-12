@@ -72,7 +72,7 @@ struct CoachAction: Codable, Equatable {
     """)
     var setting: String?
     var enabled: Bool?
-    @Guide(description: "Palette name when setting is palette: Website, Flame, Ocean, Forest, Berry or Slate.")
+    @Guide(description: "Palette name when setting is palette: Default, Flame, Ocean, Forest, Berry or Slate.")
     var paletteName: String?
 
     // updateContext
@@ -118,12 +118,12 @@ enum CoachActions {
         switch action.kind {
         case "logFood":
             guard let food = action.food, !food.isEmpty else { return .init(ok: false, message: "I didn't catch what to log.") }
-            let nutrition = EstimatedNutrition(calories: action.calories, protein: action.protein,
-                                               carbs: action.carbs, fat: action.fat, fiber: action.fiber)
-            let hasNumbers = [action.calories, action.protein, action.carbs, action.fat, action.fiber].contains { $0 != nil }
-            await store.logFood(description: food, meal: action.meal, portion: action.portion,
-                                nutrition: hasNumbers ? nutrition : nil)
-            return .init(ok: true, message: "Logged \(food).")
+            let nutrition = await filledNutrition(
+                stated: EstimatedNutrition(calories: action.calories, protein: action.protein,
+                                           carbs: action.carbs, fat: action.fat, fiber: action.fiber),
+                food: food, portion: action.portion)
+            await store.logFood(description: food, meal: action.meal, portion: action.portion, nutrition: nutrition)
+            return .init(ok: true, message: "Logged \(food)\(summarize(nutrition)).")
 
         case "updateFood":
             guard let target = matchEntry(action.food, in: store) else {
@@ -172,9 +172,19 @@ enum CoachActions {
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
-            let saved = await store.addRecipe(name: name, ingredients: lines, servings: action.servings)
+            // A recipe with no numbers is not loggable in one tap, which is the whole
+            // point of the bank — so it is estimated here rather than left blank.
+            var nutrition = EstimatedNutrition(calories: action.calories, protein: action.protein,
+                                               carbs: action.carbs, fat: action.fat, fiber: action.fiber)
+            if !isComplete(nutrition) {
+                let estimate = try? await OnDeviceAI.shared.estimateRecipeNutrition(
+                    name: name, ingredients: lines, serving: action.portion)
+                if let estimate { nutrition = merge(stated: nutrition, estimate: estimate) }
+            }
+            let saved = await store.addRecipe(name: name, ingredients: lines,
+                                              servings: action.servings, nutrition: nutrition)
             return saved
-                ? .init(ok: true, message: "Added \(name) to the recipe bank.")
+                ? .init(ok: true, message: "Added \(name) to the recipe bank\(summarize(nutrition)).")
                 : .init(ok: false, message: "That recipe couldn't be saved.")
 
         case "setSetting":
@@ -230,6 +240,42 @@ enum CoachActions {
         default:
             return .init(ok: false, message: "I don't know that setting.")
         }
+    }
+
+    /// Everything the app shows — the rings, the macro bars, the deficit, the trends —
+    /// is computed from these five numbers, so an entry logged without them is an entry
+    /// that silently doesn't count. Whatever the person actually stated is kept; only
+    /// the gaps are estimated.
+    private static func filledNutrition(stated: EstimatedNutrition, food: String, portion: String?) async -> EstimatedNutrition {
+        guard !isComplete(stated) else { return stated }
+        guard let estimate = try? await OnDeviceAI.shared.estimateNutrition(food: food, portion: portion) else {
+            return stated
+        }
+        return merge(stated: stated, estimate: estimate)
+    }
+
+    private static func isComplete(_ n: EstimatedNutrition) -> Bool {
+        [n.calories, n.protein, n.carbs, n.fat, n.fiber].allSatisfy { $0 != nil }
+    }
+
+    /// Stated values always win: "log 600 calories of pasta" must record 600, with only
+    /// the macros filled in around it.
+    private static func merge(stated: EstimatedNutrition, estimate: EstimatedNutrition) -> EstimatedNutrition {
+        EstimatedNutrition(
+            calories: stated.calories ?? estimate.calories,
+            protein: stated.protein ?? estimate.protein,
+            carbs: stated.carbs ?? estimate.carbs,
+            fat: stated.fat ?? estimate.fat,
+            fiber: stated.fiber ?? estimate.fiber
+        )
+    }
+
+    /// " — 640 kcal · 32 g protein", or nothing when the estimate came back empty.
+    private static func summarize(_ n: EstimatedNutrition) -> String {
+        var parts: [String] = []
+        if let kcal = n.calories { parts.append("\(Int(kcal)) kcal") }
+        if let protein = n.protein { parts.append("\(Int(protein)) g protein") }
+        return parts.isEmpty ? "" : " — " + parts.joined(separator: " · ")
     }
 
     /// Finds the entry a phrase refers to. Exact match first, then a contains match, so

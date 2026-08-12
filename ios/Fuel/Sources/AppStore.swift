@@ -468,9 +468,11 @@ final class AppStore {
 
     /// Adds a recipe to the shared bank. Returns whether it saved, so the Coach can say
     /// so plainly rather than claiming success on a failed write.
-    func addRecipe(name: String, ingredients: [String], servings: Double?) async -> Bool {
+    func addRecipe(name: String, ingredients: [String], servings: Double?,
+                   nutrition: EstimatedNutrition?) async -> Bool {
         do {
-            try await client().createRecipe(name: name, ingredients: ingredients, servings: servings)
+            try await client().createRecipe(name: name, ingredients: ingredients,
+                                            servings: servings, nutrition: nutrition)
             return true
         } catch {
             self.error = error.localizedDescription

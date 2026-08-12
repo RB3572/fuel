@@ -157,7 +157,7 @@ test('the palette themes the whole app, not just the Today charts', () => {
   const theme = read('../ios/Fuel/Sources/DashboardTheme.swift')
   // A "Website" preset matching fuel.rishib.com, plus per-palette surplus/deficit
   // colors — sign carries meaning on that chart, so one accent for both loses it.
-  assert.match(theme, /DashboardPalette\(name: "Website"/)
+  assert.match(theme, /DashboardPalette\(name: "Default"/)
   assert.match(theme, /var positive: UInt32/)
   assert.match(theme, /var negative: UInt32/)
   assert.match(theme, /var accent: Color \{ primary \}/)
@@ -372,10 +372,10 @@ test('the Coach only builds a plan on the explicit "New plan" action, and keeps 
   assert.match(coach, /\.disabled\(store\.coachThinking \|\| store\.dashboard == nil \|\| !ai\.isUsable\)/)
 })
 
-test('the website\'s Lifting, Compare, Explore, Places and Recipes tabs are all reachable from More', () => {
+test('the Lifting, Explore, Places and Recipes tabs are all reachable from More', () => {
   const more = read('../ios/Fuel/Sources/MoreView.swift')
   for (const [view, label] of [
-    ['LiftingView', 'Lifting'], ['CompareView', 'Compare'], ['ExploreView', 'Explore'],
+    ['LiftingView', 'Lifting'], ['ExploreView', 'Explore'],
     ['PlacesView', 'Places'], ['RecipesView', 'Recipes'],
   ]) {
     assert.match(more, new RegExp(`NavigationLink \\{ ${view}\\(\\) \\} label: \\{ Label\\("${label}"`),
@@ -508,4 +508,27 @@ test('/api/health/token accepts an OAuth bearer as well as the website session c
   // pins — only the endpoint that mints a token gained a new way to authenticate.
   const sync = read('../api/_lib/health-sync.js')
   assert.doesNotMatch(sync, /verifyAccessToken/)
+})
+
+test('Compare lives inside Trends, not behind its own screen', () => {
+  const compare = read('../ios/Fuel/Sources/CompareView.swift')
+  // One place shows these numbers. A summary card in Trends plus a full page behind
+  // More meant the same metrics rendered at two different levels of detail.
+  assert.match(compare, /struct CompareSection: View/)
+  assert.doesNotMatch(compare, /struct CompareView: View/)
+  assert.doesNotMatch(compare, /struct CompareCards/)
+  assert.match(read('../ios/Fuel/Sources/TrendsView.swift'), /CompareSection\(\)/)
+  assert.doesNotMatch(read('../ios/Fuel/Sources/MoreView.swift'), /CompareView\(\)/)
+})
+
+test('the app does not send people to a website, a Shortcut or a companion app', () => {
+  // Fuel is standalone: it reads HealthKit itself and is the whole product.
+  for (const file of ['MoreView', 'FuelApp']) {
+    const src = read(`../ios/Fuel/Sources/${file}.swift`)
+    for (const [, copy] of src.matchAll(/Text\("([^"]+)"\)/g)) {
+      assert.doesNotMatch(copy, /website|fuel\.rishib\.com|Shortcut|companion app/i,
+        `${file}.swift shows "${copy}"`)
+    }
+  }
+  assert.doesNotMatch(read('../ios/Fuel/Sources/MoreView.swift'), /Open Fuel on the web/)
 })

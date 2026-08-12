@@ -55,7 +55,7 @@ struct TrendsView: View {
                         chartBody
                     }
                     averagesPanel
-                    CompareCards()
+                    CompareSection()
                 }
                 .padding(16)
             }

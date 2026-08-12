@@ -471,9 +471,17 @@ struct FuelClient {
 
     /// Adds a recipe to the shared bank — the same saveRecipe() the MCP tools call, now
     /// reachable from the app so the Coach can add one on request.
-    func createRecipe(name: String, ingredients: [String], servings: Double?) async throws {
+    func createRecipe(name: String, ingredients: [String], servings: Double?,
+                      nutrition: EstimatedNutrition?) async throws {
         var body: [String: Any] = ["name": name, "ingredients": ingredients]
         if let servings { body["servings"] = servings }
+        if let nutrition {
+            if let v = nutrition.calories { body["calories"] = v }
+            if let v = nutrition.protein { body["protein"] = v }
+            if let v = nutrition.carbs { body["carbs"] = v }
+            if let v = nutrition.fat { body["fat"] = v }
+            if let v = nutrition.fiber { body["fiber"] = v }
+        }
         _ = try await send(try request("/api/mlog?fuel_route=save-recipe", method: "POST", body: body))
     }
 

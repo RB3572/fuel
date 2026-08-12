@@ -21,8 +21,9 @@ struct DashboardPalette: Identifiable, Equatable {
     var negative: UInt32
 
     static let presets: [DashboardPalette] = [
-        // Matches fuel.rishib.com: teal burn, coral active, amber intake.
-        DashboardPalette(name: "Website", primary: 0x2C7A7B, secondary: 0xE8674C, tertiary: 0x4FD1C5,
+        // The default, and what fuel.rishib.com uses: teal burn, coral active, amber
+        // intake. First in the list because it is what a fresh install gets.
+        DashboardPalette(name: "Default", primary: 0x2C7A7B, secondary: 0xE8674C, tertiary: 0x4FD1C5,
                           positive: 0xF0876F, negative: 0x217F7F),
         DashboardPalette(name: "Flame", primary: 0xF2531B, secondary: 0xEF8F4D, tertiary: 0x7D8FA3,
                           positive: 0xF2531B, negative: 0x3F5A70),
@@ -74,7 +75,7 @@ final class DashboardTheme {
 
     private init() {
         let d = UserDefaults.standard
-        let fallback = DashboardPalette.presets.first(where: { $0.name == "Flame" }) ?? DashboardPalette.presets[0]
+        let fallback = DashboardPalette.presets[0]
         func stored(_ key: String, _ fallbackHex: UInt32) -> Color {
             Color(hex: d.string(forKey: key).flatMap { UInt32($0, radix: 16) } ?? fallbackHex)
         }
@@ -83,7 +84,10 @@ final class DashboardTheme {
         tertiary = stored("fuelDashTertiary", fallback.tertiary)
         positive = stored("fuelDashPositive", fallback.positive)
         negative = stored("fuelDashNegative", fallback.negative)
-        activePresetName = d.string(forKey: "fuelDashPresetName") ?? fallback.name
+        // This palette shipped as "Website" before it became the default. Anyone who
+        // had picked it keeps their checkmark instead of the list looking unselected.
+        let savedName = d.string(forKey: "fuelDashPresetName")
+        activePresetName = savedName == "Website" ? fallback.name : (savedName ?? fallback.name)
     }
 
     private func persist() {

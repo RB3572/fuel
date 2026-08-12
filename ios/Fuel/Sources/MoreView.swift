@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Everything that is not a daily action: the Health connection, the account, and the
-// escape hatches. The website keeps these behind a profile menu; on a phone they get a
+// escape hatches. On a phone these get a
 // tab, because "why has my data stopped arriving" is a question you answer here.
 
 struct MoreView: View {
@@ -63,7 +63,7 @@ struct MoreView: View {
                 } header: {
                     Text("Apple Health")
                 } footer: {
-                    Text("Fuel reads Health directly — no Shortcut and no companion app. It syncs when you open Fuel, when Health records something new, and periodically in the background.")
+                    Text("Fuel reads Health directly. It syncs when you open Fuel, when Health records something new, and periodically in the background.")
                 }
 
                 // The per-category toggles are gone with the raw-sample upload they
@@ -138,7 +138,7 @@ struct MoreView: View {
                 } header: {
                     Text("Account")
                 } footer: {
-                    Text("The same account as the website — sign in with Google or Apple and you see the same data. Point Fuel at your own server if you self-host.")
+                    Text("Sign in with Google or Apple. Point Fuel at your own server if you self-host.")
                 }
 
                 Section {
@@ -151,14 +151,13 @@ struct MoreView: View {
 
                 Section {
                     NavigationLink { LiftingView() } label: { Label("Lifting", systemImage: "dumbbell.fill") }
-                    NavigationLink { CompareView() } label: { Label("Compare", systemImage: "person.2.fill") }
                     NavigationLink { ExploreView() } label: { Label("Explore", systemImage: "chart.xyaxis.line") }
                     NavigationLink { PlacesView() } label: { Label("Places", systemImage: "mappin.and.ellipse") }
                     NavigationLink { RecipesView() } label: { Label("Recipes", systemImage: "book.closed.fill") }
                 } header: {
                     Text("Browse")
                 } footer: {
-                    Text("The same tabs as the website's top nav, all reading and writing the same account.")
+                    Text("The rest of Fuel, all reading and writing the same account.")
                 }
 
                 Section {
@@ -176,9 +175,6 @@ struct MoreView: View {
                     if let coverage = store.dashboard?.coverage {
                         LabeledContent("History", value: "\(coverage.days ?? 0) days · \(coverage.foodEntries ?? 0) entries")
                             .font(.footnote)
-                    }
-                    Link(destination: URL(string: store.baseURL)!) {
-                        Label("Open Fuel on the web", systemImage: "safari")
                     }
                 }
             }
