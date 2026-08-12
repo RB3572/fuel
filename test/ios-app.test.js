@@ -532,3 +532,52 @@ test('the app does not send people to a website, a Shortcut or a companion app',
   }
   assert.doesNotMatch(read('../ios/Fuel/Sources/MoreView.swift'), /Open Fuel on the web/)
 })
+
+test('the captured photo is frozen on screen while it is being read', () => {
+  const cam = read('../ios/Fuel/Sources/CameraLogView.swift')
+  // Live video behind a spinner tells you nothing about what was sent.
+  assert.match(cam, /@State private var frozen: Data\?/)
+  assert.match(cam, /if let frozen, let image = UIImage\(data: frozen\)/)
+  // Both shutters freeze: the straight-to-log one and the add-context one.
+  assert.equal((cam.match(/frozen = data/g) || []).length, 2)
+  // And it thaws again, whichever way the capture ends.
+  assert.match(cam, /frozen = nil/)
+  // The context sheet shows the shot the note is about.
+  assert.match(cam, /if let pendingPhoto, let image = UIImage\(data: pendingPhoto\)/)
+  assert.match(cam, /Button\("Cancel"\)/)
+})
+
+test('manual entry is fully manual: every macro editable, no model required', () => {
+  const cam = read('../ios/Fuel/Sources/CameraLogView.swift')
+  assert.match(cam, /Label\("Manual", systemImage/)
+  assert.doesNotMatch(cam, /Label\("Type", systemImage/)
+  assert.match(cam, /\.navigationTitle\("Manual Entry"\)/)
+  assert.doesNotMatch(cam, /Log by hand/)
+  for (const f of ['Calories', 'Protein', 'Carbs', 'Fat', 'Fiber']) {
+    assert.match(cam, new RegExp(`field\\("${f}"`), `${f} must be hand-editable`)
+  }
+  // A blank field means unknown. Sending 0 would log a real, wrong zero.
+  assert.match(cam, /n\.calories == nil && n\.protein == nil/)
+  assert.match(cam, /CommonFoodPicker/)
+})
+
+test('the common-foods table carries published per-serving values', () => {
+  const foods = read('../ios/Fuel/Sources/CommonFoods.swift')
+  const rows = [...foods.matchAll(/CommonFood\(name: "([^"]+)", portion: "([^"]+)"/g)]
+  assert.ok(rows.length >= 40, `expected a real table, got ${rows.length} foods`)
+  // The things people actually reach for, named in the request.
+  for (const name of ['Ice cream, vanilla', 'Pizza, cheese', 'Banana', 'Apple']) {
+    assert.ok(rows.some(r => r[1] === name), `${name} should be in the table`)
+  }
+  // Every row states its serving size — a calorie count with no portion is unusable.
+  for (const [, name, portion] of rows) {
+    assert.match(portion, /\d/, `${name} needs a quantified portion`)
+  }
+  // Every group in the picker's section order actually has foods in it.
+  const groups = foods.match(/static let groups = \[([^\]]+)\]/)[1]
+    .split(',').map(s => s.trim().replace(/"/g, ''))
+  for (const g of groups) {
+    assert.ok(foods.includes(`group: "${g}")`), `group ${g} is empty`)
+  }
+  assert.match(foods, /static func matches\(_ query: String/)
+})

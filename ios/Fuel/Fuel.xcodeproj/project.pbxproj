@@ -22,6 +22,7 @@
 		6A85BEE5B833F09BEE7DC5EF /* PlacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE8BBF80AB6D80821F0788BC /* PlacesView.swift */; };
 		6EA4432B193045BDE4B40D83 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F28885825E18C8C99FB8B952 /* MarkdownText.swift */; };
 		7C52EAB35296E5963F5779EE /* VitalsSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD75E91607669954578FEB5 /* VitalsSignal.swift */; };
+		7DC7F53D08B51AF61925B231 /* CommonFoods.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2F578A82AEFA5F7B226AC2 /* CommonFoods.swift */; };
 		7DE5EFE41422522226BCEFB0 /* LiftingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0ACD7889A0B189EB6BB06B1 /* LiftingView.swift */; };
 		7F8F36885619CD796831614C /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4101886BC814B0DD968C954D /* TrendsView.swift */; };
 		81F569AEC1DCE3E986A4E795 /* CoachAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4601E7576C6D4E94715ABD65 /* CoachAction.swift */; };
@@ -73,6 +74,7 @@
 		F28885825E18C8C99FB8B952 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuelApp.swift; sourceTree = "<group>"; };
 		F826CB7F5C5FF43B0F03E3AB /* Fuel.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Fuel.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FB2F578A82AEFA5F7B226AC2 /* CommonFoods.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonFoods.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -114,6 +116,7 @@
 				E762C9F186DC68F711045162 /* CameraLogView.swift */,
 				4601E7576C6D4E94715ABD65 /* CoachAction.swift */,
 				7C5B5B04656BF14A3B462B73 /* CoachView.swift */,
+				FB2F578A82AEFA5F7B226AC2 /* CommonFoods.swift */,
 				D026ABD99CA4B6658408B570 /* CompareView.swift */,
 				04EC21D9585C66990C142368 /* DashboardTheme.swift */,
 				07B4E4F9F82543B457C1A074 /* EditSheets.swift */,
@@ -240,6 +243,7 @@
 				39844E003CBA7FE8A166ED21 /* CameraLogView.swift in Sources */,
 				81F569AEC1DCE3E986A4E795 /* CoachAction.swift in Sources */,
 				38D46A42074556FEC03E0C9B /* CoachView.swift in Sources */,
+				7DC7F53D08B51AF61925B231 /* CommonFoods.swift in Sources */,
 				5251364098C3A21B22FA0441 /* CompareView.swift in Sources */,
 				DC204ABEC97758F7C03ED2C7 /* DashboardTheme.swift in Sources */,
 				1E571C2C2FA20A61DDC59D97 /* EditSheets.swift in Sources */,
