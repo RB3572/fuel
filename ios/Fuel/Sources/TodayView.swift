@@ -49,6 +49,7 @@ struct TodayView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                ScrollViewReader { scroller in
                 VStack(spacing: 14) {
                     if let summary {
                         if !dashboardEditing {
@@ -75,6 +76,18 @@ struct TodayView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity)
+                // A meal logged from the camera lands here: scroll to the row it made
+                // and flash it, so the confirmation is the entry itself rather than a
+                // banner on a screen that never showed the result.
+                .onChange(of: store.highlightedEntryID) { _, id in
+                    guard let id else { return }
+                    withAnimation(.easeInOut(duration: 0.5)) { scroller.scrollTo(id, anchor: .center) }
+                    Task {
+                        try? await Task.sleep(for: .seconds(2.6))
+                        withAnimation(.easeOut(duration: 0.5)) { store.highlightedEntryID = nil }
+                    }
+                }
+                }
             }
             .background(Palette.background(scheme))
             .navigationTitle("Today")
@@ -522,6 +535,14 @@ struct TodayView: View {
                     }
                 }
                 .padding(.vertical, 6)
+                .padding(.horizontal, store.highlightedEntryID == entry.id ? 8 : 0)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(DashboardTheme.shared.accent
+                            .opacity(store.highlightedEntryID == entry.id ? 0.18 : 0))
+                )
+                .animation(.easeInOut(duration: 0.4), value: store.highlightedEntryID)
+                .id(entry.id)
                 Divider().opacity(0.4)
             }
 

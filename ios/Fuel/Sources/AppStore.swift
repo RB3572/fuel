@@ -130,6 +130,7 @@ final class AppStore {
         do {
             dashboard = try await client().dashboard()
             error = nil
+            WidgetPublisher.publish(dashboard: dashboard, goals: goalValues)
         } catch {
             self.error = error.localizedDescription
         }
@@ -143,6 +144,7 @@ final class AppStore {
         async let goalsResult = try? client().goals()
         if let value = await layoutResult { layout = value }
         if let value = await goalsResult { goalValues = value }
+        WidgetPublisher.publish(dashboard: dashboard, goals: goalValues)
     }
 
     /// Re-fetches goals on demand — used when the Goals sheet opens, so it never shows
@@ -307,12 +309,32 @@ final class AppStore {
 
     // MARK: - Food
 
+    /// The entry the app just created, so Today can scroll to it and flash it. Logging
+    /// used to end with the camera still on screen and a one-line "Logged X" — which
+    /// never showed what actually landed in the day, only that something had.
+    var highlightedEntryID: String?
+    /// Set alongside it; RootView consumes this to switch tabs and clears it.
+    var jumpToToday = false
+
+    /// Finds the row the log produced and points Today at it. Matching on description
+    /// rather than an id because the log endpoint returns no id — the freshest entry
+    /// whose text matches is the one just written.
+    private func highlightNewest(_ description: String) {
+        let needle = description.trimmingCharacters(in: .whitespaces).lowercased()
+        let match = dashboard?.today.foodEntries.last { entry in
+            (entry.food ?? entry.meal ?? "").trimmingCharacters(in: .whitespaces).lowercased() == needle
+        }
+        highlightedEntryID = (match ?? dashboard?.today.foodEntries.last)?.id
+        jumpToToday = true
+    }
+
     func logFood(description: String, meal: String?, portion: String?, nutrition: EstimatedNutrition?) async {
         do {
             try await client().logFood(description: description, meal: meal, portion: portion,
                                        calories: nutrition?.calories, protein: nutrition?.protein,
                                        carbs: nutrition?.carbs, fat: nutrition?.fat, fiber: nutrition?.fiber)
             await load()
+            highlightNewest(description)
             announceLogged(description, nutrition: nutrition, photo: nil)
         } catch {
             self.error = error.localizedDescription
@@ -336,6 +358,7 @@ final class AppStore {
                                        notes: note)
             lastLogged = identified.name
             await load()
+            highlightNewest(identified.name)
             announceLogged(identified.name, nutrition: identified.nutrition, photo: photo)
             // Clear the confirmation after a beat so the camera goes back to being a camera.
             try? await Task.sleep(for: .seconds(3))

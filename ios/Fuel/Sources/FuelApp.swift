@@ -83,6 +83,24 @@ struct RootView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: store.isSyncing)
+            // Logging a meal ends on the dashboard, at the row it just created.
+            .onChange(of: store.jumpToToday) { _, jump in
+                guard jump else { return }
+                withAnimation(.snappy) { tab = .today }
+                store.jumpToToday = false
+            }
+            // Tapping a Home Screen widget opens the tab it came from.
+            .onOpenURL { url in
+                guard url.scheme == "fuel" else { return }
+                switch url.host {
+                case "today": tab = .today
+                case "trends": tab = .trends
+                case "log": tab = .log
+                case "coach": tab = .coach
+                case "more": tab = .more
+                default: break
+                }
+            }
         }
     }
 }

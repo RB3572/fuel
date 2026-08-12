@@ -99,6 +99,7 @@ final class DashboardTheme {
         d.set(negative.hexString, forKey: "fuelDashNegative")
         if let name = activePresetName { d.set(name, forKey: "fuelDashPresetName") }
         else { d.removeObject(forKey: "fuelDashPresetName") }
+        WidgetPublisher.republishPalette()
     }
 }
 

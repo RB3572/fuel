@@ -617,3 +617,69 @@ test('the vitals banner opens a page charting every vital against its history', 
   assert.match(bar, /See all vitals and their trends/)
   assert.match(bar, /VitalsDetailView\(trends: trends, summary: summary\)/)
 })
+
+test('the widgets read a shared snapshot rather than the network', () => {
+  // A widget extension cannot sign in, call the API, or read HealthKit for the app, so
+  // the only honest design is: app writes, widget reads.
+  const shared = read('../ios/Fuel/Sources/WidgetShared.swift')
+  assert.match(shared, /static let appGroup = "group\.com\.labloggercompany\.fuel"/)
+  assert.match(shared, /containerURL\(forSecurityApplicationGroupIdentifier: appGroup\)/)
+  for (const target of ['../ios/Fuel/Resources/Fuel.entitlements',
+                        '../ios/FuelWidgets/FuelWidgets.entitlements']) {
+    assert.match(read(target), /group\.com\.labloggercompany\.fuel/,
+      `${target} must join the App Group or the snapshot is unreadable`)
+  }
+  // Nothing in the extension talks to the server or Health.
+  for (const file of ['WidgetPieces', 'EnergyWidgets', 'OtherWidgets', 'FuelWidgetBundle']) {
+    const src = read(`../ios/FuelWidgets/Sources/${file}.swift`)
+    assert.doesNotMatch(src, /URLSession|HKHealthStore|FuelClient/,
+      `${file}.swift must not reach past the snapshot`)
+  }
+  // The app republishes on every load and on every palette change.
+  assert.match(read('../ios/Fuel/Sources/AppStore.swift'), /WidgetPublisher\.publish\(dashboard:/)
+  assert.match(read('../ios/Fuel/Sources/DashboardTheme.swift'), /WidgetPublisher\.republishPalette\(\)/)
+})
+
+test('every widget is themed by the user palette, never a fixed color', () => {
+  const bundle = read('../ios/FuelWidgets/Sources/FuelWidgetBundle.swift')
+  const kinds = [...bundle.matchAll(/kind: "([^"]+)"/g)].map(m => m[1])
+  assert.ok(kinds.length >= 16, `expected a full gallery, got ${kinds.length} widgets`)
+  assert.equal(new Set(kinds).size, kinds.length, 'widget kinds must be unique')
+  // Each declared widget is listed in the bundle, or it never appears in the gallery.
+  for (const [, name] of bundle.matchAll(/struct (\w+Widget): Widget/g)) {
+    assert.match(bundle, new RegExp(`^\\s+${name}\\(\\)$`, 'm'), `${name} is missing from the bundle`)
+  }
+  // Colors come from the snapshot's palette. Color.red survives only as the vitals
+  // alert, which means "unusual" rather than a decorative choice.
+  for (const file of ['WidgetPieces', 'EnergyWidgets', 'OtherWidgets']) {
+    const src = read(`../ios/FuelWidgets/Sources/${file}.swift`)
+    assert.doesNotMatch(src, /Color\(hex:|Color\.blue|Color\.green|\.orange\b/,
+      `${file}.swift should read the palette, not a fixed hue`)
+  }
+})
+
+test('a logged meal ends on the dashboard, at the row it created', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /var highlightedEntryID: String\?/)
+  assert.match(store, /private func highlightNewest/)
+  // Both logging paths point at the result, not just the camera one.
+  assert.equal((store.match(/highlightNewest\(/g) || []).length, 3)
+  const app = read('../ios/Fuel/Sources/FuelApp.swift')
+  assert.match(app, /onChange\(of: store\.jumpToToday\)/)
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /ScrollViewReader \{ scroller in/)
+  assert.match(today, /scroller\.scrollTo\(id, anchor: \.center\)/)
+  assert.match(today, /\.id\(entry\.id\)/)
+  // The flash clears itself; a highlight that never fades is just a selected row.
+  assert.match(today, /store\.highlightedEntryID = nil/)
+})
+
+test('tapping a widget opens the tab it came from', () => {
+  const bundle = read('../ios/FuelWidgets/Sources/FuelWidgetBundle.swift')
+  assert.match(bundle, /URL\(string: "fuel:\/\/\\\(destination\)"\)/)
+  const app = read('../ios/Fuel/Sources/FuelApp.swift')
+  assert.match(app, /\.onOpenURL/)
+  for (const tab of ['today', 'trends', 'log', 'coach', 'more']) {
+    assert.match(app, new RegExp(`case "${tab}": tab = \\.${tab}`), `fuel://${tab} must route`)
+  }
+})
