@@ -22,7 +22,7 @@ struct HealthLoggerApp: App {
                 guard store.isConfigured else { return }
                 Task { await SyncEngine.shared.sync(reason: "opened") }
             case .background:
-                BackgroundSync.scheduleAll()
+                Task { await BackgroundSync.scheduleAll() }
             default:
                 break
             }

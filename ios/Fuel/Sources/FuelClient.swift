@@ -14,11 +14,21 @@ struct Dashboard: Decodable {
     var energyAverages: EnergyAverages?
     var today: Today
     var goals: Goals?
+    var goalProfile: GoalProfile?
     var trends: [DaySummary]
     var recipes: [Recipe]?
     var intradayEnergy: IntradayEnergy?
     var rolling24h: Rolling24h?
     var coverage: Coverage?
+}
+
+/// Height/weight/age/objective — the personal-profile half of user_goals. Age is the
+/// only field Compare needs, but the rest rides along since the server always sends it.
+struct GoalProfile: Decodable {
+    var heightIn: Double?
+    var weightLb: Double?
+    var age: Int?
+    var objective: String?
 }
 
 struct EnergyAverages: Decodable {
@@ -123,11 +133,28 @@ struct Supplement: Decodable, Identifiable {
     var id: String { (name ?? "") + (time ?? "") }
 }
 
+struct RecipeNutrition: Decodable {
+    var calories: Double?
+    var protein: Double?
+    var carbs: Double?
+    var fat: Double?
+    var fiber: Double?
+    var nutrients: Nutrients?
+}
+
+/// The shared, global recipe bank — same rows the website's /recipes.html renders,
+/// normalized server-side by recipes.js's normalizeRecipe().
 struct Recipe: Decodable, Identifiable {
     var id: String?
     var name: String?
-    var calories: Double?
-    var protein: Double?
+    var category: String?
+    var serving: String?
+    var ingredients: [String]?
+    var instructions: [String]?
+    var nutrition: RecipeNutrition?
+    var source: String?
+    var nutritionEstimated: Bool?
+    var hasNutrition: Bool?
 }
 
 struct GoalRange: Decodable {
@@ -163,6 +190,9 @@ struct GoalValues: Codable {
     var steps: Double?
     var sleepHours: Double?
     var calories: Double?
+    /// 0 (the default) means off. See goals.js: a real default doesn't make sense for
+    /// a floor most users shouldn't have applied at all.
+    var restingCaloriesFloor: Double?
 }
 
 /// One editable past day, from ?fuel_route=daily-history.
@@ -182,11 +212,29 @@ struct DashboardLayout: Codable {
     var order: [String]
     var hidden: [String]
     var energyBoxes: [String]
+    var charts: [String]
 
     static let allSections = ["nutrition", "detailedNutrition", "foodConsumed",
                               "fitness", "workouts", "steps", "vitals", "recovery"]
     static let allEnergyBoxes = ["totalBurned", "consumed", "active", "resting", "deficit", "rolling24"]
-    static let `default` = DashboardLayout(order: allSections, hidden: [], energyBoxes: allEnergyBoxes)
+    static let allCharts = ["intraday", "components"]
+    static let `default` = DashboardLayout(order: allSections, hidden: [], energyBoxes: allEnergyBoxes, charts: allCharts)
+
+    // `charts` shipped after this type did. A custom decode keeps an older cached
+    // response — or a server not yet redeployed with the field — from failing the
+    // whole decode; it just falls back to showing both charts, same as the server's
+    // own "key absent means defaults" rule.
+    init(order: [String], hidden: [String], energyBoxes: [String], charts: [String]) {
+        self.order = order; self.hidden = hidden; self.energyBoxes = energyBoxes; self.charts = charts
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        order = try c.decode([String].self, forKey: .order)
+        hidden = try c.decode([String].self, forKey: .hidden)
+        energyBoxes = try c.decode([String].self, forKey: .energyBoxes)
+        charts = try c.decodeIfPresent([String].self, forKey: .charts) ?? Self.allCharts
+    }
 }
 
 struct IntradayEnergy: Decodable {
@@ -207,6 +255,46 @@ struct Rolling24h: Decodable {
 struct Coverage: Decodable {
     var days: Int?
     var foodEntries: Int?
+}
+
+// MARK: - Places
+
+struct Place: Decodable, Identifiable {
+    var id: String
+    var label: String?
+    var suggestedLabel: String?
+    var suggestedDetail: String?
+    var identified: Bool
+    var latitude: Double
+    var longitude: Double
+    var samples: Int
+    var likelyHome: Bool
+}
+
+/// One half-hour slot in the 24-hour day, and which place dominated it.
+struct PlaceBucket: Decodable {
+    var index: Int
+    var startMinute: Int
+    var placeId: String?
+    var samples: Int
+    var share: Double
+}
+
+struct PlaceHeatmap: Decodable {
+    var places: [Place]
+    var buckets: [PlaceBucket]
+    var bucketsPerDay: Int
+    var windowDays: Int
+    var totalSamples: Int
+    var daysCovered: Int
+    var firstSampleAt: String?
+}
+
+struct PlaceIdentifyResult: Decodable {
+    var id: String?
+    var suggestedLabel: String?
+    var suggestedDetail: String?
+    var identified: Bool?
 }
 
 // MARK: - Client
@@ -304,8 +392,34 @@ struct FuelClient {
     }
 
     /// Places heatmap — the same payload the web app's Places page renders.
-    func places(days: Int = 30) async throws -> Data {
-        try await send(try request("/api/mlog?fuel_route=places&days=\(days)"))
+    func places(days: Int = 30) async throws -> PlaceHeatmap {
+        try JSONDecoder().decode(PlaceHeatmap.self, from: try await send(try request("/api/mlog?fuel_route=places&days=\(days)")))
+    }
+
+    /// One location fix, filed under the nearest known place server-side. Mirrors the
+    /// website's own per-page-load capture — quiet, no error surfaced on failure.
+    @discardableResult
+    func recordLocation(latitude: Double, longitude: Double, accuracy: Double?) async throws -> Data {
+        var body: [String: Any] = ["latitude": latitude, "longitude": longitude]
+        if let accuracy { body["accuracy"] = accuracy }
+        return try await send(try request("/api/mlog?fuel_route=places", method: "POST", body: body))
+    }
+
+    /// Looks up a name for one unidentified place. One at a time — the lookup is
+    /// rate-limited upstream, so the caller walks its unidentified places itself.
+    func identifyPlace(_ placeId: String) async throws -> PlaceIdentifyResult {
+        try JSONDecoder().decode(PlaceIdentifyResult.self, from: try await send(try request(
+            "/api/mlog?fuel_route=places", method: "POST", body: ["action": "identify", "placeId": placeId])))
+    }
+
+    func renamePlace(_ placeId: String, label: String) async throws {
+        _ = try await send(try request("/api/mlog?fuel_route=places", method: "PUT", body: ["placeId": placeId, "label": label]))
+    }
+
+    /// Deletes every stored fix and place for this account. Irreversible, exactly as
+    /// on the website.
+    func clearPlaces() async throws {
+        _ = try await send(try request("/api/mlog?fuel_route=places", method: "DELETE"))
     }
 
     func goals() async throws -> GoalValues {
@@ -355,9 +469,78 @@ struct FuelClient {
                                        body: ["layout": inner]))
     }
 
+    /// Adds a recipe to the shared bank — the same saveRecipe() the MCP tools call, now
+    /// reachable from the app so the Coach can add one on request.
+    func createRecipe(name: String, ingredients: [String], servings: Double?) async throws {
+        var body: [String: Any] = ["name": name, "ingredients": ingredients]
+        if let servings { body["servings"] = servings }
+        _ = try await send(try request("/api/mlog?fuel_route=save-recipe", method: "POST", body: body))
+    }
+
     func userContext() async throws -> String {
         let data = try await send(try request("/api/mlog?fuel_route=user-context"))
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         return object?["context"] as? String ?? ""
+    }
+
+    /// Replaces the complete stored context, exactly as the website's editor does.
+    @discardableResult
+    func saveUserContext(_ context: String) async throws -> String {
+        let data = try await send(try request("/api/mlog?fuel_route=user-context", method: "PUT", body: ["context": context]))
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return object?["context"] as? String ?? context
+    }
+
+    // MARK: - Recipes
+
+    struct RecipeLogOutcome {
+        var ok: Bool
+        var needsNutrition: Bool
+        var recipeId: String?
+    }
+
+    /// Logs one serving of a recipe to today. The server reads nutrition from the
+    /// recipe bank, so a 409 with needsNutrition means it refused rather than logging
+    /// a zero-calorie entry — the caller should estimate, then retry once.
+    func logRecipe(recipeId: String, servings: Double = 1) async throws -> RecipeLogOutcome {
+        let req = try request("/api/mlog?fuel_route=log-recipe", method: "POST",
+                              body: ["recipeId": recipeId, "servings": servings])
+        let (body, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw FuelClientError.http(0, "no response") }
+        let payload = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+        if http.statusCode == 409, payload["needsNutrition"] as? Bool == true {
+            return RecipeLogOutcome(ok: false, needsNutrition: true, recipeId: payload["recipeId"] as? String ?? recipeId)
+        }
+        if http.statusCode == 401 { throw FuelClientError.unauthorized }
+        guard (200...299).contains(http.statusCode) else {
+            throw FuelClientError.http(http.statusCode, payload["error"] as? String ?? "unknown error")
+        }
+        return RecipeLogOutcome(ok: true, needsNutrition: false, recipeId: recipeId)
+    }
+
+    /// Recipes needing a nutrition breakdown — the same list the website's backfill
+    /// banner reads from, so the app can walk it and estimate each one on-device.
+    func recipesNeedingNutrition() async throws -> [(id: String, name: String)] {
+        struct Entry: Decodable { var id: String; var name: String }
+        struct Response: Decodable { var recipes: [Entry] }
+        let data = try await send(try request("/api/mlog?fuel_route=recipe-nutrition"))
+        return try JSONDecoder().decode(Response.self, from: data).recipes.map { ($0.id, $0.name) }
+    }
+
+    /// Persists a nutrition estimate this phone already computed on-device. The server
+    /// only writes it in if the recipe is still missing nutrition (never overwrites a
+    /// contributor's own numbers or another estimate), and never calls Gemini itself —
+    /// this route is pure storage, unlike the website's POST to the same path.
+    @discardableResult
+    func saveRecipeNutrition(recipeId: String, nutrition: EstimatedNutrition) async throws -> Recipe {
+        var body: [String: Any] = ["recipeId": recipeId]
+        if let v = nutrition.calories { body["calories"] = v }
+        if let v = nutrition.protein { body["protein"] = v }
+        if let v = nutrition.carbs { body["carbs"] = v }
+        if let v = nutrition.fat { body["fat"] = v }
+        if let v = nutrition.fiber { body["fiber"] = v }
+        struct Response: Decodable { var recipe: Recipe }
+        let data = try await send(try request("/api/mlog?fuel_route=recipe-nutrition", method: "PUT", body: body))
+        return try JSONDecoder().decode(Response.self, from: data).recipe
     }
 }

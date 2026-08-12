@@ -24,6 +24,9 @@ struct ChatMessage: Identifiable, Equatable {
     /// Set when this message IS a generated day plan, so the transcript can find and
     /// drop the previous one when a new plan is built — only one is ever kept.
     var isPlan: Bool = false
+    /// A change the Coach proposed and is waiting to be confirmed. Nothing is applied
+    /// until the person taps Confirm; cleared once they answer either way.
+    var pendingAction: CoachAction?
 }
 
 @MainActor
@@ -349,7 +352,7 @@ final class AppStore {
     /// earlier plan message is dropped first, so only the most recent plan is ever
     /// shown in the transcript.
     func generateNewPlan() async {
-        guard let summary = dashboard?.today.summary, OnDeviceAI.shared.availability.isReady else { return }
+        guard let summary = dashboard?.today.summary, OnDeviceAI.shared.isUsable else { return }
         coachThinking = true
         defer { coachThinking = false }
         do {
@@ -404,6 +407,15 @@ final class AppStore {
         messages.append(ChatMessage(role: .user, text: question))
         coachThinking = true
         defer { coachThinking = false }
+
+        // "Change my protein goal to 160" is a command, not a question. Interpreting
+        // first means such a message becomes a confirmable action instead of the model
+        // cheerfully describing a change it has no way to make.
+        if let action = await interpretAction(question), action.isActionable {
+            messages.append(ChatMessage(role: .coach, text: action.summary, pendingAction: action))
+            return
+        }
+
         // A placeholder the stream fills in, so text appears as it generates.
         let index = messages.count
         messages.append(ChatMessage(role: .coach, text: ""))
@@ -412,10 +424,50 @@ final class AppStore {
                                                dashboard: dashboard, history: messages,
                                                context: context)
             for try await partial in stream {
-                if messages.indices.contains(index) { messages[index].text = partial.content }
+                if messages.indices.contains(index) { messages[index].text = partial }
             }
         } catch {
             if messages.indices.contains(index) { messages[index].text = error.localizedDescription }
+        }
+    }
+
+    /// Nil when interpretation fails for any reason. A model that can't produce a clean
+    /// action should leave the message to be answered as an ordinary question rather
+    /// than surface an error for something the person never asked for.
+    private func interpretAction(_ question: String) async -> CoachAction? {
+        guard CoachActions.looksLikeCommand(question) else { return nil }
+        let foods = (dashboard?.today.foodEntries ?? []).compactMap(\.food)
+        let today = dashboard?.today.summary.date ?? String(ISO8601DateFormatter().string(from: Date()).prefix(10))
+        return try? await OnDeviceAI.shared.interpret(question, todayFoods: foods, today: today)
+    }
+
+    /// Applies a proposed change once the person has confirmed it, and replaces the
+    /// card with what actually happened.
+    func confirmAction(_ message: ChatMessage) async {
+        guard let index = messages.firstIndex(where: { $0.id == message.id }),
+              let action = messages[index].pendingAction else { return }
+        messages[index].pendingAction = nil
+        coachThinking = true
+        defer { coachThinking = false }
+        let result = await CoachActions.execute(action, store: self)
+        messages[index].text = result.message
+    }
+
+    func cancelAction(_ message: ChatMessage) {
+        guard let index = messages.firstIndex(where: { $0.id == message.id }) else { return }
+        messages[index].pendingAction = nil
+        messages[index].text = "Cancelled — nothing was changed."
+    }
+
+    /// Adds a recipe to the shared bank. Returns whether it saved, so the Coach can say
+    /// so plainly rather than claiming success on a failed write.
+    func addRecipe(name: String, ingredients: [String], servings: Double?) async -> Bool {
+        do {
+            try await client().createRecipe(name: name, ingredients: ingredients, servings: servings)
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
         }
     }
 
@@ -426,7 +478,7 @@ final class AppStore {
             try await SyncEngine.shared.requestAuthorization()
             healthAuthorized = true
             UserDefaults.standard.set(true, forKey: "hkAuthorized")
-            BackgroundSync.enableHealthKitDelivery()
+            await BackgroundSync.enableHealthKitDelivery()
             await syncHealth(reason: "first authorization")
         } catch {
             self.error = "Health access failed: \(error.localizedDescription)"

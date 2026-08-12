@@ -33,17 +33,225 @@ test('the iOS app signs in with PKCE and never stores a password', () => {
   assert.doesNotMatch(signIn, /GOCSPX/)
 })
 
-test('the AI runs on device, not through Gemini', () => {
+test('the AI runs on device by default, not through Gemini', () => {
   const ai = read('../ios/Fuel/Sources/OnDeviceAI.swift')
   assert.match(ai, /import FoundationModels/)
   assert.match(ai, /SystemLanguageModel\.default/)
-  // Nothing in the app may reach for a hosted model. Checked against the endpoint and
-  // against network calls in the AI layer, since the prose here legitimately explains
-  // what it replaced.
-  assert.doesNotMatch(ai, /generativelanguage\.googleapis\.com|api\.openai\.com|anthropic\.com/)
+  // OnDeviceAI is the router, not a network client: every remote call must go through
+  // RemoteAI.* rather than OnDeviceAI reaching for a hosted endpoint or URLSession
+  // itself. Checked against the endpoint and against network calls in this file
+  // specifically, since the prose here legitimately explains what it replaced.
+  assert.doesNotMatch(ai, /generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com/)
   assert.doesNotMatch(ai, /URLSession/)
   const store = read('../ios/Fuel/Sources/AppStore.swift')
   assert.doesNotMatch(store, /generativelanguage\.googleapis\.com/)
+})
+
+test('every OnDeviceAI method checks for a remote key before running on device', () => {
+  const ai = read('../ios/Fuel/Sources/OnDeviceAI.swift')
+  for (const call of ['estimateNutrition', 'estimateRecipeNutrition', 'identifyMeal', 'dailyInsight', 'planRestOfDay', 'ask']) {
+    assert.match(ai, new RegExp(`RemoteAI\\.${call}\\(`), `${call} never routes to RemoteAI — a configured key would silently be ignored`)
+  }
+})
+
+test('a bring-your-own-key request only fires when a key is actually present', () => {
+  const keyStore = read('../ios/Fuel/Sources/APIKeyStore.swift')
+  // A provider can be *selected* with no key typed in yet; activeProvider must read
+  // that as "use on-device", not attempt a request with an empty key.
+  assert.match(keyStore, /var activeProvider: AIProvider\? \{/)
+  assert.match(keyStore, /key\.isEmpty \? nil : selectedProvider/)
+  // Keychain only — same mechanism as the health sync token, never UserDefaults, which
+  // is unencrypted and included in unencrypted device backups. (selectedProvider, an
+  // enum case rather than a secret, is fine in UserDefaults — only the raw key value
+  // typed in via setKey, bound to `trimmed`, is checked here.)
+  assert.match(keyStore, /Keychain\.set\(trimmed, for: provider\.keychainKey\)/)
+  assert.doesNotMatch(keyStore, /UserDefaults\.standard\.set\(trimmed/)
+})
+
+test('the BYOK model is picked from a live per-provider list, never hardcoded into a request', () => {
+  const keyStore = read('../ios/Fuel/Sources/APIKeyStore.swift')
+  const remote = read('../ios/Fuel/Sources/RemoteAI.swift')
+  const onDevice = read('../ios/Fuel/Sources/OnDeviceAI.swift')
+  const more = read('../ios/Fuel/Sources/MoreView.swift')
+
+  // A provider that retires a model (this is what actually happened to
+  // gemini-2.5-flash) must only ever mean editing APIKeyStore's list — never a
+  // silently-broken literal string buried in a request body.
+  assert.doesNotMatch(remote, /"model":\s*"[a-z0-9.\-]+"/)
+  for (const provider of ['claude', 'openAI', 'gemini']) {
+    assert.match(keyStore, new RegExp(`case \\.${provider}: return \\[`), `${provider} needs a model list`)
+  }
+  assert.match(keyStore, /var defaultModel: String \{ availableModels\[1\]\.modelID \}/)
+  // A stored pick that's no longer offered (the provider retired it) falls back to the
+  // current default rather than sending a dead model ID.
+  assert.match(keyStore, /provider\.availableModels\.contains\(where: \{ \$0\.modelID == stored \}\)/)
+
+  // The chosen model actually reaches every RemoteAI call, not just some of them.
+  assert.match(onDevice, /var remote: \(provider: AIProvider, key: String, model: String\)\?/)
+  for (const call of ['estimateNutrition', 'estimateRecipeNutrition', 'identifyMeal', 'dailyInsight', 'planRestOfDay', 'ask']) {
+    assert.match(onDevice, new RegExp(`RemoteAI\\.${call}\\([^)]*model: remote\\.model`, 's'), `${call} must pass remote.model through`)
+  }
+
+  // Reachable from the same picker as the key and provider, not a hidden default.
+  assert.match(more, /Picker\("Model", selection: modelBinding\)/)
+  assert.match(more, /ForEach\(keyStore\.selectedProvider\.availableModels\)/)
+})
+
+test('remote providers only ever run when OnDeviceAI.remote resolves a key', () => {
+  const remote = read('../ios/Fuel/Sources/RemoteAI.swift')
+  // Every provider function requires a non-optional `key` parameter — there is no path
+  // that silently defaults to an empty string and fires an unauthenticated request.
+  assert.match(remote, /private static func completeClaude\(key: String/)
+  assert.match(remote, /private static func completeOpenAI\(key: String/)
+  assert.match(remote, /private static func completeGemini\(key: String/)
+  assert.match(remote, /guard !key\.isEmpty else \{ throw RemoteAIError\.missingKey\(provider\) \}/)
+})
+
+test('the dashboard\'s accent colors are user-customizable, with presets and a full custom picker', () => {
+  const theme = read('../ios/Fuel/Sources/DashboardTheme.swift')
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // More than one built-in palette to choose from, plus a fully custom option.
+  assert.match(theme, /static let presets: \[DashboardPalette\] = \[/)
+  const presetCount = [...theme.matchAll(/DashboardPalette\(name: "/g)].length
+  assert.ok(presetCount >= 3, `expected several preset palettes, found ${presetCount}`)
+  assert.match(theme, /ColorPicker\("Accent"/)
+  assert.match(theme, /ColorPicker\("Active energy"/)
+  assert.match(theme, /ColorPicker\("Resting energy"/)
+  // Colors aren't secret, but they should still survive a relaunch.
+  assert.match(theme, /d\.set\(primary\.hexString, forKey:/)
+  // The picker is reachable from the dashboard's own menu, not buried in More.
+  assert.match(today, /Button \{ showColors = true \} label: \{ Label\("Dashboard colors"/)
+  assert.match(today, /\.sheet\(isPresented: \$showColors\) \{ DashboardColorsSheet\(\) \}/)
+  // The energy boxes and both dashboard charts read the live theme rather than a
+  // hardcoded hex — the whole point of the feature is that changing it is visible.
+  assert.doesNotMatch(today, /0x7d8fa3|0xef8f4d/i)
+  for (const usage of [
+    /BoxDef\(key: "active", color: theme\.secondary/,
+    /BoxDef\(key: "resting", color: theme\.tertiary/,
+    /BoxDef\(key: "deficit", color: theme\.primary/,
+    /legendDot\("Active", DashboardTheme\.shared\.secondary\)/,
+    /legendDot\("Resting", DashboardTheme\.shared\.tertiary\)/,
+  ]) {
+    assert.match(today, usage)
+  }
+})
+
+test('nothing claims to run on device while a remote key is doing the work', () => {
+  // Saying "on device" while the question is in flight to someone's own Gemini key is
+  // a privacy claim that isn't true — every such string is conditioned on the provider.
+  for (const [file, marker] of [
+    ['../ios/Fuel/Sources/CoachView.swift', 'Thinking'],
+    ['../ios/Fuel/Sources/CameraLogView.swift', 'Reading your photo'],
+  ]) {
+    const source = read(file)
+    // The on-device wording may only appear as the `??` fallback of the provider
+    // lookup — never as a bare unconditional Text(...).
+    assert.doesNotMatch(source, new RegExp(`Text\\("${marker}[^"]*on device`),
+      `${file}: "${marker} … on device" must be conditioned on activeProvider`)
+    assert.match(source, new RegExp(`activeProvider\\.map \\{ "${marker}`),
+      `${file} must name the active provider instead`)
+  }
+})
+
+test('the palette themes the whole app, not just the Today charts', () => {
+  const theme = read('../ios/Fuel/Sources/DashboardTheme.swift')
+  // A "Website" preset matching fuel.rishib.com, plus per-palette surplus/deficit
+  // colors — sign carries meaning on that chart, so one accent for both loses it.
+  assert.match(theme, /DashboardPalette\(name: "Website"/)
+  assert.match(theme, /var positive: UInt32/)
+  assert.match(theme, /var negative: UInt32/)
+  assert.match(theme, /var accent: Color \{ primary \}/)
+
+  // Every user-facing accent reads the theme. Palette.flame survives only as the brand
+  // mark (the launch-screen bolt), which must keep matching the Home Screen icon.
+  for (const file of ['CoachView', 'Theme', 'CompareView', 'LiftingView', 'TrendsView']) {
+    assert.doesNotMatch(read(`../ios/Fuel/Sources/${file}.swift`), /Palette\.flame(?!\w)/,
+      `${file}.swift should use DashboardTheme.shared.accent, not the fixed flame`)
+  }
+  const app = read('../ios/Fuel/Sources/FuelApp.swift')
+  assert.match(app, /@State private var theme = DashboardTheme\.shared/)
+  assert.match(app, /\.tint\(theme\.accent\)/)
+
+  // The surplus/deficit bars read the two dedicated colors, not the generic accent.
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /net > 0 \? DashboardTheme\.shared\.positive : DashboardTheme\.shared\.negative/)
+})
+
+test('Energy and Macros plot one labelled line per component, and every trend zooms', () => {
+  const trends = read('../ios/Fuel/Sources/TrendsView.swift')
+  // "Macros" as a single line is the shape of a question nobody asks — the read is how
+  // protein, carbs and fat move relative to each other.
+  for (const name of ['Protein', 'Carbs', 'Fat', 'Fiber']) {
+    assert.match(trends, new RegExp(`series\\("${name}"`), `Macros must plot ${name} as its own series`)
+  }
+  for (const name of ['Burned', 'Consumed', 'Active', 'Resting']) {
+    assert.match(trends, new RegExp(`series\\("${name}"`), `Energy must plot ${name} as its own series`)
+  }
+  // Shared zoom/scroll component, so Trends and Explore can't drift apart.
+  assert.match(trends, /struct ZoomableDateChart<Content: ChartContent>: View/)
+  assert.match(trends, /\.chartScrollableAxes\(\.horizontal\)/)
+  assert.match(trends, /MagnificationGesture\(\)/)
+  assert.match(read('../ios/Fuel/Sources/ExploreView.swift'), /ZoomableDateChart\(dates:/)
+})
+
+test('Coach replies render markdown instead of showing raw asterisks', () => {
+  const md = read('../ios/Fuel/Sources/MarkdownText.swift')
+  const coach = read('../ios/Fuel/Sources/CoachView.swift')
+  // SwiftUI's own markdown support is inline-only, so block elements need handling or
+  // a bulleted reply keeps its literal "- ".
+  for (const block of ['heading', 'bullet', 'numbered', 'paragraph']) {
+    assert.match(md, new RegExp(`case ${block}`), `block renderer must handle ${block}`)
+  }
+  assert.match(md, /interpretedSyntax: \.inlineOnlyPreservingWhitespace/)
+  // Only the coach's text is markdown; what the person typed is shown as typed.
+  assert.match(coach, /MarkdownText\(text: message\.text/)
+  assert.match(coach, /if message\.role == \.user \{\s*Text\(message\.text\)/)
+})
+
+test('the Coach can act, but nothing mutates without an explicit confirmation', () => {
+  const action = read('../ios/Fuel/Sources/CoachAction.swift')
+  const coach = read('../ios/Fuel/Sources/CoachView.swift')
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+
+  // The safety property: a proposed change is rendered as a card and applied only on
+  // tap. A wrong number in a food log is easy for a model to produce and tedious to
+  // find later, so nothing may mutate on the strength of a parse alone.
+  assert.match(store, /var pendingAction: CoachAction\?/)
+  assert.match(coach, /if message\.pendingAction != nil \{[\s\S]*?ActionConfirmation\(/)
+  assert.match(store, /func confirmAction\(_ message: ChatMessage\) async/)
+  assert.match(store, /func cancelAction\(_ message: ChatMessage\)/)
+  // Execution is reachable only from confirmAction — never straight from interpretation.
+  const executeAt = store.indexOf('CoachActions.execute(')
+  const confirmAt = store.indexOf('func confirmAction')
+  assert.ok(executeAt > confirmAt && executeAt > 0, 'execute must live inside confirmAction')
+
+  // Every kind the interpreter is offered has a branch in the executor, or the Coach
+  // would confirm a change and then silently do nothing.
+  const kinds = action.match(/static let kinds = \[([\s\S]*?)\]/)[1]
+    .split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)
+  assert.ok(kinds.length >= 8, `expected the full action surface, got ${kinds.length}`)
+  for (const kind of kinds) {
+    assert.match(action, new RegExp(`case "${kind}":`), `${kind} has no executor branch`)
+  }
+
+  // Appending rather than replacing: saveContext overwrites the whole field, so sending
+  // only the new sentence would silently drop everything already stored.
+  assert.match(action, /existing\.isEmpty \? addition : existing \+ "\\n" \+ addition/)
+})
+
+test('the deficit chart opens on the most recent days and reads out a tapped bar', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // onAppear fired before the scroll view had laid out, so the position was ignored and
+  // the chart opened weeks in the past.
+  assert.match(today, /\.task\(id: points\.last\?\.date\) \{ scrollPosition = points\.last\?\.date \?\? "" \}/)
+  assert.doesNotMatch(today, /\.onAppear \{ scrollPosition = points\.last/)
+  assert.match(today, /\.chartXSelection\(value: \$selectedDate\)/)
+  // Dates read as "Mon Aug 11", not an ISO string on a tick mark.
+  assert.match(today, /setLocalizedDateFormatFromTemplate\("EEE MMM d"\)/)
+  // The all-time average carries the same two colours as the bars, since its sign is
+  // the whole point.
+  assert.match(today, /Stat\(label: balance > 0 \? "Avg surplus" : "Avg deficit"/)
+  assert.match(today, /tint: balance > 0 \? DashboardTheme\.shared\.positive/)
 })
 
 test('the app reads HealthKit itself, sharing one engine with Health Logger', () => {
@@ -62,7 +270,7 @@ test('the app reads HealthKit itself, sharing one engine with Health Logger', ()
 test('logging opens the camera, with typing one tap away', () => {
   const app = read('../ios/Fuel/Sources/FuelApp.swift')
   const camera = read('../ios/Fuel/Sources/CameraLogView.swift')
-  assert.match(app, /Tab\("Log", systemImage: "camera\.fill"\) \{ CameraLogView\(\) \}/)
+  assert.match(app, /Tab\("Log", systemImage: "camera\.fill", value: AppTab\.log\) \{ CameraLogView\(\) \}/)
   // Back camera: you are photographing the plate, not yourself.
   assert.match(camera, /position: \.back/)
   // One shutter logs straight away; the blue one stops for context first.
@@ -80,9 +288,12 @@ test('the dashboard replicates the website: every section, box and nutrient', ()
                      'workouts', 'steps', 'vitals', 'recovery']) {
     assert.match(today, new RegExp(`case "${key}"`), `the app must render the ${key} section`)
   }
+  // Each box is defined once, keyed by these strings, and shown only when the layout's
+  // boxes array contains that key.
   for (const box of ['totalBurned', 'consumed', 'active', 'resting', 'deficit', 'rolling24']) {
-    assert.match(today, new RegExp(`boxes.contains\\("${box}"\\)`), `${box} must be renderable`)
+    assert.match(today, new RegExp(`BoxDef\\(key: "${box}"`), `${box} must be renderable`)
   }
+  assert.match(today, /boxes\.contains\(\$0\.key\)/)
 
   // The nutrient grid is transcribed, not summarised: every key the website can show,
   // the app can show. A missing one silently renders nothing.
@@ -124,7 +335,7 @@ test('the Coach only builds a plan on the explicit "New plan" action, and keeps 
   assert.match(store, /messages\.removeAll \{ \$0\.isPlan \}/)
   // The plan action is reachable from the UI as its own button, disabled while busy.
   assert.match(coach, /store\.generateNewPlan\(\)/)
-  assert.match(coach, /\.disabled\(store\.coachThinking \|\| store\.dashboard == nil \|\| !ai\.availability\.isReady\)/)
+  assert.match(coach, /\.disabled\(store\.coachThinking \|\| store\.dashboard == nil \|\| !ai\.isUsable\)/)
 })
 
 test('the website\'s Lifting, Compare, Explore, Places and Recipes tabs are all reachable from More', () => {

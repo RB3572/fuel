@@ -8,7 +8,7 @@ import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.
 import { getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
-import { recipesNeedingNutrition, saveEstimatedNutrition } from './_lib/recipes.js'
+import { recipesNeedingNutrition, saveEstimatedNutrition, saveRecipe } from './_lib/recipes.js'
 import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
 import { estimateFoodNutritionBatch, MAX_BATCH } from './_lib/food-nutrition.js'
 import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
@@ -85,6 +85,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'recipe-nutrition') {
     await handleRecipeNutrition(req, res)
+    return
+  }
+  if (integrationRoute === 'save-recipe') {
+    await handleSaveRecipe(req, res)
     return
   }
   if (integrationRoute === 'food-nutrition') {
@@ -286,9 +290,31 @@ async function handleLogRecipe(req, res) {
 
 // Fills in missing nutrition so those recipes become one-click loggable. Bounded per
 // request: Gemini is called once per recipe and serverless functions have a deadline.
+// Adds a recipe to the shared bank. saveRecipe() already existed for the MCP tools;
+// this exposes it to the app so the Coach can add one when asked.
+async function handleSaveRecipe(req, res) {
+  if (req.method !== 'POST') {
+    methodNotAllowed(res, ['POST'])
+    return
+  }
+  const auth = await authenticatedUser(req, ['fuel:write'])
+  if (!auth) {
+    sendJson(res, 401, { error: 'Sign in to add a recipe.' })
+    return
+  }
+  const body = unwrap(req.body)
+  const name = text(body.name)
+  if (!name) {
+    sendJson(res, 400, { error: 'A recipe needs a name.' }, auth.cookie ? [auth.cookie] : [])
+    return
+  }
+  const saved = await saveRecipe(body, auth.id)
+  sendJson(res, 200, { ok: true, recipe: saved }, auth.cookie ? [auth.cookie] : [])
+}
+
 async function handleRecipeNutrition(req, res) {
-  if (!['GET', 'POST'].includes(req.method)) {
-    methodNotAllowed(res, ['GET', 'POST'])
+  if (!['GET', 'POST', 'PUT'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'PUT'])
     return
   }
   res.setHeader('Cache-Control', 'no-store')
@@ -296,6 +322,27 @@ async function handleRecipeNutrition(req, res) {
     const auth = await authenticatedUser(req)
     if (!auth) {
       sendJson(res, 401, { error: 'Sign in to fill in recipe nutrition.' })
+      return
+    }
+    // The iOS app estimates on-device (no Gemini involved) and PUTs the resulting
+    // numbers here to persist them to the shared bank — this path never calls Gemini
+    // itself. saveEstimatedNutrition only fills a recipe that's still missing
+    // nutrition, so a stale client can't clobber a number someone else already set.
+    if (req.method === 'PUT') {
+      const body = unwrap(req.body)
+      const recipeId = text(body.recipeId ?? body.recipe_id) || ''
+      if (!recipeId) {
+        sendJson(res, 422, { error: 'recipeId is required.' }, auth.cookie ? [auth.cookie] : [])
+        return
+      }
+      const saved = await saveEstimatedNutrition(recipeId, {
+        calories: body.calories, protein: body.protein, carbs: body.carbs, fat: body.fat, fiber: body.fiber, nutrients: body.nutrients,
+      })
+      if (!saved) {
+        sendJson(res, 404, { error: 'That recipe was not found, or already has a nutrition breakdown.' }, auth.cookie ? [auth.cookie] : [])
+        return
+      }
+      sendJson(res, 200, { ok: true, recipe: saved }, auth.cookie ? [auth.cookie] : [])
       return
     }
     const pending = await recipesNeedingNutrition(200)

@@ -49,7 +49,7 @@ struct ContentView: View {
                                 }
                                 authorized = true
                                 UserDefaults.standard.set(true, forKey: "hkAuthorized")
-                                BackgroundSync.enableHealthKitDelivery()
+                                await BackgroundSync.enableHealthKitDelivery()
                             }
                         } label: {
                             Label("Allow Health access", systemImage: "heart.fill")

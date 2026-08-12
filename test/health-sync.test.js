@@ -143,3 +143,33 @@ test('the iOS app and the server agree on the protocol constants', () => {
   // Anchors commit only after the server acknowledges the page.
   assert.ok(engine.indexOf('api.upload(payload)') < engine.indexOf('saveAnchor(encoded'), 'upload must precede the anchor commit')
 })
+
+test('raw samples expire but everything the UI reads is kept forever', () => {
+  const sync = read('../api/_lib/health-sync.js')
+
+  // Storage ran out because per-sample rows were kept forever — a watch writes a
+  // heart-rate sample every few seconds — and every sync then failed outright.
+  assert.match(sync, /export const RAW_SAMPLE_RETENTION_DAYS = 7/)
+  for (const table of ['hk_quantity_samples', 'hk_category_samples']) {
+    assert.match(sync, new RegExp(`DELETE FROM ${table} WHERE ctid IN`), `${table} must be pruned in batches`)
+  }
+
+  // The load-bearing invariant: health_daily holds the per-day aggregates that the
+  // dashboard, trends and history actually read, and they are computed on device
+  // rather than derived from these rows — so pruning must never touch it. hk_workouts
+  // is spared too: one row per workout is not a volume problem and its GPS routes
+  // cannot be recomputed.
+  assert.doesNotMatch(sync, /DELETE FROM health_daily/)
+  const pruneStart = sync.indexOf('async function pruneExpiredSamples')
+  const pruneEnd = sync.indexOf('\n}', sync.indexOf('return pruned', pruneStart))
+  const pruneBody = sync.slice(pruneStart, pruneEnd)
+  assert.ok(pruneStart > 0, 'pruneExpiredSamples must exist')
+  assert.doesNotMatch(pruneBody, /hk_workouts/, 'workouts (and their routes) must not be pruned')
+  assert.doesNotMatch(pruneBody, /health_daily/, 'daily aggregates must never be pruned')
+
+  // Reclaiming has to happen before the inserts: on a full database the insert is what
+  // fails, so cleanup afterwards would never be reached.
+  const pruneCall = sync.indexOf('await pruneExpiredSamples(db, userId)')
+  const firstInsert = sync.indexOf('INSERT INTO hk_quantity_samples')
+  assert.ok(pruneCall > 0 && pruneCall < firstInsert, 'prune must run before the first insert')
+})

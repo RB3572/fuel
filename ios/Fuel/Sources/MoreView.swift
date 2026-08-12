@@ -11,6 +11,19 @@ struct MoreView: View {
     @State private var syncing = false
     @State private var showContext = false
     @AppStorage("fuelDarkMode") private var darkMode = false
+    @ObservedObject private var syncStore = SyncStore.shared
+    @Bindable private var keyStore = APIKeyStore.shared
+    @State private var usingCustomKey = APIKeyStore.shared.activeProvider != nil
+
+    private var apiKeyBinding: Binding<String> {
+        Binding(get: { keyStore.key(for: keyStore.selectedProvider) },
+                set: { keyStore.setKey($0, for: keyStore.selectedProvider) })
+    }
+
+    private var modelBinding: Binding<String> {
+        Binding(get: { keyStore.model(for: keyStore.selectedProvider) },
+                set: { keyStore.setModel($0, for: keyStore.selectedProvider) })
+    }
 
     var body: some View {
         @Bindable var store = store
@@ -54,6 +67,21 @@ struct MoreView: View {
                 }
 
                 Section {
+                    Toggle("Sync in the background", isOn: $syncStore.backgroundSyncEnabled)
+                    Toggle("Activity & vitals", isOn: $syncStore.syncQuantitySamples)
+                    Toggle("Sleep & other categories", isOn: $syncStore.syncCategorySamples)
+                    Toggle("Workouts", isOn: $syncStore.syncWorkouts)
+                    if syncStore.syncWorkouts {
+                        Toggle("Include GPS routes", isOn: $syncStore.syncWorkoutRoutes)
+                            .padding(.leading, 16)
+                    }
+                } header: {
+                    Text("Sync settings")
+                } footer: {
+                    Text("Turning a category off stops it from being read or sent — nothing already synced is deleted, and re-enabling it resumes from where it left off. \"Sync in the background\" off means Fuel only syncs while it's open (on launch, on foreground, or pull-to-refresh) rather than reacting to Health in the background.")
+                }
+
+                Section {
                     switch ai.availability {
                     case .ready:
                         Label("On-device model ready", systemImage: "cpu")
@@ -69,7 +97,32 @@ struct MoreView: View {
                 } header: {
                     Text("Fuel AI")
                 } footer: {
-                    Text("Nutrition estimates, photo identification and coaching all run on this iPhone. Nothing is sent to a model provider.")
+                    Text(keyStore.activeProvider == nil
+                         ? "Nutrition estimates, photo identification and coaching all run on this iPhone. Nothing is sent to a model provider."
+                         : "Currently using your own \(keyStore.selectedProvider.label) key instead — see AI provider below.")
+                }
+
+                Section {
+                    Toggle("Use my own API key", isOn: $usingCustomKey)
+                    if usingCustomKey {
+                        Picker("Provider", selection: $keyStore.selectedProvider) {
+                            ForEach(AIProvider.allCases) { Text($0.label).tag($0) }
+                        }
+                        Picker("Model", selection: modelBinding) {
+                            ForEach(keyStore.selectedProvider.availableModels) { option in
+                                Text(option.label).tag(option.modelID)
+                            }
+                        }
+                        SecureField("\(keyStore.selectedProvider.label) API key", text: apiKeyBinding)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                } header: {
+                    Text("AI provider")
+                } footer: {
+                    Text(usingCustomKey
+                         ? "Nutrition estimates, photo identification and coaching are sent to \(keyStore.selectedProvider.label) using this key. The key lives only in this device's Keychain — Fuel's own servers never see it."
+                         : "Off (default) runs every AI task on this iPhone. Turn on to use your own Claude, ChatGPT, or Gemini key instead.")
                 }
 
                 Section {
@@ -135,6 +188,12 @@ struct MoreView: View {
             }
             .navigationTitle("More")
             .sheet(isPresented: $showContext) { ContextEditorSheet() }
+            .onChange(of: usingCustomKey) { _, on in
+                // Off means definitely on-device, not "on-device because the field
+                // happens to be empty" — so turning the toggle off clears the key
+                // rather than leaving it stored but merely unused.
+                if !on { keyStore.setKey("", for: keyStore.selectedProvider) }
+            }
         }
     }
 }

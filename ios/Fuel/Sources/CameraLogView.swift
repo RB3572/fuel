@@ -147,7 +147,9 @@ struct CameraLogView: View {
                 if store.logging {
                     HStack(spacing: 10) {
                         ProgressView().tint(.white)
-                        Text("Reading your photo on device…").foregroundStyle(.white)
+                        Text(APIKeyStore.shared.activeProvider.map { "Reading your photo with \($0.label)…" }
+                             ?? "Reading your photo on device…")
+                            .foregroundStyle(.white)
                     }
                     .padding(.horizontal, 16).padding(.vertical, 11)
                     .background(.ultraThinMaterial, in: Capsule())
@@ -271,7 +273,9 @@ struct ManualLogView: View {
                     }
 
                     if let estimate {
-                        Panel(title: "Estimate", subtitle: "On-device — edit anything that looks wrong") {
+                        Panel(title: "Estimate",
+                              subtitle: (APIKeyStore.shared.activeProvider?.label ?? "On-device")
+                                        + " — edit anything that looks wrong") {
                             HStack(alignment: .top, spacing: 8) {
                                 Stat(label: "kcal", value: Format.kcal(estimate.calories))
                                 Stat(label: "Protein", value: Format.number(estimate.protein))
@@ -294,7 +298,7 @@ struct ManualLogView: View {
                         }.frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(estimating || food.isEmpty || !ai.availability.isReady)
+                    .disabled(estimating || food.isEmpty || !ai.isUsable)
 
                     Button {
                         Task {

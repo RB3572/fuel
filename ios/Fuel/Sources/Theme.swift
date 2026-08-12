@@ -88,6 +88,9 @@ struct Stat: View {
     let label: String
     let value: String
     var detail: String?
+    /// Overrides the value's colour when the number itself carries meaning — a surplus
+    /// versus a deficit, say. Nil keeps the default ink so ordinary stats stay uniform.
+    var tint: Color?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -96,7 +99,7 @@ struct Stat: View {
                 .foregroundStyle(Palette.muted(scheme))
             Text(value)
                 .font(.system(size: 26, weight: .semibold, design: .rounded))
-                .foregroundStyle(Palette.ink(scheme))
+                .foregroundStyle(tint ?? Palette.ink(scheme))
                 .contentTransition(.numericText())
             if let detail {
                 Text(detail).font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
@@ -132,7 +135,7 @@ struct GoalBar: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Palette.surface(scheme))
                     Capsule()
-                        .fill(fraction > 1.05 ? AnyShapeStyle(Palette.flame) : AnyShapeStyle(Palette.ink(scheme)))
+                        .fill(fraction > 1.05 ? AnyShapeStyle(DashboardTheme.shared.accent) : AnyShapeStyle(Palette.ink(scheme)))
                         .frame(width: max(2, geo.size.width * min(1, fraction)))
                 }
             }

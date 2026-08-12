@@ -60,10 +60,16 @@ const NUTRIENT_DISPLAY:Array<[string,string,string,number]>=[
 
 type SectionKey='nutrition'|'detailedNutrition'|'foodConsumed'|'fitness'|'workouts'|'steps'|'vitals'|'recovery'
 type EnergyBoxKey='totalBurned'|'consumed'|'active'|'resting'|'deficit'|'rolling24'
-type Layout={order:SectionKey[];hidden:SectionKey[];energyBoxes:EnergyBoxKey[]}
+// The two big hero charts, same on/off toggle shape as energyBoxes — not yet exposed in
+// this UI (iOS added the toggle first), but the field must round-trip here untouched or
+// saving layout from the website silently wipes whatever the app set. See ALL_CHARTS'
+// pair, CHARTS, in api/_lib/dashboard-layout.js.
+type ChartKey='intraday'|'components'
+type Layout={order:SectionKey[];hidden:SectionKey[];energyBoxes:EnergyBoxKey[];charts:ChartKey[]}
 const ALL_SECTIONS:SectionKey[]=['nutrition','detailedNutrition','foodConsumed','fitness','workouts','steps','vitals','recovery']
 const ALL_ENERGY_BOXES:EnergyBoxKey[]=['totalBurned','consumed','active','resting','deficit','rolling24']
-const DEFAULT_LAYOUT:Layout={order:[...ALL_SECTIONS],hidden:[],energyBoxes:[...ALL_ENERGY_BOXES]}
+const ALL_CHARTS:ChartKey[]=['intraday','components']
+const DEFAULT_LAYOUT:Layout={order:[...ALL_SECTIONS],hidden:[],energyBoxes:[...ALL_ENERGY_BOXES],charts:[...ALL_CHARTS]}
 const ENERGY_BOX_LABELS:Record<EnergyBoxKey,string>={totalBurned:'Total burned',consumed:'Consumed',active:'Active',resting:'Resting',deficit:'Deficit / Surplus',rolling24:'Last 24 hours'}
 function normalizeLayout(raw:unknown):Layout{
   const value=raw&&typeof raw==='object'?raw as Partial<Layout>:{}
@@ -72,7 +78,8 @@ function normalizeLayout(raw:unknown):Layout{
   for(const k of ALL_SECTIONS)if(!seen.has(k))order.push(k)
   const hidden=[...new Set((Array.isArray(value.hidden)?value.hidden:[]).filter(k=>ALL_SECTIONS.includes(k as SectionKey)))] as SectionKey[]
   const energyBoxes=value.energyBoxes===undefined?[...ALL_ENERGY_BOXES]:[...new Set((Array.isArray(value.energyBoxes)?value.energyBoxes:[]).filter(k=>ALL_ENERGY_BOXES.includes(k as EnergyBoxKey)))] as EnergyBoxKey[]
-  return{order,hidden,energyBoxes}
+  const charts=value.charts===undefined?[...ALL_CHARTS]:[...new Set((Array.isArray(value.charts)?value.charts:[]).filter(k=>ALL_CHARTS.includes(k as ChartKey)))] as ChartKey[]
+  return{order,hidden,energyBoxes,charts}
 }
 
 // public/intraday-energy.js renders the intraday chart from this payload instead of

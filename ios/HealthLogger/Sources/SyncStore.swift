@@ -17,6 +17,21 @@ final class SyncStore: ObservableObject {
     @Published var initialSyncComplete: Bool { didSet { defaults.set(initialSyncComplete, forKey: "initialSyncComplete") } }
     @Published var status: SyncStatus = .idle
 
+    // MARK: What syncs, and when
+    //
+    // Coarse, on purpose: these gate the three drain loops SyncEngine.run() already has
+    // (quantity samples, category samples, workouts) plus the one clearly more sensitive
+    // sub-piece of a workout, its GPS route — rather than a per-HealthKit-type picker,
+    // which would need touching the anchored drain loop itself for every one of ~30
+    // types. All default true, so a fresh install behaves exactly as before this existed.
+    @Published var syncQuantitySamples: Bool { didSet { defaults.set(syncQuantitySamples, forKey: "syncQuantitySamples") } }
+    @Published var syncCategorySamples: Bool { didSet { defaults.set(syncCategorySamples, forKey: "syncCategorySamples") } }
+    @Published var syncWorkouts: Bool { didSet { defaults.set(syncWorkouts, forKey: "syncWorkouts") } }
+    @Published var syncWorkoutRoutes: Bool { didSet { defaults.set(syncWorkoutRoutes, forKey: "syncWorkoutRoutes") } }
+    /// When off, no HKObserverQuery or BGTask is registered — sync only ever runs while
+    /// the app is open (a manual pull-to-refresh, or on launch/foreground).
+    @Published var backgroundSyncEnabled: Bool { didSet { defaults.set(backgroundSyncEnabled, forKey: "backgroundSyncEnabled") } }
+
     enum SyncStatus: Equatable {
         case idle
         case running(String)          // human-readable stage, e.g. "Uploading heart rate (12,400)…"
@@ -45,6 +60,13 @@ final class SyncStore: ObservableObject {
         lastSyncAt = defaults.object(forKey: "lastSyncAt") as? Date
         lastSyncSummary = defaults.string(forKey: "lastSyncSummary") ?? ""
         initialSyncComplete = defaults.bool(forKey: "initialSyncComplete")
+        // object(forKey:) rather than bool(forKey:): a key that was never set must read
+        // as true (existing behavior), which bool(forKey:)'s false-default can't express.
+        syncQuantitySamples = defaults.object(forKey: "syncQuantitySamples") as? Bool ?? true
+        syncCategorySamples = defaults.object(forKey: "syncCategorySamples") as? Bool ?? true
+        syncWorkouts = defaults.object(forKey: "syncWorkouts") as? Bool ?? true
+        syncWorkoutRoutes = defaults.object(forKey: "syncWorkoutRoutes") as? Bool ?? true
+        backgroundSyncEnabled = defaults.object(forKey: "backgroundSyncEnabled") as? Bool ?? true
     }
 
     /// Fuel needs a token; a self-hosted destination only needs somewhere to send to.

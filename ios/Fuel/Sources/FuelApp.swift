@@ -6,7 +6,12 @@ import AuthenticationServices
 struct FuelApp: App {
     @State private var store = AppStore.shared
     @State private var ai = OnDeviceAI.shared
+    // Held as state rather than read straight off the singleton so changing the palette
+    // re-tints the live app: observation tracking is dependable in a View body, less so
+    // in a Scene's.
+    @State private var theme = DashboardTheme.shared
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("fuelDarkMode") private var darkMode = false
 
     init() {
         // Must be registered before the app finishes launching.
@@ -18,21 +23,27 @@ struct FuelApp: App {
             RootView()
                 .environment(store)
                 .environment(ai)
-                .tint(Palette.flameMid)
+                .tint(theme.accent)
+                .preferredColorScheme(darkMode ? .dark : .light)
                 .task {
                     await store.load()
                     await store.loadEditableState()
                     await store.loadContext()
-                    if store.healthAuthorized { BackgroundSync.enableHealthKitDelivery() }
+                    if store.healthAuthorized { await BackgroundSync.enableHealthKitDelivery() }
                     await store.syncHealth(reason: "app open")
+                    await LocationSampler.shared.captureIfDue()
                 }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
-                Task { await store.load(); await store.syncHealth(reason: "app foreground") }
+                Task {
+                    await store.load()
+                    await store.syncHealth(reason: "app foreground")
+                    await LocationSampler.shared.captureIfDue()
+                }
             case .background:
-                BackgroundSync.scheduleAll()
+                Task { await BackgroundSync.scheduleAll() }
             default: break
             }
         }
@@ -46,21 +57,27 @@ struct FuelApp: App {
 struct RootView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.colorScheme) private var scheme
+    /// Bound so a screen can send you somewhere else — the Coach's back button returns
+    /// to Today, since with the keyboard up the tab bar is covered and there is
+    /// otherwise no way out.
+    @State private var tab: AppTab = .today
 
     var body: some View {
         if !store.isSignedIn {
             SetupView()
         } else {
-            TabView {
-                Tab("Today", systemImage: "flame.fill") { TodayView() }
-                Tab("Trends", systemImage: "chart.xyaxis.line") { TrendsView() }
-                Tab("Log", systemImage: "camera.fill") { CameraLogView() }
-                Tab("Coach", systemImage: "sparkles") { CoachView() }
-                Tab("More", systemImage: "ellipsis") { MoreView() }
+            TabView(selection: $tab) {
+                Tab("Today", systemImage: "flame.fill", value: AppTab.today) { TodayView() }
+                Tab("Trends", systemImage: "chart.xyaxis.line", value: AppTab.trends) { TrendsView() }
+                Tab("Log", systemImage: "camera.fill", value: AppTab.log) { CameraLogView() }
+                Tab("Coach", systemImage: "sparkles", value: AppTab.coach) { CoachView(onBack: { tab = .today }) }
+                Tab("More", systemImage: "ellipsis", value: AppTab.more) { MoreView() }
             }
         }
     }
 }
+
+enum AppTab: Hashable { case today, trends, log, coach, more }
 
 /// First run. The same credentials as the website: the Google account you already use,
 /// or Apple. Both are native sheets — there is no Fuel consent screen in the way.

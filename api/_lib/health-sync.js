@@ -49,6 +49,23 @@ export const SYNC_VERSION = 1
 export const MAX_SAMPLES_PER_REQUEST = 20000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// How long individual HealthKit samples are kept. A watch writes a heart-rate sample
+// every few seconds, so this table grows without bound and is what pushed the database
+// past its storage limit — at which point every sync failed with "could not extend
+// file" and no health data landed at all.
+//
+// Only the *raw* per-sample rows expire. health_daily (the per-day aggregates the
+// dashboard, trends and history all actually read) is never pruned, so nothing a user
+// can see gets shorter — the aggregates are computed on device and written directly,
+// not derived from these rows. hk_workouts is also kept: one row per workout is not a
+// volume problem, and it carries GPS routes that cannot be recomputed.
+export const RAW_SAMPLE_RETENTION_DAYS = 7
+// Deleted in bounded batches so the first prune after a long backlog can't build one
+// enormous transaction (slow, and a lot of WAL on a database that is already full).
+// Whatever a request doesn't finish, the next sync picks up.
+const PRUNE_BATCH_SIZE = 20000
+const PRUNE_MAX_BATCHES = 4
+
 let schemaReady = null
 export function ensureHealthSyncSchema() {
   if (!schemaReady) schemaReady = migrate().catch((error) => { schemaReady = null; throw error })
@@ -208,6 +225,73 @@ export async function handleHealthSyncV1(req, res) {
   }
 }
 
+/// Drops per-sample rows past the retention window, oldest first, in bounded batches.
+/// Returns how many rows went, per table.
+///
+/// Batching is by ctid rather than a plain predicate delete because the first prune
+/// after a long backlog can match millions of rows: one statement would hold a single
+/// long transaction and write all of its WAL at once. Each request does a little and
+/// returns; syncs are frequent enough that the backlog drains quickly.
+async function pruneExpiredSamples(db, userId) {
+  const pruned = { quantitySamples: 0, categorySamples: 0, energySnapshots: 0, syncSessions: 0 }
+  const cutoff = `${RAW_SAMPLE_RETENTION_DAYS} days`
+
+  // Each statement returns a single count rather than a row per deleted row — at this
+  // batch size RETURNING would put tens of thousands of rows on the wire per sync for
+  // a number nobody reads except this log line.
+  for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch += 1) {
+    const [{ n }] = await db`
+      WITH gone AS (
+        DELETE FROM hk_quantity_samples WHERE ctid IN (
+          SELECT ctid FROM hk_quantity_samples
+          WHERE user_id = ${userId} AND start_at < now() - ${cutoff}::interval
+          LIMIT ${PRUNE_BATCH_SIZE}
+        ) RETURNING 1
+      ) SELECT count(*)::int AS n FROM gone
+    `
+    pruned.quantitySamples += n
+    if (n < PRUNE_BATCH_SIZE) break
+  }
+
+  for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch += 1) {
+    const [{ n }] = await db`
+      WITH gone AS (
+        DELETE FROM hk_category_samples WHERE ctid IN (
+          SELECT ctid FROM hk_category_samples
+          WHERE user_id = ${userId} AND start_at < now() - ${cutoff}::interval
+          LIMIT ${PRUNE_BATCH_SIZE}
+        ) RETURNING 1
+      ) SELECT count(*)::int AS n FROM gone
+    `
+    pruned.categorySamples += n
+    if (n < PRUNE_BATCH_SIZE) break
+  }
+
+  // Intraday snapshots back only today's chart and the rolling-24h figure, so anything
+  // past the window is already unreadable by the UI.
+  const [{ n: snapshots }] = await db`
+    WITH gone AS (
+      DELETE FROM health_energy_snapshots
+      WHERE user_id = ${userId} AND collected_at < now() - ${cutoff}::interval
+      RETURNING 1
+    ) SELECT count(*)::int AS n FROM gone
+  `
+  pruned.energySnapshots = snapshots
+
+  // One row per sync request, kept purely for debugging a stuck device — a background
+  // sync every few minutes makes this one of the fastest-growing tables in the schema.
+  const [{ n: sessions }] = await db`
+    WITH gone AS (
+      DELETE FROM health_sync_sessions
+      WHERE user_id = ${userId} AND created_at < now() - ${cutoff}::interval
+      RETURNING 1
+    ) SELECT count(*)::int AS n FROM gone
+  `
+  pruned.syncSessions = sessions
+
+  return pruned
+}
+
 // What a (re)installed app needs to resume: its anchors and the last thing the server
 // heard from any device.
 async function syncState(userId) {
@@ -251,6 +335,17 @@ async function ingest(userId, body) {
 
   const db = sql()
   const report = { quantitySamples: 0, categorySamples: 0, workouts: 0, clinicalRecords: 0, dailyTotals: 0, deleted: 0, skipped: [] }
+
+  // Runs before the inserts, not after: on a database that has already hit its storage
+  // limit the insert is exactly what fails, so reclaiming first is what lets this
+  // request succeed rather than being the cleanup that never gets reached.
+  // Non-fatal: a prune that fails should not turn a sync that would otherwise land into
+  // a 500. The insert below reports the real problem if there genuinely is no room.
+  try {
+    report.pruned = await pruneExpiredSamples(db, userId)
+  } catch (error) {
+    console.error('Health sample prune failed', error)
+  }
 
   // ---- Raw samples: one jsonb round trip per table -------------------------------
   const cleanQuantity = quantity.map(normalizeQuantity).filter((row) => keep(row, report, 'quantitySamples'))

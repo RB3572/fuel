@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 
 process.env.DATABASE_URL ||= 'postgres://unused/unused'
 
-const { DASHBOARD_SECTIONS, ENERGY_BOXES, normalizeLayout } = await import('../api/_lib/dashboard-layout.js')
+const { DASHBOARD_SECTIONS, ENERGY_BOXES, CHARTS, normalizeLayout } = await import('../api/_lib/dashboard-layout.js')
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 
 // normalizeLayout drops any key it does not recognise, and dropping is not an error.
@@ -23,6 +23,19 @@ test('the client and server agree on every dashboard section', () => {
 
 test('the client and server agree on every energy box', () => {
   assert.deepEqual(clientList('ALL_ENERGY_BOXES'), ENERGY_BOXES)
+})
+
+test('the client and server agree on every toggleable chart', () => {
+  assert.deepEqual(clientList('ALL_CHARTS'), CHARTS)
+})
+
+test('every toggleable chart round-trips, one at a time', () => {
+  for (const chart of CHARTS) {
+    const saved = normalizeLayout({ charts: [chart] })
+    assert.deepEqual(saved.charts, [chart], `${chart} does not survive being saved on its own`)
+  }
+  assert.deepEqual(normalizeLayout({ charts: [] }).charts, [], 'turning every chart off is a real choice')
+  assert.deepEqual(normalizeLayout({}).charts, CHARTS, 'an absent key means "use defaults"')
 })
 
 test('the rolling 24-hour metric survives a save', () => {
@@ -44,8 +57,9 @@ test('an empty selection stays empty rather than resetting to every box', () => 
 })
 
 test('unknown keys are still rejected, and order is still completed', () => {
-  const saved = normalizeLayout({ order: ['vitals', 'bogus'], hidden: ['bogus'], energyBoxes: ['bogus', 'consumed'] })
+  const saved = normalizeLayout({ order: ['vitals', 'bogus'], hidden: ['bogus'], energyBoxes: ['bogus', 'consumed'], charts: ['bogus', 'intraday'] })
   assert.deepEqual(saved.energyBoxes, ['consumed'])
+  assert.deepEqual(saved.charts, ['intraday'])
   assert.deepEqual(saved.hidden, [])
   assert.equal(saved.order[0], 'vitals')
   assert.equal(saved.order.length, DASHBOARD_SECTIONS.length, 'every known section should be present exactly once')

@@ -11,6 +11,9 @@ import { sql } from './db.js'
 // pinning the two lists together.
 export const DASHBOARD_SECTIONS = ['nutrition', 'detailedNutrition', 'foodConsumed', 'fitness', 'workouts', 'steps', 'vitals', 'recovery']
 export const ENERGY_BOXES = ['totalBurned', 'consumed', 'active', 'resting', 'deficit', 'rolling24']
+// The two big charts inside the hero, same on/off toggle shape as energyBoxes. The net
+// balance bar chart itself is deliberately not in this list — it stays always shown.
+export const CHARTS = ['intraday', 'components']
 
 export async function ensureDashboardLayoutTable() {
   const db = sql()
@@ -66,5 +69,16 @@ export function normalizeLayout(value) {
     }
   }
 
-  return { order, hidden, energyBoxes }
+  let charts
+  if (raw.charts === undefined) {
+    charts = [...CHARTS]
+  } else {
+    charts = []
+    const seenChart = new Set()
+    for (const key of Array.isArray(raw.charts) ? raw.charts : []) {
+      if (CHARTS.includes(key) && !seenChart.has(key)) { charts.push(key); seenChart.add(key) }
+    }
+  }
+
+  return { order, hidden, energyBoxes, charts }
 }

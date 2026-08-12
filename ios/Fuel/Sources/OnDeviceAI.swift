@@ -22,8 +22,13 @@ import UIKit
 // "the model returned prose around the JSON" bug the Gemini path kept hitting cannot
 // occur here.
 
+// Codable alongside @Generable: on-device produces these directly under constrained
+// decoding (never touches JSON text), but a bring-your-own-key remote provider only
+// ever returns JSON text, so RemoteAI decodes into these exact same types with
+// JSONDecoder instead — one shape, two ways to arrive at it.
+
 @Generable
-struct EstimatedNutrition {
+struct EstimatedNutrition: Codable {
     @Guide(description: "Total calories for the portion described, in kilocalories")
     var calories: Double?
     @Guide(description: "Grams of protein")
@@ -37,7 +42,7 @@ struct EstimatedNutrition {
 }
 
 @Generable
-struct IdentifiedMeal {
+struct IdentifiedMeal: Codable {
     @Guide(description: "Short name of the food, e.g. 'Chicken burrito bowl'")
     var name: String
     @Guide(description: "Portion as a person would say it, e.g. '1 bowl' or '2 slices'")
@@ -48,7 +53,7 @@ struct IdentifiedMeal {
 }
 
 @Generable
-struct DailyInsight {
+struct DailyInsight: Codable {
     @Guide(description: "One sentence on how the day is going, grounded only in the numbers given")
     var summary: String
     @Guide(description: "One concrete, actionable suggestion for the rest of the day")
@@ -70,6 +75,13 @@ final class OnDeviceAI {
     }
 
     private(set) var availability: Availability = .unavailable("Checking…")
+
+    /// Whether *some* AI path will actually answer right now — the on-device model, or
+    /// a configured remote key. UI that gates on "can I use AI at all" should check this
+    /// rather than `availability.isReady`, which only ever describes the on-device half:
+    /// checking that alone would grey out every AI button for someone who set up their
+    /// own API key specifically because their device can't run the on-device model.
+    var isUsable: Bool { availability.isReady || remote != nil }
 
     private let model = SystemLanguageModel.default
 
@@ -96,6 +108,15 @@ final class OnDeviceAI {
         LanguageModelSession(model: model, instructions: instructions)
     }
 
+    /// The configured remote provider, its key, and which of that provider's current
+    /// models to use — or nil to use the on-device model, the one branch point every
+    /// public method below checks first. A provider selected with no key entered still
+    /// counts as "use on-device": see APIKeyStore.activeProvider.
+    private var remote: (provider: AIProvider, key: String, model: String)? {
+        guard let provider = APIKeyStore.shared.activeProvider else { return nil }
+        return (provider, APIKeyStore.shared.key(for: provider), APIKeyStore.shared.model(for: provider))
+    }
+
     private static let nutritionist = """
     You estimate nutrition for foods people log in a fitness app. Give your best numeric \
     estimate for a typical preparation of the described food at the described portion. \
@@ -116,6 +137,7 @@ final class OnDeviceAI {
     /// Fills macros for one logged food. This is the on-device replacement for
     /// /api/mlog?fuel_route=food-nutrition.
     func estimateNutrition(food: String, portion: String?) async throws -> EstimatedNutrition {
+        if let remote { return try await RemoteAI.estimateNutrition(food: food, portion: portion, provider: remote.provider, key: remote.key, model: remote.model) }
         let portionText = (portion?.isEmpty == false) ? " Portion: \(portion!)." : ""
         let response = try await session(Self.nutritionist).respond(
             to: "Food: \(food).\(portionText)",
@@ -130,6 +152,10 @@ final class OnDeviceAI {
     /// bank itself is a shared server-side resource. Only the resulting numbers (never
     /// the estimate itself) are sent to the server, via FuelClient.saveRecipeNutrition.
     func estimateRecipeNutrition(name: String, ingredients: [String], serving: String?) async throws -> EstimatedNutrition {
+        if let remote {
+            return try await RemoteAI.estimateRecipeNutrition(name: name, ingredients: ingredients, serving: serving,
+                                                                provider: remote.provider, key: remote.key, model: remote.model)
+        }
         let servingText = (serving?.isEmpty == false) ? " One serving is: \(serving!)." : " Assume the recipe makes a single serving."
         let ingredientText = ingredients.isEmpty ? "(no ingredients listed)" : ingredients.map { "- \($0)" }.joined(separator: "\n")
         let response = try await session(Self.nutritionist).respond(
@@ -156,6 +182,10 @@ final class OnDeviceAI {
     /// brand and product name directly, which is far more reliable than a scene guess
     /// for anything packaged rather than plated.
     func identifyMeal(photo: Data, note: String?) async throws -> IdentifiedMeal {
+        // A real multimodal request just looks at the photo directly — better accuracy
+        // than the Vision-classifier-labels-as-text-hints trick below, which exists
+        // specifically to work around the on-device model not taking images at all.
+        if let remote { return try await RemoteAI.identifyMeal(photo: photo, note: note, provider: remote.provider, key: remote.key, model: remote.model) }
         let labels = try Self.classify(photo)
         let text = try Self.recognizeText(photo)
         var prompt = "A food photo was analyzed on this device.\n"
@@ -265,6 +295,7 @@ final class OnDeviceAI {
     /// A short read on the day, from the numbers already on screen. Deliberately given
     /// only the figures, so it cannot invent a trend it has not been shown.
     func dailyInsight(summary: DaySummary, goals: Goals?, context: String) async throws -> DailyInsight {
+        if let remote { return try await RemoteAI.dailyInsight(summary: summary, goals: goals, context: context, provider: remote.provider, key: remote.key, model: remote.model) }
         var facts: [String] = []
         func add(_ label: String, _ value: Double?, _ unit: String) {
             if let value { facts.append("\(label): \(Int(value))\(unit)") }
@@ -285,7 +316,7 @@ final class OnDeviceAI {
         You are a concise fitness coach inside a personal dashboard. Base everything only \
         on the figures provided; never invent numbers or trends. Be specific and practical. \
         Two short sentences at most in each field. Never give medical advice.
-        \(context.isEmpty ? "" : "Background on this person: \(context)")
+        \(Self.contextClause(context))
         """
         let response = try await session(instructions).respond(
             to: "Today so far — \(facts.joined(separator: ", ")). How is the day going, and what should they do next?",
@@ -301,6 +332,10 @@ final class OnDeviceAI {
     /// when there is one — passed for context only, it does not trigger this call; the
     /// caller decides when a plan is actually built (the explicit "New plan" action).
     func planRestOfDay(justLogged: String?, summary: DaySummary, goals: Goals?, context: String) async throws -> String {
+        if let remote {
+            return try await RemoteAI.planRestOfDay(justLogged: justLogged, summary: summary, goals: goals, context: context,
+                                                     provider: remote.provider, key: remote.key, model: remote.model)
+        }
         let remaining = (goals?.calories?.target).flatMap { target in
             summary.caloriesConsumed.map { target - $0 }
         }
@@ -320,18 +355,75 @@ final class OnDeviceAI {
         what to eat for the rest of the day so they land near their targets: name \
         specific meals with rough portions. Three sentences at most. Use only the \
         numbers given; never invent data. Never give medical advice.
-        \(context.isEmpty ? "" : "Background on this person: \(context)")
+        \(Self.contextClause(context))
         """
         let response = try await session(instructions).respond(to: facts.joined(separator: ", "))
         return response.content
     }
 
-    /// Free-form chat, streamed so the UI fills in as it generates. The model is given
-    /// the whole dashboard — today, goals, recent trend, what was eaten — so questions
-    /// about meals, nutrition and health metrics can all be answered from one place,
-    /// plus the transcript so far so follow-ups keep their referents.
+    /// Decides whether a message is a request to *change* something or just a question.
+    /// Returns `.none` for questions, which is the overwhelmingly common case — the
+    /// caller then falls through to the normal answering path.
+    ///
+    /// Deliberately a separate, cheap call rather than folding actions into `ask`: a
+    /// small model asked to both converse and emit structured commands does neither
+    /// reliably, and a misfire here would mutate someone's food log.
+    func interpret(_ message: String, todayFoods: [String], today: String) async throws -> CoachAction {
+        let instructions = Self.interpreterInstructions(todayFoods: todayFoods, today: today)
+        if let remote {
+            return try await RemoteAI.interpret(message, instructions: instructions,
+                                                provider: remote.provider, key: remote.key, model: remote.model)
+        }
+        let response = try await session(instructions).respond(to: message, generating: CoachAction.self)
+        return response.content
+    }
+
+    private static func interpreterInstructions(todayFoods: [String], today: String) -> String {
+        let logged = todayFoods.isEmpty ? "(nothing logged yet today)" : todayFoods.joined(separator: ", ")
+        return """
+        You turn a person's message into either a single structured change to their \
+        nutrition app, or nothing at all.
+
+        Return kind "none" unless they are clearly asking you to change, add, fix, set, \
+        update, log or delete something. Questions, requests for advice, and anything \
+        ambiguous are all "none" — answering is handled elsewhere, and a wrong change is \
+        far worse than a missed one.
+
+        Valid kinds: none, \(CoachActions.kinds.joined(separator: ", ")).
+
+        Today is \(today). Resolve any relative date ("yesterday", "Monday") to YYYY-MM-DD.
+        Already logged today: \(logged).
+        When they refer to an existing entry, put the text that identifies it in `food`.
+        Only fill fields the message actually specifies; leave everything else empty.
+        `summary` must state the change in one short sentence, in the second person.
+        """
+    }
+
+    /// Free-form chat. On device this streams so the UI fills in as it generates; a
+    /// remote provider isn't streamed (see RemoteAI's header for why) and yields its
+    /// one complete answer instead — both shapes come back through the same
+    /// AsyncThrowingStream so askCoach doesn't need to know which one it got.
+    /// The model is given the whole dashboard — today, goals, recent trend, what was
+    /// eaten — so questions about meals, nutrition and health metrics can all be
+    /// answered from one place, plus the transcript so far so follow-ups keep their
+    /// referents.
     func ask(_ question: String, summary: DaySummary, dashboard: Dashboard?,
-             history: [ChatMessage], context: String) -> LanguageModelSession.ResponseStream<String> {
+             history: [ChatMessage], context: String) -> AsyncThrowingStream<String, Error> {
+        if let remote {
+            return AsyncThrowingStream { continuation in
+                Task {
+                    do {
+                        let text = try await RemoteAI.ask(question, summary: summary, dashboard: dashboard,
+                                                           history: history, context: context,
+                                                           provider: remote.provider, key: remote.key, model: remote.model)
+                        continuation.yield(text)
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+            }
+        }
         let instructions = """
         You are Fuel's coach, answering questions about this person's own health and \
         nutrition data inside their private dashboard. Answer briefly and concretely, \
@@ -339,10 +431,36 @@ final class OnDeviceAI {
         guessing. Never give medical advice.
 
         \(Self.dashboardBriefing(summary: summary, dashboard: dashboard))
-        \(context.isEmpty ? "" : "Background on this person: \(context)")
+        \(Self.contextClause(context))
         \(Self.transcript(history))
         """
-        return session(instructions).streamResponse(to: question)
+        let stream = session(instructions).streamResponse(to: question)
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    for try await partial in stream { continuation.yield(partial.content) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Renders stored preferences/restrictions as a hard constraint, not ambient color.
+    /// A stated diet or allergy must never be silently overridden by a generic-sounding
+    /// suggestion — a vegetarian recommended chicken for dinner was exactly this: the
+    /// context was present, but phrased as loose "background" the model weighed no
+    /// higher than any other detail, so a common completion (chicken for dinner) won out.
+    private static func contextClause(_ context: String) -> String {
+        guard !context.isEmpty else { return "" }
+        return """
+        This person's own stated preferences and restrictions — treat every one of these \
+        as a hard constraint, not background color. Never suggest a food, meal, or \
+        exercise that conflicts with them, even when it would otherwise be the obvious \
+        answer (e.g. a stated vegetarian must never be offered meat, poultry, or fish):
+        \(context)
+        """
     }
 
     /// Everything the coach is allowed to reason from, flattened to text.

@@ -48,8 +48,11 @@ struct EditFoodSheet: View {
                             }
                             saving = false
                         }
-                    } label: { Label("Re-estimate with on-device AI", systemImage: "sparkles") }
-                    .disabled(saving || food.isEmpty || !OnDeviceAI.shared.availability.isReady)
+                    } label: {
+                        Label(APIKeyStore.shared.activeProvider.map { "Re-estimate with \($0.label)" }
+                              ?? "Re-estimate with on-device AI", systemImage: "sparkles")
+                    }
+                    .disabled(saving || food.isEmpty || !OnDeviceAI.shared.isUsable)
                 }
             }
             .navigationTitle("Edit entry")
@@ -106,6 +109,7 @@ struct GoalsSheet: View {
 
     @State private var values: [String: String] = [:]
     @State private var saving = false
+    @State private var loading = true
 
     /// The website's editable goal keys, in its order. Calories are derived from the
     /// balance percentage there, so they are shown but not edited here either.
@@ -125,6 +129,13 @@ struct GoalsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if loading {
+                    HStack {
+                        Spacer()
+                        ProgressView().padding(.vertical, 20)
+                        Spacer()
+                    }
+                }
                 Section {
                     ForEach(fields, id: \.0) { key, label, unit in
                         HStack {
@@ -142,6 +153,24 @@ struct GoalsSheet: View {
                     }
                 } footer: {
                     Text("Calorie balance sets your daily target as a percentage of what you burn: 0 is maintenance, negative is a deficit.")
+                }
+                Section {
+                    HStack {
+                        Text("Resting floor")
+                        Spacer()
+                        TextField("0", text: Binding(
+                            get: { values["restingCaloriesFloor"] ?? "" },
+                            set: { values["restingCaloriesFloor"] = $0 }
+                        ))
+                        .keyboardType(.numbersAndPunctuation)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 90)
+                        Text("kcal").font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Minimum resting calories")
+                } footer: {
+                    Text("If a day's synced resting calories end up below this once the day is over, Fuel bumps that day's resting (and total) calories up to this floor so it doesn't understate that day's burn. 0 turns it off.")
                 }
             }
             .navigationTitle("Goals")
@@ -163,22 +192,28 @@ struct GoalsSheet: View {
                             next.stand = Double(values["stand"] ?? "")
                             next.steps = Double(values["steps"] ?? "")
                             next.sleepHours = Double(values["sleepHours"] ?? "")
+                            next.restingCaloriesFloor = Double(values["restingCaloriesFloor"] ?? "")
                             await store.saveGoals(next)
                             saving = false
                             dismiss()
                         }
                     }
-                    .disabled(saving)
+                    .disabled(saving || loading)
                 }
             }
-            .onAppear {
+            .task {
+                // Always re-fetches rather than trusting the app-launch-time cache, so
+                // a slow or failed initial load never leaves this sheet showing blanks.
+                await store.loadGoals()
                 let g = store.goalValues
                 values = [
                     "calorieBalancePercent": text(g.calorieBalancePercent), "protein": text(g.protein),
                     "carbs": text(g.carbs), "fat": text(g.fat), "fiber": text(g.fiber),
                     "move": text(g.move), "exercise": text(g.exercise), "stand": text(g.stand),
                     "steps": text(g.steps), "sleepHours": text(g.sleepHours),
+                    "restingCaloriesFloor": text(g.restingCaloriesFloor),
                 ]
+                loading = false
             }
         }
     }
@@ -279,73 +314,51 @@ struct HistorySheet: View {
     }
 }
 
-// MARK: - Which sections show, and in what order
+// MARK: - Preferences & context
 
-struct LayoutSheet: View {
+/// Food preferences, allergies, activity, goals — durable free-text guidance the Coach
+/// reads on every question, and that MCP clients can read and append to. Editing here
+/// replaces the complete stored context, exactly as the website's version does.
+struct ContextEditorSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
-    @State private var layout = DashboardLayout.default
 
-    private static let names = [
-        "nutrition": "Nutrition", "detailedNutrition": "Detailed nutrition",
-        "foodConsumed": "Food consumed", "fitness": "Fitness", "workouts": "Workouts",
-        "steps": "Steps & movement", "vitals": "Vitals", "recovery": "Recovery",
-    ]
-    private static let boxNames = [
-        "totalBurned": "Total burned", "consumed": "Consumed", "active": "Active",
-        "resting": "Resting", "deficit": "Balance", "rolling24": "Rolling 24h",
-    ]
+    @State private var text = ""
+    @State private var saving = false
+    @State private var loaded = false
+
+    private static let limit = 20000
 
     var body: some View {
         NavigationStack {
-            List {
+            Form {
                 Section {
-                    ForEach(layout.order, id: \.self) { key in
-                        HStack {
-                            Text(Self.names[key] ?? key)
-                            Spacer()
-                            Button {
-                                if layout.hidden.contains(key) { layout.hidden.removeAll { $0 == key } }
-                                else { layout.hidden.append(key) }
-                            } label: {
-                                Image(systemName: layout.hidden.contains(key) ? "eye.slash" : "eye")
-                                    .foregroundStyle(layout.hidden.contains(key) ? .secondary : Color.accentColor)
-                            }
-                            .buttonStyle(.borderless)
+                    TextEditor(text: $text)
+                        .frame(minHeight: 220)
+                        .disabled(!loaded)
+                        .onChange(of: text) { _, value in
+                            if value.count > Self.limit { text = String(value.prefix(Self.limit)) }
                         }
-                    }
-                    .onMove { from, to in layout.order.move(fromOffsets: from, toOffset: to) }
-                } header: {
-                    Text("Sections")
                 } footer: {
-                    // Reordering and tapping have to be separate modes: a List in edit
-                    // mode swallows taps on the controls inside its rows, so an
-                    // always-on edit mode leaves the eye looking tappable and dead.
-                    Text("Tap the eye to hide a section. Tap Reorder to drag them into a new order. This is the same layout the website uses.")
-                }
-
-                Section("Energy boxes") {
-                    ForEach(DashboardLayout.allEnergyBoxes, id: \.self) { key in
-                        Toggle(Self.boxNames[key] ?? key, isOn: Binding(
-                            get: { layout.energyBoxes.contains(key) },
-                            set: { on in
-                                if on { if !layout.energyBoxes.contains(key) { layout.energyBoxes.append(key) } }
-                                else { layout.energyBoxes.removeAll { $0 == key } }
-                            }
-                        ))
-                    }
+                    Text("\(text.count) / \(Self.limit) characters. MCP clients can read this field and append newly learned preferences. Saving here replaces the complete stored context.")
                 }
             }
-            .navigationTitle("Customise")
+            .navigationTitle("Preferences & context")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .topBarTrailing) { EditButton() }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { await store.saveLayout(layout); dismiss() } }
+                    Button("Save") {
+                        Task { saving = true; await store.saveContext(text); saving = false; dismiss() }
+                    }
+                    .disabled(saving || !loaded)
                 }
             }
-            .onAppear { layout = store.layout }
+            .task {
+                if store.context.isEmpty { await store.loadContext() }
+                text = store.context
+                loaded = true
+            }
         }
     }
 }

@@ -76,6 +76,8 @@ final class SyncEngine {
         defer { running = false }
 
         let store = await SyncStore.shared
+        let (syncQuantities, syncCategories, syncWorkouts, syncRoutes) =
+            await (store.syncQuantitySamples, store.syncCategorySamples, store.syncWorkouts, store.syncWorkoutRoutes)
 
         do {
             var anchors = fromScratch ? [:] : await store.loadAnchors()
@@ -94,7 +96,9 @@ final class SyncEngine {
             var uploadedSamples = 0
 
             // ---- Quantity types -----------------------------------------------------
-            for (identifier, unit) in HealthKitCatalog.quantityTypes {
+            // A type left off here also never advances its anchor, so re-enabling it
+            // later resumes cleanly instead of needing a full re-sync.
+            for (identifier, unit) in syncQuantities ? HealthKitCatalog.quantityTypes : [] {
                 guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { continue }
                 let wire = HealthKitCatalog.wireName(identifier.rawValue)
                 uploadedSamples += try await drain(type: type, wireName: wire, sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
@@ -117,7 +121,7 @@ final class SyncEngine {
             }
 
             // ---- Category types -----------------------------------------------------
-            for identifier in HealthKitCatalog.categoryTypes {
+            for identifier in syncCategories ? HealthKitCatalog.categoryTypes : [] {
                 guard let type = HKObjectType.categoryType(forIdentifier: identifier) else { continue }
                 let wire = HealthKitCatalog.wireName(identifier.rawValue)
                 uploadedSamples += try await drain(type: type, wireName: wire, sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
@@ -140,13 +144,15 @@ final class SyncEngine {
             }
 
             // ---- Workouts (with routes) ---------------------------------------------
-            uploadedSamples += try await drain(type: HKObjectType.workoutType(), wireName: "workout", sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
-                var tables = SyncPayload.Tables()
-                for sample in samples {
-                    guard let workout = sample as? HKWorkout else { continue }
-                    tables.workoutSamples.append(await self.convert(workout))
+            if syncWorkouts {
+                uploadedSamples += try await drain(type: HKObjectType.workoutType(), wireName: "workout", sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
+                    var tables = SyncPayload.Tables()
+                    for sample in samples {
+                        guard let workout = sample as? HKWorkout else { continue }
+                        tables.workoutSamples.append(await self.convert(workout, includeRoute: syncRoutes))
+                    }
+                    return tables
                 }
-                return tables
             }
 
             // ---- Daily aggregates + snapshot ----------------------------------------
@@ -242,7 +248,7 @@ final class SyncEngine {
 
     // MARK: Workout conversion
 
-    private func convert(_ workout: HKWorkout) async -> WorkoutSample {
+    private func convert(_ workout: HKWorkout, includeRoute: Bool) async -> WorkoutSample {
         let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
         let energy = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
         let distance = [HKQuantityType(.distanceWalkingRunning), HKQuantityType(.distanceCycling), HKQuantityType(.distanceSwimming)]
@@ -262,7 +268,7 @@ final class SyncEngine {
             elevation: elevation,
             averageHeartRate: averageHeartRate,
             source: workout.sourceRevision.source.name,
-            route: await route(for: workout)
+            route: includeRoute ? await route(for: workout) : nil
         )
     }
 

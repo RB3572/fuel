@@ -28,17 +28,17 @@ enum BackgroundSync {
     static func registerTasks() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshTaskID, using: nil) { task in
             handle(task: task, reason: "background refresh")
-            scheduleRefresh()
+            Task { await scheduleRefresh() }
         }
         BGTaskScheduler.shared.register(forTaskWithIdentifier: fullSyncTaskID, using: nil) { task in
             handle(task: task, reason: "nightly sync")
-            scheduleNightly()
+            Task { await scheduleNightly() }
         }
     }
 
-    static func scheduleAll() {
-        scheduleRefresh()
-        scheduleNightly()
+    static func scheduleAll() async {
+        await scheduleRefresh()
+        await scheduleNightly()
     }
 
     private static func handle(task: BGTask, reason: String) {
@@ -54,13 +54,18 @@ enum BackgroundSync {
         }
     }
 
-    private static func scheduleRefresh() {
+    // Gated here rather than only at scheduleAll()'s callers, so a task's own
+    // self-rescheduling (registerTasks' closures, above) also stops once background
+    // sync is turned off, instead of keeping one silent cycle alive forever.
+    private static func scheduleRefresh() async {
+        guard await SyncStore.shared.backgroundSyncEnabled else { return }
         let request = BGAppRefreshTaskRequest(identifier: refreshTaskID)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 30 * 60)
         try? BGTaskScheduler.shared.submit(request)
     }
 
-    private static func scheduleNightly() {
+    private static func scheduleNightly() async {
+        guard await SyncStore.shared.backgroundSyncEnabled else { return }
         let request = BGProcessingTaskRequest(identifier: fullSyncTaskID)
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
@@ -73,7 +78,8 @@ enum BackgroundSync {
     /// Ask iOS to wake us when these types change, and keep long-lived observer
     /// queries running. Workouts and sleep get immediate delivery; the high-volume
     /// quantity types get hourly, which is the minimum iOS allows for them anyway.
-    static func enableHealthKitDelivery() {
+    static func enableHealthKitDelivery() async {
+        guard await SyncStore.shared.backgroundSyncEnabled else { return }
         let store = SyncEngine.shared.healthStore
         var wanted: [(HKSampleType, HKUpdateFrequency)] = [
             (HKObjectType.workoutType(), .immediate),
