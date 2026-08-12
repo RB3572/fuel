@@ -87,24 +87,27 @@ struct RootView: View {
     }
 }
 
-/// A hairline indeterminate bar. Deliberately not a spinner or a banner: a sync is
+/// A hairline determinate bar. Deliberately not a spinner or a banner: a sync is
 /// frequent, usually quick, and never something to interrupt what you were reading.
+///
+/// The fill is the real fraction of the sync's work — each of HealthKit's per-metric
+/// statistics queries reports as it lands — rather than an animation that merely looks
+/// busy, so a stalled sync is visibly stalled.
 struct SyncProgressBar: View {
-    @State private var sliding = false
+    @ObservedObject private var syncStore = SyncStore.shared
 
     var body: some View {
         GeometryReader { geo in
-            let width = geo.size.width
             Capsule()
                 .fill(DashboardTheme.shared.accent)
-                .frame(width: width * 0.35, height: 3)
-                .offset(x: sliding ? width * 0.65 : -width * 0.35)
-                .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: false), value: sliding)
+                .frame(width: max(2, geo.size.width * syncStore.syncProgress), height: 3)
+                .animation(.easeOut(duration: 0.25), value: syncStore.syncProgress)
         }
         .frame(height: 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(DashboardTheme.shared.accent.opacity(0.15))
-        .onAppear { sliding = true }
         .accessibilityLabel("Syncing health data")
+        .accessibilityValue("\(Int(syncStore.syncProgress * 100)) percent")
     }
 }
 

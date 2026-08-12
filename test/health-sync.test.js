@@ -91,7 +91,8 @@ test('the destination is pluggable and the file export cannot disturb a sync', (
   // The export reads everything and must never move the anchors, or the app would
   // believe the server has data that only ever went to a file.
   assert.match(sink, /final class FileExportSink[\s\S]{0,1200}var advancesAnchors: Bool \{ false \}/)
-  assert.match(engine, /if sink\.advancesAnchors \{ await SyncStore\.shared\.saveAnchor\(encoded, for: wireName\) \}/)
+  // An export must not convince the app it has already sent a full sync to a server.
+  assert.match(engine, /if sink\.advancesAnchors \{[\s\S]{0,400}initialSyncComplete = true/)
   assert.match(engine, /run\(sink: sink, fromScratch: true, reason: "export"\)/)
 })
 
@@ -137,11 +138,16 @@ test('the iOS app and the server agree on the protocol constants', () => {
   const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
   assert.match(api, /var syncVersion = 1/)
   assert.match(api, /https:\/\/fuel\.rishib\.com\/api\/health\/sync\/v1/.source ? /sync\/v1/ : /sync\/v1/)
-  // The app's page size must stay under the server's per-request ceiling.
-  const page = Number(engine.match(/PAGE_LIMIT = (\d+)/)?.[1])
-  assert.ok(page > 0 && page <= 20000, `PAGE_LIMIT ${page} must fit MAX_SAMPLES_PER_REQUEST`)
-  // Anchors commit only after the server acknowledges the page.
-  assert.ok(engine.indexOf('api.upload(payload)') < engine.indexOf('saveAnchor(encoded'), 'upload must precede the anchor commit')
+  // One row per day is the entire payload. Raw per-sample upload is gone: a watch
+  // writes a heart-rate sample every few seconds, those tables reached 481 MB and hit
+  // the database's storage ceiling, and nothing in the app or website ever read them.
+  assert.match(engine, /payload\.tables\.dailyTotals = try await dailyTotals\(days: days\)/)
+  for (const gone of ['quantitySamples =', 'categorySamples =', 'workoutSamples.append', 'PAGE_LIMIT']) {
+    assert.ok(!engine.includes(gone), `SyncEngine must no longer upload raw samples (found ${gone})`)
+  }
+  // The totals still come from HealthKit's own bucketing, which is the only thing that
+  // deduplicates a watch and a phone counting the same steps.
+  assert.match(engine, /HKStatisticsCollectionQuery|statistics\(metric\.id/)
 })
 
 test('raw samples expire but everything the UI reads is kept forever', () => {

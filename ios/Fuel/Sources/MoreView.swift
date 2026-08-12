@@ -66,19 +66,15 @@ struct MoreView: View {
                     Text("Fuel reads Health directly — no Shortcut and no companion app. It syncs when you open Fuel, when Health records something new, and periodically in the background.")
                 }
 
+                // The per-category toggles are gone with the raw-sample upload they
+                // controlled. Leaving switches that no longer change what is sent would
+                // be worse than not having them.
                 Section {
                     Toggle("Sync in the background", isOn: $syncStore.backgroundSyncEnabled)
-                    Toggle("Activity & vitals", isOn: $syncStore.syncQuantitySamples)
-                    Toggle("Sleep & other categories", isOn: $syncStore.syncCategorySamples)
-                    Toggle("Workouts", isOn: $syncStore.syncWorkouts)
-                    if syncStore.syncWorkouts {
-                        Toggle("Include GPS routes", isOn: $syncStore.syncWorkoutRoutes)
-                            .padding(.leading, 16)
-                    }
                 } header: {
                     Text("Sync settings")
                 } footer: {
-                    Text("Turning a category off stops it from being read or sent — nothing already synced is deleted, and re-enabling it resumes from where it left off. \"Sync in the background\" off means Fuel only syncs while it's open (on launch, on foreground, or pull-to-refresh) rather than reacting to Health in the background.")
+                    Text("Fuel sends one row per day — your totals, like steps walked and calories burned — not the thousands of individual readings behind them. Everything stays on this iPhone in Health. \"Sync in the background\" off means Fuel only syncs while it's open, on launch, on foreground, or pull-to-refresh.")
                 }
 
                 Section {

@@ -76,5 +76,5 @@ targets:
         INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 9VVDB6UALA
-        CURRENT_PROJECT_VERSION: 7
+        CURRENT_PROJECT_VERSION: 8
         MARKETING_VERSION: "1.0"

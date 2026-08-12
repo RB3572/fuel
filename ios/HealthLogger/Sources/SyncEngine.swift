@@ -1,25 +1,31 @@
 import Foundation
 import HealthKit
 
-// The heart of Health Logger: anchored, batched, resumable replication of the whole
-// HealthKit store into Fuel.
+// The heart of Health Logger: it computes one row per day from HealthKit and sends that.
 //
-// How it stays correct:
-//   - One HKQueryAnchor per data type, persisted locally and mirrored server-side.
-//     Each sync asks HealthKit "everything added or deleted since this anchor" — the
-//     first sync (nil anchor) returns all history, later syncs return only the delta.
-//   - History is drained page by page (PAGE_LIMIT per anchored query). Each page is
-//     uploaded before the next is fetched, and the type's anchor is saved only after
-//     the server acknowledges the page. A crash mid-sync therefore re-uploads at most
-//     one page — and the server upserts by HealthKit UUID, so replays are free.
-//   - Daily aggregates are computed here with HKStatisticsCollectionQuery, because only
-//     HealthKit knows how to deduplicate a watch and a phone counting the same steps.
+// It used to replicate the entire HealthKit store — every individual sample, anchored
+// and paged. That was enormously more data than anything ever read: a watch writes a
+// heart-rate sample every few seconds, the raw tables grew to 481 MB, they hit the
+// database's storage ceiling and broke every sync, and not one screen in the app or the
+// website queried them. Everything on every screen comes from the per-day rollups.
+//
+// So the daily rollup is now the whole payload. What ships is exactly the question each
+// figure answers — total steps walked that day, total swim strokes, total active
+// calories — not the thousands of readings those totals were computed from.
+//
+// The totals are computed here with HKStatisticsCollectionQuery rather than summed
+// server-side, because only HealthKit knows how to deduplicate a watch and a phone
+// counting the same steps. That was the reason aggregates were device-side before, and
+// it is why dropping the raw samples loses no accuracy: the numbers were never derived
+// from them.
+//
+// The device keeps everything. HealthKit remains the complete record, so a future need
+// for finer data is a re-read away rather than a permanent loss.
 
 final class SyncEngine {
     static let shared = SyncEngine()
     let healthStore = HKHealthStore()
 
-    private let PAGE_LIMIT = 5000
     private let iso = ISO8601DateFormatter()
     private var running = false
 
@@ -75,268 +81,111 @@ final class SyncEngine {
         running = true
         defer { running = false }
 
-        let store = await SyncStore.shared
-        let (syncQuantities, syncCategories, syncWorkouts, syncRoutes) =
-            await (store.syncQuantitySamples, store.syncCategorySamples, store.syncWorkouts, store.syncWorkoutRoutes)
-
         do {
-            var anchors = fromScratch ? [:] : await store.loadAnchors()
-            let isFullSync = anchors.isEmpty
-
-            // A reinstalled app adopts the destination's anchors instead of re-uploading
-            // years of history it already sent.
-            if isFullSync, !fromScratch {
-                let remote = await sink.knownAnchors()
-                if !remote.isEmpty {
-                    anchors = remote
-                    await store.replaceAnchors(anchors)
-                }
-            }
-
-            var uploadedSamples = 0
-
-            // ---- Quantity types -----------------------------------------------------
-            // A type left off here also never advances its anchor, so re-enabling it
-            // later resumes cleanly instead of needing a full re-sync.
-            for (identifier, unit) in syncQuantities ? HealthKitCatalog.quantityTypes : [] {
-                guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { continue }
-                let wire = HealthKitCatalog.wireName(identifier.rawValue)
-                uploadedSamples += try await drain(type: type, wireName: wire, sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
-                    var tables = SyncPayload.Tables()
-                    tables.quantitySamples = samples.compactMap { sample in
-                        guard let quantity = sample as? HKQuantitySample, quantity.quantity.is(compatibleWith: unit) else { return nil }
-                        return QuantitySample(
-                            uuid: quantity.uuid.uuidString.lowercased(),
-                            type: wire,
-                            value: quantity.quantity.doubleValue(for: unit),
-                            unit: unit.unitString,
-                            start: self.iso.string(from: quantity.startDate),
-                            end: self.iso.string(from: quantity.endDate),
-                            source: quantity.sourceRevision.source.name,
-                            device: quantity.device?.model
-                        )
-                    }
-                    return tables
-                }
-            }
-
-            // ---- Category types -----------------------------------------------------
-            for identifier in syncCategories ? HealthKitCatalog.categoryTypes : [] {
-                guard let type = HKObjectType.categoryType(forIdentifier: identifier) else { continue }
-                let wire = HealthKitCatalog.wireName(identifier.rawValue)
-                uploadedSamples += try await drain(type: type, wireName: wire, sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
-                    var tables = SyncPayload.Tables()
-                    tables.categorySamples = samples.compactMap { sample in
-                        guard let category = sample as? HKCategorySample else { return nil }
-                        return CategorySample(
-                            uuid: category.uuid.uuidString.lowercased(),
-                            type: wire,
-                            value: category.value,
-                            valueName: identifier == .sleepAnalysis ? HealthKitCatalog.sleepStageName(category.value) : nil,
-                            start: self.iso.string(from: category.startDate),
-                            end: self.iso.string(from: category.endDate),
-                            source: category.sourceRevision.source.name,
-                            device: category.device?.model
-                        )
-                    }
-                    return tables
-                }
-            }
-
-            // ---- Workouts (with routes) ---------------------------------------------
-            if syncWorkouts {
-                uploadedSamples += try await drain(type: HKObjectType.workoutType(), wireName: "workout", sink: sink, fullSync: isFullSync, anchors: &anchors) { samples in
-                    var tables = SyncPayload.Tables()
-                    for sample in samples {
-                        guard let workout = sample as? HKWorkout else { continue }
-                        tables.workoutSamples.append(await self.convert(workout, includeRoute: syncRoutes))
-                    }
-                    return tables
-                }
-            }
-
-            // ---- Daily aggregates + snapshot ----------------------------------------
-            await setStatus(.running("Computing daily totals…"))
+            // "Full" now only means how far back to recompute, not whether to replicate
+            // history: there is no history to replicate.
+            let alreadySynced = await SyncStore.shared.initialSyncComplete
+            let isFullSync = fromScratch || !alreadySynced
             let days = isFullSync ? 1825 : 3   // five years on first sync, then a rolling window
+
+            await setProgress(0)
             var payload = basePayload(fullSync: isFullSync)
-            payload.tables.dailyTotals = try await dailyTotals(days: days)
+            // The statistics queries are the only slow part, so they are what the
+            // progress bar measures. The last tenth covers the snapshot and the upload.
+            payload.tables.dailyTotals = try await dailyTotals(days: days) { done, total in
+                await self.setProgress(Double(done) / Double(total) * 0.9)
+            }
             payload.snapshot = try await todaySnapshot()
-            payload.anchors = anchors
+            await setProgress(0.95)
             try await sink.send(payload)
+            await setProgress(1)
 
             let stamp = Date()
-            // Snapshot the counter before crossing to the main actor: capturing the
-            // mutable local directly is an error under Swift 6 concurrency.
-            let total = uploadedSamples
+            let dayCount = payload.tables.dailyTotals.count
             await MainActor.run {
                 if sink.advancesAnchors {
                     SyncStore.shared.lastSyncAt = stamp
-                    SyncStore.shared.lastSyncSummary = "\(reason): \(total) samples"
+                    SyncStore.shared.lastSyncSummary = "\(reason): \(dayCount) days"
                     SyncStore.shared.initialSyncComplete = true
                 }
                 SyncStore.shared.status = .idle
+                SyncStore.shared.syncProgress = 0
             }
             return true
         } catch {
+            await MainActor.run { SyncStore.shared.syncProgress = 0 }
             await setStatus(.failed(error.localizedDescription))
             return false
         }
     }
 
-    // MARK: Draining one type
-
-    /// Pages through everything HealthKit has for `type` since its anchor, uploading
-    /// each page and committing the anchor only after the server acknowledges it.
-    private func drain(
-        type: HKSampleType,
-        wireName: String,
-        sink: SyncSink,
-        fullSync: Bool,
-        anchors: inout [String: String],
-        convert: ([HKSample]) async -> SyncPayload.Tables
-    ) async throws -> Int {
-        var anchor = decodeAnchor(anchors[wireName])
-        var uploaded = 0
-        var pageIndex = 0
-
-        while true {
-            let page = try await anchoredPage(type: type, anchor: anchor, limit: PAGE_LIMIT)
-            let hasWork = !page.samples.isEmpty || !page.deleted.isEmpty
-            if !hasWork { break }
-
-            await setStatus(.running("Uploading \(wireName) (\(uploaded + page.samples.count))…"))
-            var payload = basePayload(fullSync: fullSync)
-            payload.batch = .init(index: pageIndex, count: 0)
-            payload.tables = await convert(page.samples)
-            if !page.deleted.isEmpty {
-                let uuids = page.deleted.map { $0.uuid.uuidString.lowercased() }
-                if type is HKQuantityType { payload.deleted.quantitySamples = uuids }
-                else if type == HKObjectType.workoutType() { payload.deleted.workouts = uuids }
-                else { payload.deleted.categorySamples = uuids }
-            }
-            if let next = page.newAnchor, let encoded = encodeAnchor(next) {
-                payload.anchors = [wireName: encoded]
-            }
-
-            if !payload.tables.isEmpty || !payload.deleted.isEmpty {
-                try await sink.send(payload)
-            }
-
-            // The destination has this page; only now does the anchor move forward.
-            if let next = page.newAnchor, let encoded = encodeAnchor(next) {
-                anchors[wireName] = encoded
-                if sink.advancesAnchors { await SyncStore.shared.saveAnchor(encoded, for: wireName) }
-                anchor = next
-            }
-            uploaded += page.samples.count
-            pageIndex += 1
-            if page.samples.count < PAGE_LIMIT && page.deleted.count < PAGE_LIMIT { break }
-        }
-        return uploaded
-    }
-
-    private func anchoredPage(type: HKSampleType, anchor: HKQueryAnchor?, limit: Int) async throws
-        -> (samples: [HKSample], deleted: [HKDeletedObject], newAnchor: HKQueryAnchor?) {
-        try await withCheckedThrowingContinuation { continuation in
-            let query = HKAnchoredObjectQuery(type: type, predicate: nil, anchor: anchor, limit: limit) { _, samples, deleted, newAnchor, error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: (samples ?? [], deleted ?? [], newAnchor)) }
-            }
-            healthStore.execute(query)
-        }
-    }
-
-    // MARK: Workout conversion
-
-    private func convert(_ workout: HKWorkout, includeRoute: Bool) async -> WorkoutSample {
-        let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
-        let energy = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
-        let distance = [HKQuantityType(.distanceWalkingRunning), HKQuantityType(.distanceCycling), HKQuantityType(.distanceSwimming)]
-            .compactMap { workout.statistics(for: $0)?.sumQuantity()?.doubleValue(for: .meter()) }
-            .first
-        let averageHeartRate = workout.statistics(for: HKQuantityType(.heartRate))?.averageQuantity()?.doubleValue(for: heartRateUnit)
-        let elevation = (workout.metadata?[HKMetadataKeyElevationAscended] as? HKQuantity)?.doubleValue(for: .meter())
-
-        return WorkoutSample(
-            uuid: workout.uuid.uuidString.lowercased(),
-            activityType: workout.workoutActivityType.wireName,
-            start: iso.string(from: workout.startDate),
-            end: iso.string(from: workout.endDate),
-            duration: workout.duration,
-            activeEnergy: energy,
-            distance: distance,
-            elevation: elevation,
-            averageHeartRate: averageHeartRate,
-            source: workout.sourceRevision.source.name,
-            route: includeRoute ? await route(for: workout) : nil
-        )
-    }
-
-    /// Route points, thinned to at most ~2000: a map does not need 1 Hz GPS.
-    private func route(for workout: HKWorkout) async -> [[Double]]? {
-        let routes: [HKSample] = (try? await withCheckedThrowingContinuation { continuation in
-            let predicate = HKQuery.predicateForObjects(from: workout)
-            let query = HKSampleQuery(sampleType: HKSeriesType.workoutRoute(), predicate: predicate, limit: 1, sortDescriptors: nil) { _, samples, error in
-                if let error { continuation.resume(throwing: error) }
-                else { continuation.resume(returning: samples ?? []) }
-            }
-            healthStore.execute(query)
-        }) ?? []
-        guard let route = routes.first as? HKWorkoutRoute else { return nil }
-
-        var points: [[Double]] = []
-        let done: Bool = (try? await withCheckedThrowingContinuation { continuation in
-            let query = HKWorkoutRouteQuery(route: route) { _, locations, finished, error in
-                if let error { continuation.resume(throwing: error); return }
-                for location in locations ?? [] {
-                    points.append([location.coordinate.latitude, location.coordinate.longitude,
-                                   location.timestamp.timeIntervalSince1970, location.altitude])
-                }
-                if finished { continuation.resume(returning: true) }
-            }
-            healthStore.execute(query)
-        }) ?? false
-        guard done, !points.isEmpty else { return nil }
-        if points.count > 2000 {
-            let stride = points.count / 2000 + 1
-            points = points.enumerated().compactMap { $0.offset % stride == 0 ? $0.element : nil }
-        }
-        return points
-    }
-
     // MARK: Daily aggregates
 
-    private func dailyTotals(days: Int) async throws -> [DailyTotal] {
+    /// One row per day. Every figure is that day's own total (steps walked, swim
+    /// strokes, active calories) or its daily average for the rate-like metrics, straight
+    /// from HealthKit's own bucketing.
+    ///
+    /// `onProgress` fires as each metric finishes. They run concurrently in a task group
+    /// rather than as `async let` bindings specifically so completions can be counted —
+    /// a progress bar that only moves at the start and end is not a progress bar.
+    private func dailyTotals(days: Int, onProgress: @escaping @Sendable (Int, Int) async -> Void) async throws -> [DailyTotal] {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         guard let start = calendar.date(byAdding: .day, value: -(days - 1), to: today) else { return [] }
 
-        async let activeEnergy = statistics(.activeEnergyBurned, .cumulativeSum, .kilocalorie(), from: start)
-        async let restingEnergy = statistics(.basalEnergyBurned, .cumulativeSum, .kilocalorie(), from: start)
-        async let steps = statistics(.stepCount, .cumulativeSum, .count(), from: start)
-        async let exercise = statistics(.appleExerciseTime, .cumulativeSum, .minute(), from: start)
-        async let stand = statistics(.appleStandTime, .cumulativeSum, .minute(), from: start)
-        async let walkRun = statistics(.distanceWalkingRunning, .cumulativeSum, .meter(), from: start)
-        async let cycling = statistics(.distanceCycling, .cumulativeSum, .meter(), from: start)
-        async let swimming = statistics(.distanceSwimming, .cumulativeSum, .meter(), from: start)
-        async let strokes = statistics(.swimmingStrokeCount, .cumulativeSum, .count(), from: start)
-        async let flights = statistics(.flightsClimbed, .cumulativeSum, .count(), from: start)
-        async let restingHR = statistics(.restingHeartRate, .discreteAverage, HKUnit.count().unitDivided(by: .minute()), from: start)
-        async let hrv = statistics(.heartRateVariabilitySDNN, .discreteAverage, .secondUnit(with: .milli), from: start)
-        async let vo2 = statistics(.vo2Max, .discreteAverage, HKUnit(from: "ml/kg*min"), from: start)
-        async let respiratory = statistics(.respiratoryRate, .discreteAverage, HKUnit.count().unitDivided(by: .minute()), from: start)
-        async let oxygen = statistics(.oxygenSaturation, .discreteAverage, .percent(), from: start)
-        async let walkingHR = statistics(.walkingHeartRateAverage, .discreteAverage, HKUnit.count().unitDivided(by: .minute()), from: start)
-        async let recovery = statistics(.heartRateRecoveryOneMinute, .discreteAverage, HKUnit.count().unitDivided(by: .minute()), from: start)
-        async let stride = statistics(.runningStrideLength, .discreteAverage, .meter(), from: start)
-        let sleep = try await sleepHoursByDay(lastDays: min(days, 14))
+        let perMinute = HKUnit.count().unitDivided(by: .minute())
+        let metrics: [(key: String, id: HKQuantityTypeIdentifier, options: HKStatisticsOptions, unit: HKUnit)] = [
+            ("activeEnergy", .activeEnergyBurned, .cumulativeSum, .kilocalorie()),
+            ("restingEnergy", .basalEnergyBurned, .cumulativeSum, .kilocalorie()),
+            ("steps", .stepCount, .cumulativeSum, .count()),
+            ("exercise", .appleExerciseTime, .cumulativeSum, .minute()),
+            ("stand", .appleStandTime, .cumulativeSum, .minute()),
+            ("walkRun", .distanceWalkingRunning, .cumulativeSum, .meter()),
+            ("cycling", .distanceCycling, .cumulativeSum, .meter()),
+            ("swimming", .distanceSwimming, .cumulativeSum, .meter()),
+            ("strokes", .swimmingStrokeCount, .cumulativeSum, .count()),
+            ("flights", .flightsClimbed, .cumulativeSum, .count()),
+            ("restingHR", .restingHeartRate, .discreteAverage, perMinute),
+            ("hrv", .heartRateVariabilitySDNN, .discreteAverage, .secondUnit(with: .milli)),
+            ("vo2", .vo2Max, .discreteAverage, HKUnit(from: "ml/kg*min")),
+            ("respiratory", .respiratoryRate, .discreteAverage, perMinute),
+            ("oxygen", .oxygenSaturation, .discreteAverage, .percent()),
+            ("walkingHR", .walkingHeartRateAverage, .discreteAverage, perMinute),
+            ("recovery", .heartRateRecoveryOneMinute, .discreteAverage, perMinute),
+            ("stride", .runningStrideLength, .discreteAverage, .meter()),
+        ]
+        // +1 for sleep, which is a separate category query.
+        let totalUnits = metrics.count + 1
 
-        let series = try await (
-            activeEnergy: activeEnergy, restingEnergy: restingEnergy, steps: steps, exercise: exercise,
-            stand: stand, walkRun: walkRun, cycling: cycling, swimming: swimming, strokes: strokes,
-            flights: flights, restingHR: restingHR, hrv: hrv, vo2: vo2, respiratory: respiratory,
-            oxygen: oxygen, walkingHR: walkingHR, recovery: recovery, stride: stride
-        )
+        // Sleep is a category query returning a different shape, so the group carries a
+        // small enum rather than forcing both into one tuple type.
+        enum MetricResult {
+            case series(key: String, values: [Date: Double])
+            case sleep([String: Double])
+        }
+
+        var series: [String: [Date: Double]] = [:]
+        var sleep: [String: Double] = [:]
+        var finished = 0
+        try await withThrowingTaskGroup(of: MetricResult.self) { group in
+            for metric in metrics {
+                group.addTask {
+                    .series(key: metric.key,
+                            values: try await self.statistics(metric.id, metric.options, metric.unit, from: start))
+                }
+            }
+            group.addTask {
+                .sleep(try await self.sleepHoursByDay(lastDays: min(days, 14)))
+            }
+            for try await result in group {
+                switch result {
+                case .series(let key, let values): series[key] = values
+                case .sleep(let byDate): sleep = byDate
+                }
+                finished += 1
+                await onProgress(finished, totalUnits)
+            }
+        }
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -350,26 +199,26 @@ final class SyncEngine {
             let total = DailyTotal(
                 date: dateText,
                 partialDay: calendar.isDate(key, inSameDayAs: Date()),
-                activeEnergy: series.activeEnergy[key],
-                restingEnergy: series.restingEnergy[key],
+                activeEnergy: series["activeEnergy"]?[key],
+                restingEnergy: series["restingEnergy"]?[key],
                 totalExpenditure: nil,   // the server derives active + resting
-                exerciseMinutes: series.exercise[key],
-                steps: series.steps[key],
-                walkingRunningDistanceMi: series.walkRun[key].map { $0 / 1609.344 },
-                swimmingDistanceYd: series.swimming[key].map { $0 * 1.0936133 },
-                restingHeartRate: series.restingHR[key],
-                hrv: series.hrv[key],
-                vo2Max: series.vo2[key],
+                exerciseMinutes: series["exercise"]?[key],
+                steps: series["steps"]?[key],
+                walkingRunningDistanceMi: series["walkRun"]?[key].map { $0 / 1609.344 },
+                swimmingDistanceYd: series["swimming"]?[key].map { $0 * 1.0936133 },
+                restingHeartRate: series["restingHR"]?[key],
+                hrv: series["hrv"]?[key],
+                vo2Max: series["vo2"]?[key],
                 sleepHours: sleep[dateText],
-                respiratoryRate: series.respiratory[key],
-                bloodOxygen: series.oxygen[key].map { $0 * 100 },
-                standMinutes: series.stand[key],
-                walkingHeartRateAverage: series.walkingHR[key],
-                cyclingDistanceMi: series.cycling[key].map { $0 / 1609.344 },
-                flightsClimbed: series.flights[key],
-                swimmingStrokes: series.strokes[key],
-                runningStrideLength: series.stride[key],
-                cardioRecovery: series.recovery[key]
+                respiratoryRate: series["respiratory"]?[key],
+                bloodOxygen: series["oxygen"]?[key].map { $0 * 100 },
+                standMinutes: series["stand"]?[key],
+                walkingHeartRateAverage: series["walkingHR"]?[key],
+                cyclingDistanceMi: series["cycling"]?[key].map { $0 / 1609.344 },
+                flightsClimbed: series["flights"]?[key],
+                swimmingStrokes: series["strokes"]?[key],
+                runningStrideLength: series["stride"]?[key],
+                cardioRecovery: series["recovery"]?[key]
             )
             // Days with no data at all are skipped rather than uploaded as empty rows.
             if hasAnyValue(total) { totals.append(total) }
@@ -490,17 +339,21 @@ final class SyncEngine {
         }
     }
 
-    private func encodeAnchor(_ anchor: HKQueryAnchor) -> String? {
-        (try? NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true))?.base64EncodedString()
-    }
 
-    private func decodeAnchor(_ encoded: String?) -> HKQueryAnchor? {
-        guard let encoded, let data = Data(base64Encoded: encoded) else { return nil }
-        return try? NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
-    }
 
     private func setStatus(_ status: SyncStore.SyncStatus) async {
         await MainActor.run { SyncStore.shared.status = status }
+    }
+
+    /// Monotonic within a pass: the metric queries finish in whatever order HealthKit
+    /// returns them, and a bar that jumps backwards reads as a bug.
+    private func setProgress(_ fraction: Double) async {
+        await MainActor.run {
+            let clamped = min(1, max(0, fraction))
+            if clamped == 0 || clamped > SyncStore.shared.syncProgress {
+                SyncStore.shared.syncProgress = clamped
+            }
+        }
     }
 }
 

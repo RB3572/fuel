@@ -16,6 +16,9 @@ final class SyncStore: ObservableObject {
     @Published var lastSyncSummary: String { didSet { defaults.set(lastSyncSummary, forKey: "lastSyncSummary") } }
     @Published var initialSyncComplete: Bool { didSet { defaults.set(initialSyncComplete, forKey: "initialSyncComplete") } }
     @Published var status: SyncStatus = .idle
+    /// 0…1 while a sync runs, back to 0 when it ends. Drives the bar across the top of
+    /// the app. Not persisted — a fraction from a previous launch means nothing.
+    @Published var syncProgress: Double = 0
 
     // MARK: What syncs, and when
     //
