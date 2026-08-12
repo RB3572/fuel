@@ -558,7 +558,8 @@ test('manual entry is fully manual: every macro editable, no model required', ()
   }
   // A blank field means unknown. Sending 0 would log a real, wrong zero.
   assert.match(cam, /n\.calories == nil && n\.protein == nil/)
-  assert.match(cam, /CommonFoodPicker/)
+  // The picker is now the whole log library, not just the built-in food table.
+  assert.match(cam, /FoodLibraryView/)
 })
 
 test('the common-foods table carries published per-serving values', () => {
@@ -662,8 +663,9 @@ test('a logged meal ends on the dashboard, at the row it created', () => {
   const store = read('../ios/Fuel/Sources/AppStore.swift')
   assert.match(store, /var highlightedEntryID: String\?/)
   assert.match(store, /private func highlightNewest/)
-  // Both logging paths point at the result, not just the camera one.
-  assert.equal((store.match(/highlightNewest\(/g) || []).length, 3)
+  // Every logging path points at the result: manual, camera, saved meal, plus the
+  // helper itself.
+  assert.equal((store.match(/highlightNewest\(/g) || []).length, 4)
   const app = read('../ios/Fuel/Sources/FuelApp.swift')
   assert.match(app, /onChange\(of: store\.jumpToToday\)/)
   const today = read('../ios/Fuel/Sources/TodayView.swift')
@@ -736,4 +738,90 @@ test('the widget scheme names a widget kind, so Run works on it', () => {
   const scheme = read('../ios/Fuel/Fuel.xcodeproj/xcshareddata/xcschemes/FuelWidgets.xcscheme')
   assert.match(scheme, /key = "_XCWidgetKind"/)
   assert.match(scheme, new RegExp(`value = "${kind}"`))
+})
+
+test('saved meals are the user\'s own, kept separate from the shared recipe bank', () => {
+  const meals = read('../api/_lib/meals.js')
+  assert.match(meals, /CREATE TABLE IF NOT EXISTS user_meals/)
+  // Every query is scoped to one user — a saved meal is private, unlike recipes.
+  for (const [, query] of meals.matchAll(/(FROM user_meals[\s\S]{0,200}?)(?:`|LIMIT)/g)) {
+    assert.match(query, /user_id = \$\{userId\}/, `unscoped user_meals query: ${query.trim()}`)
+  }
+  // Items are stored, not a single summed row, so re-logging reproduces the entries.
+  assert.match(meals, /items jsonb NOT NULL/)
+  assert.match(meals, /export async function createMealFromEntries/)
+  // Nutrition for an entry-derived meal is read server-side, never taken from the body.
+  assert.match(meals, /SELECT description, portion, meal, calories_kcal/)
+})
+
+test('logging a saved meal cannot be forged by the client', () => {
+  const mlog = read('../api/mlog.js')
+  const handler = mlog.slice(mlog.indexOf('async function handleMeals'), mlog.indexOf('async function handleFoodHistory'))
+  // The stored meal supplies the nutrition; the request only names which meal.
+  assert.match(handler, /const meal = await getMeal\(auth\.id, body\.id\)/)
+  assert.match(handler, /\$\{number\(item\.calories\)\}/)
+  assert.doesNotMatch(handler, /number\(body\.calories/)
+})
+
+test('a logged meal can be tagged with where it was eaten', () => {
+  const mlog = read('../api/mlog.js')
+  // Resolved server-side into one of the user's places: the entry stores a place, not
+  // a trail of raw coordinates.
+  assert.match(mlog, /async function placeFromRequest/)
+  assert.match(mlog, /recordLocation\(userId, \{[\s\S]*?\}, \{ force: true \}\)/)
+  // A location failure must never fail the log.
+  const fn = mlog.slice(mlog.indexOf('async function placeFromRequest'))
+  assert.match(fn.slice(0, 900), /catch \(error\) \{[\s\S]*?return null/)
+  // The dashboard surfaces the place name, left-joined so untagged entries survive.
+  const dash = read('../api/_lib/neon-dashboard.js')
+  assert.match(dash, /LEFT JOIN user_places/)
+  assert.match(dash, /place: row\.place_label \|\| null/)
+  // The client sends a fix only when the user already allowed location.
+  const sampler = read('../ios/Fuel/Sources/LocationSampler.swift')
+  assert.match(sampler, /func fixForLogging\(\) async -> MealFix\?/)
+  assert.match(sampler, /guard trackingEnabled else \{ return nil \}/)
+  assert.match(sampler, /status == \.authorizedWhenInUse \|\| status == \.authorizedAlways/)
+})
+
+test('the log library is one menu over meals, history and common foods', () => {
+  const lib = read('../ios/Fuel/Sources/FoodLibraryView.swift')
+  // The user's own meals come first — that is the whole point of saving them.
+  const order = ['My meals', 'Recently logged'].map(s => lib.indexOf(s))
+  assert.ok(order[0] > 0 && order[0] < order[1], 'saved meals must precede history')
+  assert.match(lib, /CommonFoods\.groups/)
+  // One search box covers all three shelves.
+  assert.match(lib, /\.searchable\(text: \$search/)
+  for (const shelf of ['meals', 'history', 'common']) {
+    assert.match(lib, new RegExp(`private var ${shelf}: \\[`), `${shelf} shelf must filter on the query`)
+  }
+  // And the old common-foods-only picker is gone rather than left as a second door.
+  assert.doesNotMatch(read('../ios/Fuel/Sources/CameraLogView.swift'), /CommonFoodPicker/)
+})
+
+test('notifications are opt-in, Coach-only, and never fire in the foreground', () => {
+  const notif = read('../ios/Fuel/Sources/Notifications.swift')
+  // Off until asked for: permission requested on first launch gets declined forever.
+  assert.match(notif, /enabled = UserDefaults\.standard\.bool\(forKey: Self\.enabledKey\)/)
+  assert.match(notif, /guard enabled else \{ return \}/)
+  assert.match(notif, /guard UIApplication\.shared\.applicationState != \.active else \{ return \}/)
+  // A workout is reacted to once, not on every sync that re-reads the same day.
+  assert.match(notif, /func isNewWorkout/)
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /Notifications\.shared\.markWorkoutSeen\(key\)/)
+  // Marked before generating, so a failure cannot re-announce the same workout.
+  const react = store.slice(store.indexOf('private func reactToNewWorkouts'))
+  assert.ok(react.indexOf('markWorkoutSeen') < react.indexOf('OnDeviceAI.shared.ask'),
+    'a workout must be marked seen before the reply is generated')
+  // Tapping the notification lands in the chat.
+  assert.match(read('../ios/Fuel/Sources/FuelApp.swift'), /notifications\.openCoachRequested/)
+  assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /Toggle\("Coach notifications"/)
+})
+
+test('a coach answer survives leaving the app', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  const ask = store.slice(store.indexOf('func askCoach'), store.indexOf('private func announceIfAway'))
+  // Without a background task iOS suspends the app mid-answer and the reply is lost.
+  assert.match(ask, /beginBackgroundTask\(withName: "coach reply"\)/)
+  assert.match(ask, /endBackgroundTask\(task\)/)
+  assert.match(ask, /await announceIfAway/)
 })

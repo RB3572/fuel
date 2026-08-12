@@ -12,7 +12,8 @@ import { recipesNeedingNutrition, saveEstimatedNutrition, saveRecipe } from './_
 import { estimateRecipeNutrition, NutritionQuotaError } from './_lib/recipe-nutrition.js'
 import { estimateFoodNutritionBatch, MAX_BATCH } from './_lib/food-nutrition.js'
 import { listDailyHistory, saveDailyHistory } from './_lib/daily-history.js'
-import { clearLocationHistory, getPlaceHeatmap, identifyPlace, recordLocation, renamePlace } from './_lib/places.js'
+import { clearLocationHistory, getPlaceHeatmap, identifyPlace, placeLabel, recordLocation, renamePlace } from './_lib/places.js'
+import { createMeal, createMealFromEntries, deleteMeal, foodHistory, getMeal, listMeals, markMealLogged } from './_lib/meals.js'
 import { ensureNutrientSchema, normalizeNutrients, nutrientColumns } from './_lib/nutrients.js'
 import { logRecipeAsFood } from './_lib/food-entries.js'
 import { getRolling24h } from './_lib/rolling-energy.js'
@@ -101,6 +102,14 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'places') {
     await handlePlaces(req, res)
+    return
+  }
+  if (integrationRoute === 'meals') {
+    await handleMeals(req, res)
+    return
+  }
+  if (integrationRoute === 'food-history') {
+    await handleFoodHistory(req, res)
     return
   }
   if (integrationRoute === 'quicklog') {
@@ -213,12 +222,16 @@ export default async function handler(req, res) {
     }
 
     const occurredAt = validDate(body.occurredAt ?? body.occurred_at ?? body.date) || new Date()
+    // Tag the entry with where it was eaten, when the client sent a fix. Resolved
+    // server-side against the user's own place clusters so the entry stores a place
+    // rather than raw coordinates.
+    const placeId = await placeFromRequest(auth.id, body)
     const db = sql()
     const rows = await db`
       INSERT INTO food_entries (
         user_id, occurred_at, meal, description, portion,
         calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
-        confidence, notes, source, updated_at
+        confidence, notes, source, place_id, updated_at
       ) VALUES (
         ${auth.id}, ${occurredAt.toISOString()}, ${text(body.meal)}, ${description}, ${text(body.portion)},
         ${number(body.calories ?? body.caloriesKcal ?? body.calories_kcal)},
@@ -226,7 +239,7 @@ export default async function handler(req, res) {
         ${number(body.carbs ?? body.carbsG ?? body.carbs_g)},
         ${number(body.fat ?? body.fatG ?? body.fat_g)},
         ${number(body.fiber ?? body.fiberG ?? body.fiber_g)},
-        ${text(body.confidence) || 'estimated'}, ${text(body.notes)}, ${text(body.source) || 'Fuel API'}, now()
+        ${text(body.confidence) || 'estimated'}, ${text(body.notes)}, ${text(body.source) || 'Fuel API'}, ${placeId}, now()
       )
       RETURNING id, occurred_at, meal, description, portion,
         calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
@@ -607,6 +620,135 @@ async function handleDailyHistory(req, res) {
   } catch (error) {
     console.error('Daily history request failed', error)
     sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to save that day.' })
+  }
+}
+
+// A user's own saved meals. GET lists them, POST creates one (either from scratch or
+// from diary entries they already logged), DELETE removes one, and POST ?log= logs one
+// back into the diary.
+async function handleMeals(req, res) {
+  if (!['GET', 'POST', 'DELETE'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'DELETE'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to use saved meals.' })
+      return
+    }
+    const cookies = auth.cookie ? [auth.cookie] : []
+    const url = new URL(req.url, appUrl())
+
+    if (req.method === 'GET') {
+      sendJson(res, 200, { meals: await listMeals(auth.id) }, cookies)
+      return
+    }
+
+    if (req.method === 'DELETE') {
+      const id = url.searchParams.get('id')
+      if (!id) {
+        sendJson(res, 422, { error: 'A meal id is required.' })
+        return
+      }
+      const removed = await deleteMeal(auth.id, id)
+      sendJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'That meal was not found.' }, cookies)
+      return
+    }
+
+    const body = unwrap(req.body)
+
+    // Logging an existing meal writes its items into the diary. The nutrition comes
+    // from the stored meal, never from the request, so a saved meal cannot be logged
+    // as something it is not.
+    if (body.action === 'log') {
+      const meal = await getMeal(auth.id, body.id)
+      if (!meal) {
+        sendJson(res, 404, { error: 'That meal was not found.' }, cookies)
+        return
+      }
+      const placeId = await placeFromRequest(auth.id, body)
+      const occurredAt = validDate(body.occurredAt ?? body.occurred_at) || new Date()
+      const db = sql()
+      const entries = []
+      for (const item of meal.items) {
+        const rows = await db`
+          INSERT INTO food_entries (
+            user_id, occurred_at, meal, description, portion,
+            calories_kcal, protein_g, carbs_g, fat_g, fiber_g,
+            confidence, notes, source, place_id, updated_at
+          ) VALUES (
+            ${auth.id}, ${occurredAt.toISOString()}, ${text(body.meal) || meal.meal}, ${item.description}, ${item.portion},
+            ${number(item.calories)}, ${number(item.protein)}, ${number(item.carbs)},
+            ${number(item.fat)}, ${number(item.fiber)},
+            'saved', ${meal.items.length > 1 ? meal.name : null}, ${`Fuel meal:${meal.id}`}, ${placeId}, now()
+          )
+          RETURNING id, occurred_at, meal, description, portion,
+            calories_kcal, protein_g, carbs_g, fat_g, fiber_g, confidence, notes, source
+        `
+        entries.push(rows[0])
+      }
+      await markMealLogged(auth.id, meal.id)
+      sendJson(res, 201, { ok: true, entries, meal: { id: meal.id, name: meal.name } }, cookies)
+      return
+    }
+
+    const meal = Array.isArray(body.entryIds) && body.entryIds.length
+      ? await createMealFromEntries(auth.id, body)
+      : await createMeal(auth.id, body)
+    sendJson(res, 201, { ok: true, meal }, cookies)
+  } catch (error) {
+    console.error('Saved meal request failed', error)
+    sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to save that meal.' })
+  }
+}
+
+// Everything the user has logged before, deduplicated, so it can be logged again.
+async function handleFoodHistory(req, res) {
+  if (req.method !== 'GET') {
+    methodNotAllowed(res, ['GET'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to see your food history.' })
+      return
+    }
+    const url = new URL(req.url, appUrl())
+    const items = await foodHistory(auth.id, {
+      limit: Number(url.searchParams.get('limit')) || 100,
+      days: Number(url.searchParams.get('days')) || 180,
+    })
+    sendJson(res, 200, { items }, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Food history request failed', error)
+    sendJson(res, 500, { error: 'Unable to load your food history.' })
+  }
+}
+
+/// Resolves the coordinate a client sent with a log into one of the user's places,
+/// creating or growing the cluster as needed. Never throws: a meal that cannot be
+/// placed is still a meal, so a location failure must not fail the log.
+async function placeFromRequest(userId, body) {
+  const latitude = Number(body?.latitude ?? body?.lat)
+  const longitude = Number(body?.longitude ?? body?.lon ?? body?.lng)
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
+  try {
+    const result = await recordLocation(userId, {
+      latitude, longitude, accuracy: body?.accuracy,
+    }, { force: true })
+    const placeId = result?.placeId || null
+    // Resolve a human name in the background so the entry reads "Red Door Cafe" rather
+    // than nothing. Failure here is invisible and harmless: the place keeps its
+    // coordinates and can be named later.
+    if (placeId) identifyPlace(userId, placeId).catch(() => {})
+    return placeId
+  } catch (error) {
+    console.warn('Could not place a logged meal', error?.message || error)
+    return null
   }
 }
 

@@ -68,7 +68,12 @@ async function migrate() {
 
 // Records one fix and files it under the nearest known place, creating a place when
 // the fix falls outside every existing cluster.
-export async function recordLocation(userId, input) {
+//
+// `force` skips the throttle. Ambient capture (one fix per app open) wants the throttle
+// so a page that loads twice does not store two samples; logging a meal does not, because
+// the whole point of that fix is to tag the entry in front of it, and refusing it would
+// leave the meal with no place at all.
+export async function recordLocation(userId, input, { force = false } = {}) {
   await ensurePlacesSchema()
   const latitude = coord(input?.latitude, 90)
   const longitude = coord(input?.longitude, 180)
@@ -77,12 +82,14 @@ export async function recordLocation(userId, input) {
   if (accuracy != null && accuracy > MAX_ACCURACY_M) return { skipped: 'inaccurate' }
 
   const db = sql()
-  const recent = await db`
-    SELECT recorded_at FROM user_location_samples
-    WHERE user_id = ${userId} AND recorded_at > now() - (${MIN_SAMPLE_GAP_SECONDS} * interval '1 second')
-    LIMIT 1
-  `
-  if (recent.length) return { skipped: 'throttled' }
+  if (!force) {
+    const recent = await db`
+      SELECT recorded_at FROM user_location_samples
+      WHERE user_id = ${userId} AND recorded_at > now() - (${MIN_SAMPLE_GAP_SECONDS} * interval '1 second')
+      LIMIT 1
+    `
+    if (recent.length) return { skipped: 'throttled' }
+  }
 
   const places = await db`SELECT id, latitude, longitude, sample_count FROM user_places WHERE user_id = ${userId}`
   let nearest = null
@@ -305,4 +312,20 @@ function metresBetween(a, b) {
   const dLon = toRad(b.longitude) - toRad(a.longitude)
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+/// The display name for a place: the user's own label first, then whatever the
+/// coordinate lookup suggested. Returns null rather than "Place 3" — a meal with no
+/// recognisable place should show nothing instead of a placeholder.
+export async function placeLabel(userId, placeId) {
+  if (!placeId) return null
+  await ensurePlacesSchema()
+  const db = sql()
+  const rows = await db`
+    SELECT label, suggested_label FROM user_places
+    WHERE id = ${String(placeId)}::uuid AND user_id = ${userId} LIMIT 1
+  `
+  const row = rows[0]
+  if (!row) return null
+  return row.label || row.suggested_label || null
 }

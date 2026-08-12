@@ -105,6 +105,8 @@ struct FoodEntry: Decodable, Identifiable {
     var source: String?
     var aiFilled: Bool?
     var nutrients: Nutrients?
+    /// Where it was eaten, when a fix was taken at log time and the place has a name.
+    var place: String?
 
     /// Must mean the same thing the website's queue means, or the prompt outlives the
     /// work: an entry the model has already been asked about is finished even if it
@@ -140,6 +142,62 @@ struct RecipeNutrition: Decodable {
     var fat: Double?
     var fiber: Double?
     var nutrients: Nutrients?
+}
+
+/// A meal the user saved themselves, as opposed to the shared recipe bank below. Stored
+/// with its items rather than as one summed row, so logging it again reproduces the
+/// diary entries it was built from.
+struct SavedMeal: Decodable, Identifiable, Hashable {
+    struct Item: Codable, Hashable {
+        var description: String
+        var portion: String?
+        var calories: Double?
+        var protein: Double?
+        var carbs: Double?
+        var fat: Double?
+        var fiber: Double?
+
+        var payload: [String: Any] {
+            var out: [String: Any] = ["description": description]
+            if let portion, !portion.isEmpty { out["portion"] = portion }
+            if let calories { out["calories"] = calories }
+            if let protein { out["protein"] = protein }
+            if let carbs { out["carbs"] = carbs }
+            if let fat { out["fat"] = fat }
+            if let fiber { out["fiber"] = fiber }
+            return out
+        }
+    }
+    struct Totals: Decodable, Hashable {
+        var calories: Double?
+        var protein: Double?
+        var carbs: Double?
+        var fat: Double?
+        var fiber: Double?
+    }
+
+    var id: String
+    var name: String
+    var meal: String?
+    var items: [Item]
+    var nutrition: Totals?
+    var logCount: Int?
+    var lastLoggedAt: String?
+}
+
+/// Something the user has logged before, ready to log again.
+struct FoodHistoryItem: Decodable, Identifiable, Hashable {
+    var description: String
+    var portion: String?
+    var meal: String?
+    var calories: Double?
+    var protein: Double?
+    var carbs: Double?
+    var fat: Double?
+    var fiber: Double?
+    var lastLoggedAt: String?
+
+    var id: String { description.lowercased() }
 }
 
 /// The shared, global recipe bank — same rows the website's /recipes.html renders,
@@ -357,10 +415,14 @@ struct FuelClient {
     }
 
     @discardableResult
+    /// `at` tags the entry with where it was eaten. The coordinate is resolved into one
+    /// of the user's own places server-side, so what is stored is a place rather than a
+    /// track of raw positions.
     func logFood(description: String, meal: String?, portion: String?,
                  calories: Double?, protein: Double?, carbs: Double?, fat: Double?, fiber: Double?,
-                 notes: String? = nil, occurredAt: Date? = nil) async throws -> Data {
+                 notes: String? = nil, occurredAt: Date? = nil, at fix: MealFix? = nil) async throws -> Data {
         var body: [String: Any] = ["description": description, "source": "Fuel iOS"]
+        if let fix { fix.apply(to: &body) }
         if let meal, !meal.isEmpty { body["meal"] = meal }
         if let portion, !portion.isEmpty { body["portion"] = portion }
         if let calories { body["calories"] = calories }
@@ -385,6 +447,51 @@ struct FuelClient {
         if let fat { body["fat"] = fat }
         if let fiber { body["fiber"] = fiber }
         return try await send(try request("/api/mlog", method: "PUT", body: body))
+    }
+
+    // MARK: - Saved meals and history
+
+    func savedMeals() async throws -> [SavedMeal] {
+        struct Response: Decodable { var meals: [SavedMeal] }
+        let data = try await send(try request("/api/mlog?integration=meals"))
+        return try JSONDecoder().decode(Response.self, from: data).meals
+    }
+
+    @discardableResult
+    func createMeal(name: String, meal: String?, items: [SavedMeal.Item]) async throws -> SavedMeal {
+        struct Response: Decodable { var meal: SavedMeal }
+        var body: [String: Any] = ["name": name, "items": items.map(\.payload)]
+        if let meal, !meal.isEmpty { body["meal"] = meal }
+        let data = try await send(try request("/api/mlog?integration=meals", method: "POST", body: body))
+        return try JSONDecoder().decode(Response.self, from: data).meal
+    }
+
+    /// Turns entries already in the diary into a saved meal. The nutrition is read from
+    /// those entries server-side rather than sent, so the meal always matches what was
+    /// actually eaten.
+    @discardableResult
+    func createMeal(name: String?, fromEntryIDs ids: [String]) async throws -> SavedMeal {
+        struct Response: Decodable { var meal: SavedMeal }
+        var body: [String: Any] = ["entryIds": ids]
+        if let name, !name.isEmpty { body["name"] = name }
+        let data = try await send(try request("/api/mlog?integration=meals", method: "POST", body: body))
+        return try JSONDecoder().decode(Response.self, from: data).meal
+    }
+
+    func logSavedMeal(id: String, at fix: MealFix? = nil) async throws {
+        var body: [String: Any] = ["action": "log", "id": id]
+        if let fix { fix.apply(to: &body) }
+        _ = try await send(try request("/api/mlog?integration=meals", method: "POST", body: body))
+    }
+
+    func deleteSavedMeal(id: String) async throws {
+        _ = try await send(try request("/api/mlog?integration=meals&id=\(id)", method: "DELETE"))
+    }
+
+    func foodHistory(limit: Int = 100) async throws -> [FoodHistoryItem] {
+        struct Response: Decodable { var items: [FoodHistoryItem] }
+        let data = try await send(try request("/api/mlog?integration=food-history&limit=\(limit)"))
+        return try JSONDecoder().decode(Response.self, from: data).items
     }
 
     func deleteFood(id: String) async throws {

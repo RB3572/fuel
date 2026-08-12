@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import HealthKit
 import CoreLocation
 
@@ -309,6 +310,13 @@ final class AppStore {
 
     // MARK: - Food
 
+    /// The user's own saved meals and their previously-logged foods. Loaded lazily when
+    /// the log library opens rather than on every dashboard read: neither is needed to
+    /// render Today, and both change only when the user acts.
+    var savedMeals: [SavedMeal] = []
+    var foodHistory: [FoodHistoryItem] = []
+    var libraryLoading = false
+
     /// The entry the app just created, so Today can scroll to it and flash it. Logging
     /// used to end with the camera still on screen and a one-line "Logged X" — which
     /// never showed what actually landed in the day, only that something had.
@@ -330,15 +338,75 @@ final class AppStore {
 
     func logFood(description: String, meal: String?, portion: String?, nutrition: EstimatedNutrition?) async {
         do {
+            let fix = await LocationSampler.shared.fixForLogging()
             try await client().logFood(description: description, meal: meal, portion: portion,
                                        calories: nutrition?.calories, protein: nutrition?.protein,
-                                       carbs: nutrition?.carbs, fat: nutrition?.fat, fiber: nutrition?.fiber)
+                                       carbs: nutrition?.carbs, fat: nutrition?.fat, fiber: nutrition?.fiber,
+                                       at: fix)
             await load()
             highlightNewest(description)
             announceLogged(description, nutrition: nutrition, photo: nil)
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    // MARK: - The log library
+
+    /// Loads the two server-backed shelves of the log library. Common foods need no
+    /// fetch — they ship with the app — so the library is usable offline even when this
+    /// fails.
+    func loadLibrary() async {
+        guard isSignedIn else { return }
+        libraryLoading = true
+        defer { libraryLoading = false }
+        async let meals = try? client().savedMeals()
+        async let history = try? client().foodHistory()
+        savedMeals = await meals ?? savedMeals
+        foodHistory = await history ?? foodHistory
+    }
+
+    func logSavedMeal(_ meal: SavedMeal) async {
+        do {
+            let fix = await LocationSampler.shared.fixForLogging()
+            try await client().logSavedMeal(id: meal.id, at: fix)
+            await load()
+            highlightNewest(meal.items.first?.description ?? meal.name)
+            announceLogged(meal.name, nutrition: nil, photo: nil)
+            await loadLibrary()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Saves entries already in the diary as a reusable meal.
+    @discardableResult
+    func saveMeal(named name: String?, fromEntryIDs ids: [String]) async -> Bool {
+        do {
+            let meal = try await client().createMeal(name: name, fromEntryIDs: ids)
+            savedMeals.insert(meal, at: 0)
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
+    func saveMeal(named name: String, meal: String?, items: [SavedMeal.Item]) async -> Bool {
+        do {
+            let created = try await client().createMeal(name: name, meal: meal, items: items)
+            savedMeals.insert(created, at: 0)
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteSavedMeal(_ meal: SavedMeal) async {
+        savedMeals.removeAll { $0.id == meal.id }
+        try? await client().deleteSavedMeal(id: meal.id)
     }
 
     /// The camera path: identify on device and log it. The coach no longer reacts
@@ -348,6 +416,7 @@ final class AppStore {
         defer { logging = false }
         do {
             let identified = try await OnDeviceAI.shared.identifyMeal(photo: photo, note: note)
+            let fix = await LocationSampler.shared.fixForLogging()
             try await client().logFood(description: identified.name, meal: identified.meal,
                                        portion: identified.portion,
                                        calories: identified.nutrition.calories,
@@ -355,7 +424,7 @@ final class AppStore {
                                        carbs: identified.nutrition.carbs,
                                        fat: identified.nutrition.fat,
                                        fiber: identified.nutrition.fiber,
-                                       notes: note)
+                                       notes: note, at: fix)
             lastLogged = identified.name
             await load()
             highlightNewest(identified.name)
@@ -449,6 +518,14 @@ final class AppStore {
         // A placeholder the stream fills in, so text appears as it generates.
         let index = messages.count
         messages.append(ChatMessage(role: .coach, text: ""))
+
+        // Ask iOS to keep us running if the person leaves mid-answer. Without this the
+        // app is suspended on the way out and the half-written reply is what they come
+        // back to — so the useful thing to do after asking a question would be to stand
+        // there and watch it type.
+        let task = UIApplication.shared.beginBackgroundTask(withName: "coach reply")
+        defer { if task != .invalid { UIApplication.shared.endBackgroundTask(task) } }
+
         do {
             let stream = OnDeviceAI.shared.ask(question, summary: summary,
                                                dashboard: dashboard, history: messages,
@@ -456,9 +533,18 @@ final class AppStore {
             for try await partial in stream {
                 if messages.indices.contains(index) { messages[index].text = partial }
             }
+            await announceIfAway(messages.indices.contains(index) ? messages[index].text : "")
         } catch {
             if messages.indices.contains(index) { messages[index].text = error.localizedDescription }
         }
+    }
+
+    /// Notifies only when the answer landed while the person was elsewhere. In the
+    /// foreground the reply is already on screen and a banner would be telling them
+    /// something they can see.
+    private func announceIfAway(_ text: String) async {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        await Notifications.shared.postCoachMessage(text)
     }
 
     /// Nil when interpretation fails for any reason. A model that can't produce a clean
@@ -528,6 +614,54 @@ final class AppStore {
         SyncStore.shared.token = token
         _ = await SyncEngine.shared.sync(reason: reason)
         await load()
+        await reactToNewWorkouts()
+    }
+
+    /// Congratulates the person on a workout that just arrived and follows it with one
+    /// concrete suggestion drawn from the rest of the day — vitals, what they have eaten,
+    /// how the week is trending. The reaction goes into the Coach transcript and, if they
+    /// are not in the app, out as a notification.
+    ///
+    /// Deduplicated by workout identity rather than by "have we run today", so a second
+    /// session in one afternoon is still recognised while the first is not repeated on
+    /// every sync.
+    private func reactToNewWorkouts() async {
+        guard Notifications.shared.enabled, OnDeviceAI.shared.isUsable else { return }
+        guard let summary = dashboard?.today.summary else { return }
+        let workouts = dashboard?.today.workouts ?? []
+        guard !workouts.isEmpty else { return }
+
+        for workout in workouts {
+            let key = "\(summary.date)|\(workout.id)"
+            guard Notifications.shared.isNewWorkout(key) else { continue }
+            // Marked before generating, not after: a failed or slow generation must not
+            // leave the workout eligible to be announced again on the next sync.
+            Notifications.shared.markWorkoutSeen(key)
+
+            let described = [workout.activity,
+                             workout.distanceMiles.map { "\(Format.number($0, decimals: 1)) miles" },
+                             workout.swimmingDistanceYards.map { "\(Format.number($0)) yards swum" }]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+
+            let prompt = """
+            I just finished a workout: \(described.isEmpty ? "a training session" : described).             Congratulate me in one short sentence, then give me one specific, useful suggestion             for the rest of today based on my vitals, what I have eaten so far and my recent trends.             Keep the whole thing under 60 words and do not use headings or lists.
+            """
+
+            var reply = ""
+            do {
+                for try await partial in OnDeviceAI.shared.ask(prompt, summary: summary,
+                                                               dashboard: dashboard, history: [],
+                                                               context: context) {
+                    reply = partial
+                }
+            } catch {
+                continue
+            }
+            let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            messages.append(ChatMessage(role: .coach, text: text))
+            await Notifications.shared.postCoachMessage(text, title: "Nice session")
+        }
     }
 
     /// Wraps auth.signOut() so the cached sync token — minted for whoever was signed

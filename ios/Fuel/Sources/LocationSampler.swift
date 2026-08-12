@@ -46,6 +46,21 @@ final class LocationSampler: NSObject, CLLocationManagerDelegate {
         await AppStore.shared.recordLocation(location)
     }
 
+    /// A fix taken specifically to tag a meal, rather than the ambient one-per-open
+    /// capture above. It ignores the cooldown — the point of this fix is the entry in
+    /// front of it, and a throttled miss would leave that meal with no place at all —
+    /// but it still respects the user's toggle and never prompts on its own: if they
+    /// have not already granted location, the meal is simply logged without a place.
+    func fixForLogging() async -> MealFix? {
+        guard trackingEnabled else { return nil }
+        let status = manager.authorizationStatus
+        guard status == .authorizedWhenInUse || status == .authorizedAlways else { return nil }
+        guard let location = await requestLocation() else { return nil }
+        return MealFix(latitude: location.coordinate.latitude,
+                       longitude: location.coordinate.longitude,
+                       accuracy: location.horizontalAccuracy)
+    }
+
     private func requestLocation() async -> CLLocation? {
         await withCheckedContinuation { continuation in
             self.continuation = continuation
@@ -74,5 +89,18 @@ final class LocationSampler: NSObject, CLLocationManagerDelegate {
                 await captureIfDue()
             }
         }
+    }
+}
+
+/// The coordinate sent alongside a logged meal so the server can tag it with a place.
+struct MealFix: Sendable {
+    var latitude: Double
+    var longitude: Double
+    var accuracy: Double?
+
+    func apply(to body: inout [String: Any]) {
+        body["latitude"] = latitude
+        body["longitude"] = longitude
+        if let accuracy, accuracy > 0 { body["accuracy"] = accuracy }
     }
 }

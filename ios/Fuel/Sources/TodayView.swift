@@ -31,6 +31,12 @@ struct TodayView: View {
     @State private var fillProgress = ""
     @State private var range: EnergyRangeKey = .day
 
+    /// Entries ticked for turning into a saved meal. Non-empty means the food card is in
+    /// selection mode; the rest of the dashboard is untouched.
+    @State private var selectedEntryIDs: Set<String> = []
+    @State private var namingMeal = false
+    @State private var newMealName = ""
+
     @State private var dashboardEditing = false
     @State private var draftLayout = DashboardLayout.default
     @State private var draggingKey: String?
@@ -116,6 +122,65 @@ struct TodayView: View {
             .sheet(isPresented: $showColors) { DashboardColorsSheet() }
             .sheet(isPresented: $showHistory) { HistorySheet() }
         }
+    }
+
+    // MARK: Turning logged entries into a saved meal
+
+    /// True while the user is picking entries. Kept separate from the selection itself so
+    /// the checkboxes stay visible after they untick the last one — otherwise clearing a
+    /// selection silently drops you out of selection mode.
+    @State private var selecting = false
+
+    private var saveAsMealBar: some View {
+        HStack(spacing: 10) {
+            if selecting {
+                Button("Cancel") { selecting = false; selectedEntryIDs = [] }
+                    .font(.system(size: 13))
+                Spacer()
+                Text(selectedEntryIDs.isEmpty ? "Pick entries"
+                     : "\(selectedEntryIDs.count) selected")
+                    .font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
+                Button("Save as meal") {
+                    newMealName = defaultMealName
+                    namingMeal = true
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .disabled(selectedEntryIDs.isEmpty)
+            } else {
+                Button { selecting = true } label: {
+                    Label("Save as a meal", systemImage: "bookmark")
+                        .font(.system(size: 13))
+                }
+                Spacer()
+            }
+        }
+        .padding(.bottom, 4)
+        .alert("Name this meal", isPresented: $namingMeal) {
+            TextField("e.g. usual breakfast", text: $newMealName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                let ids = Array(selectedEntryIDs)
+                let name = newMealName
+                selecting = false
+                selectedEntryIDs = []
+                Task { await store.saveMeal(named: name, fromEntryIDs: ids) }
+            }
+        } message: {
+            Text("It'll appear at the top of your log library, ready to log again.")
+        }
+    }
+
+    /// One selected entry names itself; several need a name from the user, so the field
+    /// starts empty rather than guessing from whichever entry happened to be first.
+    private var defaultMealName: String {
+        let entries = store.dashboard?.today.foodEntries ?? []
+        let picked = entries.filter { selectedEntryIDs.contains($0.id) }
+        return picked.count == 1 ? (picked[0].food ?? "") : ""
+    }
+
+    private func toggleSelection(_ id: String) {
+        if selectedEntryIDs.contains(id) { selectedEntryIDs.remove(id) }
+        else { selectedEntryIDs.insert(id) }
     }
 
     // MARK: Jiggle-mode dashboard editing
@@ -505,13 +570,23 @@ struct TodayView: View {
     private var foodSection: some View {
         Panel(title: "Food consumed",
               subtitle: store.dashboard?.today.foodEntries.isEmpty == true ? "Nothing logged yet" : nil) {
+            if !(store.dashboard?.today.foodEntries.isEmpty ?? true) { saveAsMealBar }
             ForEach(store.dashboard?.today.foodEntries ?? []) { entry in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline) {
+                        if !selectedEntryIDs.isEmpty || selecting {
+                            Button { toggleSelection(entry.id) } label: {
+                                Image(systemName: selectedEntryIDs.contains(entry.id)
+                                      ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedEntryIDs.contains(entry.id)
+                                                     ? DashboardTheme.shared.accent : Palette.muted(scheme))
+                            }
+                            .buttonStyle(.plain)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.food ?? entry.meal ?? "—")
                                 .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.ink(scheme))
-                            Text([entry.time, entry.meal, entry.portion]
+                            Text([entry.time, entry.meal, entry.portion, entry.place]
                                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                                 .font(.caption).foregroundStyle(Palette.muted(scheme))
                         }

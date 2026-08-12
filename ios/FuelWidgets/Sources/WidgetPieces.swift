@@ -146,7 +146,9 @@ struct RingStack<Center: View>: View {
     }
 }
 
-/// A horizontal capsule bar — the widget-sized version of the goal bars on Today.
+/// A horizontal bar — the widget-sized version of the goal bars on Today. Rounded
+/// rectangles for the same reason as the balance strip: a capsule's radius follows its
+/// width, so a bar at 15% of goal came out a stub pill next to a near-rectangle at 90%.
 struct CapsuleBar: View {
     var fraction: Double
     var color: Color
@@ -155,8 +157,8 @@ struct CapsuleBar: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(color.opacity(0.18))
-                Capsule().fill(color)
+                RoundedRectangle(cornerRadius: BalanceStrip.barRadius).fill(color.opacity(0.18))
+                RoundedRectangle(cornerRadius: BalanceStrip.barRadius).fill(color)
                     .frame(width: max(height, geo.size.width * max(0, min(1, fraction))))
             }
         }
@@ -205,12 +207,20 @@ struct ArcGauge<Center: View>: View {
     }
 }
 
-/// The deficit/surplus strip: one rounded bar per day, up for surplus, down for deficit,
-/// sharing a zero line. The same reading as the chart on Today, at a tenth the size.
+/// The deficit/surplus strip: one bar per day, up for surplus, down for deficit, sharing
+/// a zero line. The same reading as the chart on Today, at a tenth the size.
+///
+/// These are rectangles with a small fixed radius rather than capsules. A capsule's
+/// corner radius scales with the bar, so a short day rendered as a pill and a long one as
+/// a near-rectangle — the same quantity drawn in two different shapes, which reads as a
+/// difference in kind rather than in size.
 struct BalanceStrip: View {
     var days: [FuelWidgetDay]
     var palette: FuelWidgetPalette
     var showLabels: Bool = true
+
+    /// Fixed, so every bar reads as the same shape whatever its length.
+    static let barRadius: CGFloat = 3
 
     private var scale: Double {
         max(1, days.map { abs($0.balance) }.max() ?? 1)
@@ -228,14 +238,16 @@ struct BalanceStrip: View {
                             ZStack(alignment: .bottom) {
                                 Color.clear
                                 if surplus {
-                                    Capsule().fill(palette.surplusColor).frame(height: max(3, magnitude))
+                                    RoundedRectangle(cornerRadius: Self.barRadius)
+                                        .fill(palette.surplusColor).frame(height: max(3, magnitude))
                                 }
                             }
                             .frame(height: half)
                             ZStack(alignment: .top) {
                                 Color.clear
                                 if !surplus {
-                                    Capsule().fill(palette.deficitColor).frame(height: max(3, magnitude))
+                                    RoundedRectangle(cornerRadius: Self.barRadius)
+                                        .fill(palette.deficitColor).frame(height: max(3, magnitude))
                                 }
                             }
                             .frame(height: half)

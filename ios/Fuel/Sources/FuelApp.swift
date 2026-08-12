@@ -61,6 +61,7 @@ struct RootView: View {
     /// to Today, since with the keyboard up the tab bar is covered and there is
     /// otherwise no way out.
     @State private var tab: AppTab = .today
+    @State private var notifications = Notifications.shared
 
     var body: some View {
         if !store.isSignedIn {
@@ -89,6 +90,13 @@ struct RootView: View {
                 withAnimation(.snappy) { tab = .today }
                 store.jumpToToday = false
             }
+            // Tapping a Coach notification opens the chat it belongs to.
+            .onChange(of: notifications.openCoachRequested) { _, requested in
+                guard requested else { return }
+                tab = .coach
+                notifications.openCoachRequested = false
+            }
+            .task { await notifications.refreshAuthorizationState() }
             // Tapping a Home Screen widget opens the tab it came from.
             .onOpenURL { url in
                 guard url.scheme == "fuel" else { return }

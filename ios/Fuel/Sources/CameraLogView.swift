@@ -352,7 +352,7 @@ struct ManualLogView: View {
                         }
                         .pickerStyle(.segmented)
                         Button { browsing = true } label: {
-                            Label("Browse common foods", systemImage: "list.bullet")
+                            Label("Log from my library", systemImage: "list.bullet")
                                 .font(.system(size: 14))
                         }
                     }
@@ -403,9 +403,23 @@ struct ManualLogView: View {
                 }
             }
             .sheet(isPresented: $browsing) {
-                CommonFoodPicker { hit in
-                    apply(hit)
-                    browsing = false
+                FoodLibraryView { pick in
+                    switch pick {
+                    // A saved meal is logged whole rather than loaded into this form:
+                    // it may be several items, and the form only describes one.
+                    case .meal(let meal):
+                        browsing = false
+                        Task {
+                            await store.logSavedMeal(meal)
+                            onClose()
+                        }
+                    case .history(let item):
+                        apply(item)
+                        browsing = false
+                    case .common(let food):
+                        apply(food)
+                        browsing = false
+                    }
                 }
             }
         }
@@ -431,6 +445,15 @@ struct ManualLogView: View {
         foodFocused = false
     }
 
+    private func apply(_ item: FoodHistoryItem) {
+        food = item.description
+        if let portion = item.portion, !portion.isEmpty { self.portion = portion }
+        if let kind = item.meal, !kind.isEmpty { meal = kind }
+        fill(EstimatedNutrition(calories: item.calories, protein: item.protein,
+                                carbs: item.carbs, fat: item.fat, fiber: item.fiber))
+        foodFocused = false
+    }
+
     private func fill(_ n: EstimatedNutrition) {
         func text(_ v: Double?) -> String { v.map { Format.number($0) } ?? "" }
         calories = text(n.calories)
@@ -441,52 +464,3 @@ struct ManualLogView: View {
     }
 }
 
-/// The scrollable list of common foods, grouped the way a menu is. Everything here logs
-/// without a model call, which is the point: the fastest manual entry is one tap.
-struct CommonFoodPicker: View {
-    @Environment(\.dismiss) private var dismiss
-    var onPick: (CommonFood) -> Void
-    @State private var search = ""
-
-    private var shown: [(String, [CommonFood])] {
-        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        return CommonFoods.groups.compactMap { group in
-            let items = CommonFoods.all.filter {
-                $0.group == group && (q.isEmpty || $0.name.lowercased().contains(q))
-            }
-            return items.isEmpty ? nil : (group, items)
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(shown, id: \.0) { group, items in
-                    Section(group) {
-                        ForEach(items) { item in
-                            Button { onPick(item) } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(item.name)
-                                        Text(item.portion).font(.system(size: 12)).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    VStack(alignment: .trailing, spacing: 2) {
-                                        Text(Format.kcal(item.calories)).font(.system(size: 14, weight: .medium))
-                                        Text("P \(Format.number(item.protein)) · C \(Format.number(item.carbs)) · F \(Format.number(item.fat))")
-                                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .searchable(text: $search, prompt: "Search common foods")
-            .navigationTitle("Common foods")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-        }
-    }
-}

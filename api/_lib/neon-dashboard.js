@@ -24,7 +24,13 @@ export async function getNeonDashboard(userId) {
   const today = dateKey(new Date())
   const [healthRows, foodRows, supplementRows, sharedRecipes, userGoals] = await Promise.all([
     db`SELECT * FROM health_daily WHERE user_id = ${userId} AND date >= (${today}::date - interval '30 days') ORDER BY date ASC`,
-    db`SELECT * FROM food_entries WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
+    // The place join is a left join on purpose: an entry logged with location off, or
+    // before place tagging existed, is still an entry.
+    db`SELECT f.*, COALESCE(p.label, p.suggested_label) AS place_label
+       FROM food_entries f
+       LEFT JOIN user_places p ON p.id = f.place_id AND p.user_id = f.user_id
+       WHERE f.user_id = ${userId} AND f.occurred_at >= (${today}::date - interval '30 days')
+       ORDER BY f.occurred_at ASC`,
     db`SELECT * FROM supplements WHERE user_id = ${userId} AND occurred_at >= (${today}::date - interval '30 days') ORDER BY occurred_at ASC`,
     // The shared recipe bank is a secondary feature and now routes through schema
     // migrations and a cross-user table, so a failure here must not 500 the whole
@@ -239,6 +245,8 @@ function normalizeFood(row) {
     // agree with the fill queue about what is still outstanding: an entry the model has
     // already been asked about is finished, even if it could not supply every field.
     aiFilled: row.ai_filled_at != null,
+    // Where it was eaten, when a fix was taken at log time and the place has a name.
+    place: row.place_label || null,
   }
 }
 function normalizeSupplement(row) {

@@ -27,6 +27,9 @@ struct FuelWidgetBundle: WidgetBundle {
         SleepWidget()
         BalanceTrendWidget()
         QuickLogWidget()
+        // Lock Screen / Control Center / Action button.
+        LogMealControl()
+        OpenTodayControl()
     }
 }
 

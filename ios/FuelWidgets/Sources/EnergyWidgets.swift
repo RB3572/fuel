@@ -167,7 +167,7 @@ struct EnergyStackView: View {
                             Spacer(minLength: 0)
                         }
                         .background(p.accent.opacity(0.12))
-                        .clipShape(Capsule())
+                        .clipShape(RoundedRectangle(cornerRadius: BalanceStrip.barRadius))
                     }
                     .frame(height: 12)
                 }

@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 // Everything that is not a daily action: the Health connection, the account, and the
 // escape hatches. On a phone these get a
 // tab, because "why has my data stopped arriving" is a question you answer here.
 
 struct MoreView: View {
+    @Bindable private var notifications = Notifications.shared
     @Environment(AppStore.self) private var store
     @Environment(OnDeviceAI.self) private var ai
     @Environment(\.colorScheme) private var scheme
@@ -75,6 +77,24 @@ struct MoreView: View {
                     Text("Sync settings")
                 } footer: {
                     Text("Fuel sends one row per day — your totals, like steps walked and calories burned — not the thousands of individual readings behind them. Everything stays on this iPhone in Health. \"Sync in the background\" off means Fuel only syncs while it's open, on launch, on foreground, or pull-to-refresh.")
+                }
+
+                Section {
+                    Toggle("Coach notifications", isOn: $notifications.enabled)
+                    if notifications.enabled && notifications.deniedBySystem {
+                        Button {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            Label("Allow notifications in Settings", systemImage: "exclamationmark.triangle")
+                                .font(.footnote)
+                        }
+                    }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text("The Coach tells you when it has finished an answer you asked for while you were elsewhere, and reacts when a workout syncs. Fuel never sends reminders to log — nothing here nags.")
                 }
 
                 Section {

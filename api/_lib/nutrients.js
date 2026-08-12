@@ -76,7 +76,11 @@ async function ensureSchema() {
       -- "fill missing nutrients" queue converges. Without it, an entry the model
       -- cannot add micronutrients to stays permanently incomplete and is re-estimated
       -- on every pass while nothing on screen changes.
-      ADD COLUMN IF NOT EXISTS ai_filled_at timestamptz
+      ADD COLUMN IF NOT EXISTS ai_filled_at timestamptz,
+      -- Where the meal was eaten, resolved from a fix taken at log time against the
+      -- user's own place clusters. Nullable and unenforced by design: location is
+      -- optional, and a meal logged with it turned off is still a meal.
+      ADD COLUMN IF NOT EXISTS place_id uuid
   `
   await db`
     ALTER TABLE recipes
