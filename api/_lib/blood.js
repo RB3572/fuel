@@ -132,6 +132,42 @@ export async function createBloodPanel(userId, body) {
   }
 }
 
+/// Corrects a panel: its date, lab and notes, and optionally the results themselves.
+/// Editing a value re-derives whether it sits outside its range, because the two are
+/// never allowed to disagree — a corrected transcription must not keep the flag the
+/// mistyped number earned. Markers are replaced wholesale rather than merged: the client
+/// always holds the complete panel, and a partial merge would make a deleted row
+/// impossible to express.
+export async function updateBloodPanel(userId, id, body) {
+  await ensureBloodSchema()
+  const collectedOn = typeof body?.collectedOn === 'string' && ISO_DATE.test(body.collectedOn)
+    ? body.collectedOn
+    : null
+  const markers = Array.isArray(body?.markers)
+    ? body.markers.map(normalizeMarker).filter(Boolean).slice(0, MARKER_LIMIT)
+    : null
+  if (markers && !markers.length) throw new Error('A panel needs at least one result.')
+  const db = sql()
+  const [row] = await db`
+    UPDATE blood_panels SET
+      collected_on = ${collectedOn}::date,
+      lab = ${text(body?.lab, 120)},
+      notes = ${text(body?.notes, 2000)},
+      markers = COALESCE(${markers ? JSON.stringify(markers) : null}::jsonb, markers)
+    WHERE user_id = ${userId} AND id = ${id}
+    RETURNING id, collected_on, lab, notes, markers, created_at
+  `
+  if (!row) return null
+  return {
+    id: String(row.id),
+    collectedOn: row.collected_on ? databaseDateKey(row.collected_on) || null : null,
+    lab: row.lab || null,
+    notes: row.notes || null,
+    markers: Array.isArray(row.markers) ? row.markers : [],
+    createdAt: new Date(row.created_at).toISOString(),
+  }
+}
+
 export async function deleteBloodPanel(userId, id) {
   await ensureBloodSchema()
   const db = sql()

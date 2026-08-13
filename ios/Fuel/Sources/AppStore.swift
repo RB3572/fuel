@@ -718,6 +718,35 @@ final class AppStore {
         }
     }
 
+    /// Saves a corrected panel. Markers go back whole — the server re-derives each
+    /// flag from the value it is given, so fixing a mistyped number also fixes whether
+    /// it counts as out of range.
+    @discardableResult
+    func updateBloodPanel(_ panel: BloodPanel, collectedOn: String?, lab: String?, notes: String?,
+                          markers: [BloodPanel.Marker]) async -> Bool {
+        let payload: [[String: Any]] = markers.map { marker in
+            var item: [String: Any] = ["name": marker.name, "category": BloodMarkers.category(for: marker.name)]
+            if let value = marker.value { item["value"] = value }
+            if let text = marker.valueText, !text.isEmpty { item["valueText"] = text }
+            if let unit = marker.unit, !unit.isEmpty { item["unit"] = unit }
+            if let low = marker.referenceLow { item["referenceLow"] = low }
+            if let high = marker.referenceHigh { item["referenceHigh"] = high }
+            if let text = marker.referenceText, !text.isEmpty { item["referenceText"] = text }
+            return item
+        }
+        do {
+            let saved = try await client().updateBloodPanel(
+                id: panel.id, collectedOn: collectedOn, lab: lab, notes: notes, markers: payload)
+            if let index = bloodPanels.firstIndex(where: { $0.id == saved.id }) { bloodPanels[index] = saved }
+            bloodPanels.sort { ($0.collectedOn ?? "") > ($1.collectedOn ?? "") }
+            bloodError = nil
+            return true
+        } catch {
+            bloodError = error.localizedDescription
+            return false
+        }
+    }
+
     func deleteBloodPanel(_ panel: BloodPanel) async {
         bloodPanels.removeAll { $0.id == panel.id }
         try? await client().deleteBloodPanel(id: panel.id)

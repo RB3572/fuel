@@ -7,7 +7,7 @@ import { authorizationServerMetadata, verifyAccessToken } from './_lib/mcp-auth.
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getDayDetail, getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getLearningSignals } from './_lib/learning.js'
-import { createBloodPanel, deleteBloodPanel, listBloodPanels } from './_lib/blood.js'
+import { createBloodPanel, deleteBloodPanel, listBloodPanels, updateBloodPanel } from './_lib/blood.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
 import { recipesNeedingNutrition, saveEstimatedNutrition, saveRecipe } from './_lib/recipes.js'
@@ -751,8 +751,8 @@ async function handleFoodHistory(req, res) {
 /// them, reference range included; nothing here judges a value beyond comparing it to
 /// the range printed beside it.
 async function handleBloodPanels(req, res) {
-  if (!['GET', 'POST', 'DELETE'].includes(req.method)) {
-    methodNotAllowed(res, ['GET', 'POST', 'DELETE'])
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'PUT', 'DELETE'])
     return
   }
   res.setHeader('Cache-Control', 'no-store')
@@ -777,6 +777,19 @@ async function handleBloodPanels(req, res) {
       }
       const removed = await deleteBloodPanel(auth.id, id)
       sendJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'That panel was not found.' }, cookies)
+      return
+    }
+
+    if (req.method === 'PUT') {
+      const body = unwrap(req.body)
+      const id = text(body.id) || new URL(req.url, appUrl()).searchParams.get('id')
+      if (!id) {
+        sendJson(res, 422, { error: 'A panel id is required.' })
+        return
+      }
+      const updated = await updateBloodPanel(auth.id, id, body)
+      sendJson(res, updated ? 200 : 404,
+               updated ? { ok: true, panel: updated } : { error: 'That panel was not found.' }, cookies)
       return
     }
 

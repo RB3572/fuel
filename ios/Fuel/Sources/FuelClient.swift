@@ -59,7 +59,8 @@ struct DayDetail: Decodable {
 /// because a result only means anything next to the reference range printed beside it —
 /// ranges vary between labs and change over time, so the range is stored as reported.
 struct BloodPanel: Decodable, Identifiable {
-    struct Marker: Decodable, Identifiable, Hashable {
+    /// Encodable too: an edited panel is sent back whole, markers included.
+    struct Marker: Codable, Identifiable, Hashable {
         var name: String
         var value: Double?
         /// What the report said when there was no number — "Cancelled", "See note".
@@ -73,7 +74,10 @@ struct BloodPanel: Decodable, Identifiable {
         /// flag column on the report can never disagree with the numbers beside it.
         var flag: String?
 
-        var id: String { name }
+        /// A report can print the same test twice, so identity includes what makes the
+        /// two rows different. Two genuinely identical rows collide, which is harmless:
+        /// nothing distinguishes them on screen either.
+        var id: String { "\(name)|\(unit ?? "")|\(value.map { String($0) } ?? valueText ?? "")" }
         var isHigh: Bool { flag == "high" }
         var isLow: Bool { flag == "low" }
         var isOutOfRange: Bool { isHigh || isLow }
@@ -670,6 +674,18 @@ struct FuelClient {
         if let lab, !lab.isEmpty { body["lab"] = lab }
         if let notes, !notes.isEmpty { body["notes"] = notes }
         let data = try await send(try request("/api/mlog?fuel_route=blood", method: "POST", body: body))
+        return try JSONDecoder().decode(Response.self, from: data).panel
+    }
+
+    @discardableResult
+    func updateBloodPanel(id: String, collectedOn: String?, lab: String?, notes: String?,
+                          markers: [[String: Any]]) async throws -> BloodPanel {
+        struct Response: Decodable { var panel: BloodPanel }
+        var body: [String: Any] = ["id": id, "markers": markers]
+        if let collectedOn, !collectedOn.isEmpty { body["collectedOn"] = collectedOn }
+        if let lab, !lab.isEmpty { body["lab"] = lab }
+        if let notes, !notes.isEmpty { body["notes"] = notes }
+        let data = try await send(try request("/api/mlog?fuel_route=blood", method: "PUT", body: body))
         return try JSONDecoder().decode(Response.self, from: data).panel
     }
 

@@ -1521,3 +1521,57 @@ test('every blood marker shown is explained from a cited source, without being j
   assert.match(view, /Text\("Source: \\\(info\.source\)"\)/)
   assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /NavigationLink \{ BloodView\(\) \}/)
 })
+
+test('a blood panel can be corrected, and a fixed value stops being flagged', () => {
+  const blood = read('../api/_lib/blood.js')
+  assert.match(blood, /export async function updateBloodPanel/)
+  // Markers are replaced wholesale — a merge would make deleting a row inexpressible.
+  assert.match(blood, /markers = COALESCE\(\$\{markers \? JSON\.stringify\(markers\) : null\}::jsonb, markers\)/)
+  // ...but the update still runs through normalizeMarker, so an edited value re-derives
+  // its own flag rather than keeping the one the mistyped number earned.
+  const fn = blood.slice(blood.indexOf('export async function updateBloodPanel'))
+  assert.match(fn, /body\.markers\.map\(normalizeMarker\)/)
+  // Scoped, so one account cannot edit another's results.
+  assert.match(fn, /WHERE user_id = \$\{userId\} AND id = \$\{id\}/)
+
+  const mlog = read('../api/mlog.js')
+  const handler = mlog.slice(mlog.indexOf('async function handleBloodPanels'), mlog.indexOf('const ISO_DATE_RE'))
+  assert.match(handler, /\['GET', 'POST', 'PUT', 'DELETE'\]/)
+  assert.match(handler, /await updateBloodPanel\(auth\.id, id, body\)/)
+
+  const view = read('../ios/Fuel/Sources/BloodView.swift')
+  assert.match(view, /struct EditBloodPanelSheet: View/)
+  assert.match(view, /struct EditBloodMarkerView: View/)
+  assert.match(view, /DatePicker\("Collected", selection: \$date, displayedComponents: \.date\)/)
+  // A report with no stated date keeps having no date rather than being given today's.
+  assert.match(view, /Toggle\("Panel has a date", isOn: \$hasDate\.animation\(\)\)/)
+  assert.match(view, /collectedOn: hasDate \? BloodFormat\.iso\(date\) : nil/)
+  // Rows are addressed by index: a marker's id changes as it is edited, and identity
+  // shifting mid-edit would pop the editor off the navigation stack.
+  assert.match(view, /ForEach\(markers\.indices, id: \\\.self\)/)
+  // The detail screen reads the stored copy, so an edit shows up without going back.
+  assert.match(view, /private var current: BloodPanel \{ store\.bloodPanels\.first \{ \$0\.id == panel\.id \} \?\? panel \}/)
+
+  assert.match(read('../ios/Fuel/Sources/AppStore.swift'), /func updateBloodPanel\(_ panel: BloodPanel/)
+  assert.match(read('../ios/Fuel/Sources/FuelClient.swift'), /method: "PUT", body: body\)\)\s*\n\s*return try JSONDecoder\(\)\.decode\(Response\.self, from: data\)\.panel/)
+})
+
+test('each blood value is plotted against the range its own lab printed', () => {
+  const view = read('../ios/Fuel/Sources/BloodView.swift')
+  assert.match(view, /struct BloodRangeBar: View/)
+  // Drawn only when there is both a number and a range to place it in.
+  assert.match(view, /if marker\.value != nil, marker\.referenceLow != nil \|\| marker\.referenceHigh != nil \{/)
+  // A one-sided range ("<150") still plots rather than dropping the bar.
+  assert.match(view, /let low = marker\.referenceLow \?\? min\(marker\.value \?\? 0, marker\.referenceHigh \?\? 0\)/)
+  assert.match(view, /let high = marker\.referenceHigh \?\? max\(marker\.value \?\? 0, low\)/)
+  // The domain widens to keep an out-of-range dot on screen instead of clipped to an edge.
+  assert.match(view, /let domainMin = min\(low - spread \* 0\.35, value - spread \* 0\.12\)/)
+  assert.match(view, /let domainMax = max\(high \+ spread \* 0\.35, value \+ spread \* 0\.12\)/)
+  // Same centring the Compare bars needed: no stray y-offset pushing the dot off the bar.
+  const bar = view.slice(view.indexOf('struct BloodRangeBar'))
+  assert.doesNotMatch(bar.slice(0, 2000), /y: -\d/)
+  assert.match(bar, /\.offset\(x: position\(value\) - 5\.5\)/)
+  assert.match(bar, /marker\.isOutOfRange \? Color\.orange/)
+  // Readable without seeing it.
+  assert.match(bar, /accessibilityValue\(marker\.isOutOfRange/)
+})
