@@ -913,7 +913,8 @@ test('swiping a food entry reveals three real buttons, not a menu behind a menu'
   assert.doesNotMatch(row, /\bMenu\s*\{/)
   assert.doesNotMatch(row, /Image\(systemName: "ellipsis"\)/)
   assert.match(today, /actionButton\("Edit", "pencil"/)
-  assert.match(today, /actionButton\("Add", "bookmark\.fill"/)
+  // Add/Added is now two-state — see the bookmark test below for which is which.
+  assert.match(today, /actionButton\("Add(ed)?", "bookmark(\.fill)?"/)
   assert.match(today, /actionButton\("Delete", "trash", \.red\)/)
   assert.match(today, /store\.saveMeal\(named: entry\.food, fromEntryIDs: \[entry\.id\]\)/)
   // The row's background matches the panel it sits in, not the separate "surface" tone
@@ -1385,4 +1386,58 @@ test('widget timelines are only reloaded when the widgets would actually look di
   const guardAt = publishFn.indexOf('if previous == snapshot')
   const reloadAt = publishFn.indexOf('WidgetCenter.shared.reloadAllTimelines()')
   assert.ok(guardAt > 0 && guardAt < reloadAt, 'the equality check must short-circuit before the reload')
+})
+
+test('a food already saved as a meal shows a filled bookmark that removes it again', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // Filled + "Added" when it is already in the library, outline + "Add" when it is not,
+  // and the filled one takes it back out rather than saving a second copy.
+  assert.match(today, /actionButton\("Added", "bookmark\.fill", DashboardTheme\.shared\.accent\)/)
+  assert.match(today, /actionButton\("Add", "bookmark", DashboardTheme\.shared\.accent\)/)
+  assert.match(today, /store\.deleteSavedMeal\(saved\)/)
+  assert.match(today, /private var savedAsMeal: SavedMeal\? \{ store\.savedMeal\(matching: entry\.food\) \}/)
+
+  // Matched the same way the library dedups, so capitalisation or spacing at save time
+  // does not make an already-saved meal look unsaved.
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /func savedMeal\(matching food: String\?\) -> SavedMeal\?/)
+  assert.match(store, /savedMeals\.first \{ FoodHistoryItem\.key\(\$0\.name\) == key \}/)
+
+  // The library has to be loaded before the sheet is ever opened, or every row would
+  // show as unsaved on a fresh launch.
+  assert.match(read('../ios/Fuel/Sources/FuelApp.swift'), /await store\.loadLibrary\(\)/)
+})
+
+test('a finger landing on a food row can still scroll the page', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // A plain .gesture claimed the touch after 8pt in ANY direction, so starting a scroll
+  // on top of a logged item did nothing at all. Sharing the touch lets the scroll view
+  // keep its vertical pan while the row only reacts to horizontal movement.
+  const row = today.slice(today.indexOf('struct FoodEntryRow: View'), today.indexOf('\n/// The website\'s NUTRIENT_DISPLAY'))
+  assert.match(row, /\.simultaneousGesture\(swipeGesture\)/)
+  assert.doesNotMatch(row, /\.gesture\(swipeGesture\)/)
+  // The horizontal-dominance guard is what keeps that from opening rows mid-scroll.
+  assert.match(row, /abs\(value\.translation\.width\) > abs\(value\.translation\.height\) else \{ return \}/)
+})
+
+test('consumed is a themeable colour, not fixed ink', () => {
+  const theme = read('../ios/Fuel/Sources/DashboardTheme.swift')
+  assert.match(theme, /var consumed: UInt32/)
+  assert.match(theme, /private\(set\) var consumed: Color/)
+  assert.match(theme, /func setConsumed\(_ color: Color\)/)
+  assert.match(theme, /d\.set\(consumed\.hexString, forKey: "fuelDashConsumed"\)/)
+  assert.match(theme, /ColorPicker\("Consumed", selection: Binding\(/)
+  // Every preset carries one, and the swatch row shows it.
+  const presets = theme.slice(theme.indexOf('static let presets'), theme.indexOf('@MainActor'))
+  assert.equal((presets.match(/consumed: 0x/g) || []).length, 6, 'every preset needs a consumed colour')
+  assert.match(theme, /preset\.consumed, preset\.positive, preset\.negative/)
+  // A colour added after someone picked a preset must fall back to that preset's value,
+  // not to Default's, or one stripe of their palette silently changes scheme.
+  assert.match(theme, /DashboardPalette\.presets\.first \{ \$0\.name == resolvedName \} \?\? DashboardPalette\.presets\[0\]/)
+
+  // And it is actually used where intake is drawn.
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /BoxDef\(key: "consumed", color: theme\.consumed/)
+  assert.match(today, /Rectangle\(\)\.fill\(DashboardTheme\.shared\.consumed\)/)
+  assert.match(today, /foregroundStyle\(DashboardTheme\.shared\.consumed\)\.interpolationMethod\(\.stepEnd\)/)
 })

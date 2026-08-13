@@ -562,7 +562,7 @@ struct TodayView: View {
                 }
                 ForEach(eaten, id: \.0) { point in
                     LineMark(x: .value("Time", point.0), y: .value("kcal", point.1))
-                        .foregroundStyle(DashboardTheme.shared.primary).interpolationMethod(.stepEnd)
+                        .foregroundStyle(DashboardTheme.shared.consumed).interpolationMethod(.stepEnd)
                 }
             }
             .chartLegend(.hidden)
@@ -893,13 +893,23 @@ struct FoodEntryRow: View {
     private let actionWidth: CGFloat = 64
     private var revealWidth: CGFloat { actionWidth * 3 }
 
+    /// The saved meal this entry already exists as, if any — matched on the name it
+    /// would be saved under, so a meal saved from this food is recognised however it was
+    /// capitalised or spaced at the time.
+    private var savedAsMeal: SavedMeal? { store.savedMeal(matching: entry.food) }
+
     var body: some View {
         ZStack(alignment: .trailing) {
             actionsStrip
             row
                 .background(Palette.panel(scheme))
                 .offset(x: offset)
-                .gesture(swipeGesture)
+                // Simultaneous, not exclusive: a plain `.gesture` here claimed the touch
+                // as soon as it moved 8pt in any direction, so a finger that happened to
+                // land on a food row could not scroll the page vertically at all. Sharing
+                // the touch lets the scroll view keep its vertical pan while this only
+                // acts on a mostly-horizontal drag.
+                .simultaneousGesture(swipeGesture)
                 .onTapGesture { if offset != 0 { close() } }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -911,9 +921,19 @@ struct FoodEntryRow: View {
     private var actionsStrip: some View {
         HStack(spacing: 0) {
             actionButton("Edit", "pencil", .gray) { close(); onEdit() }
-            actionButton("Add", "bookmark.fill", DashboardTheme.shared.accent) {
-                close()
-                Task { await store.saveMeal(named: entry.food, fromEntryIDs: [entry.id]) }
+            // A filled bookmark and "Added" once this food is in the meal library, and
+            // tapping it there takes it back out — so the same control both states the
+            // fact and undoes it, rather than silently saving a second copy.
+            if let saved = savedAsMeal {
+                actionButton("Added", "bookmark.fill", DashboardTheme.shared.accent) {
+                    close()
+                    Task { await store.deleteSavedMeal(saved) }
+                }
+            } else {
+                actionButton("Add", "bookmark", DashboardTheme.shared.accent) {
+                    close()
+                    Task { await store.saveMeal(named: entry.food, fromEntryIDs: [entry.id]) }
+                }
             }
             actionButton("Delete", "trash", .red) {
                 close()
@@ -1423,7 +1443,7 @@ struct EnergySummaryBars: View {
         let theme = DashboardTheme.shared
         var defs = [
             BoxDef(key: "totalBurned", color: Palette.muted(scheme), label: "Total burned", value: total, tinted: false),
-            BoxDef(key: "consumed", color: Palette.ink(scheme), label: "Consumed", value: consumed, tinted: false),
+            BoxDef(key: "consumed", color: theme.consumed, label: "Consumed", value: consumed, tinted: false),
             BoxDef(key: "active", color: theme.secondary, label: "Active", value: active, tinted: false),
             BoxDef(key: "resting", color: theme.tertiary, label: "Resting", value: resting, tinted: false),
             BoxDef(key: "deficit", color: theme.primary, label: balanceWord, value: balanceAmount, tinted: true),
@@ -1487,7 +1507,7 @@ struct EnergySummaryBars: View {
                     let gapWidth = abs(total - consumed) / maxVal
                     ZStack(alignment: .leading) {
                         Capsule().fill(Palette.surface(scheme))
-                        Rectangle().fill(Palette.ink(scheme)).frame(width: max(0, w * consumed / maxVal))
+                        Rectangle().fill(DashboardTheme.shared.consumed).frame(width: max(0, w * consumed / maxVal))
                             .clipShape(Capsule())
                         if balanceAmount > 0 {
                             ZStack {

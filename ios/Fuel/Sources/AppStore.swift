@@ -503,6 +503,15 @@ final class AppStore {
         libraryError = failed.isEmpty ? nil : "Couldn't load your \(failed.joined(separator: " or "))."
     }
 
+    /// The saved meal a logged food already exists as, matched the same way the food
+    /// library dedups: case- and whitespace-insensitively, so "Greek  Yogurt" and "greek
+    /// yogurt" are recognised as the same saved meal.
+    func savedMeal(matching food: String?) -> SavedMeal? {
+        guard let food, !food.isEmpty else { return nil }
+        let key = FoodHistoryItem.key(food)
+        return savedMeals.first { FoodHistoryItem.key($0.name) == key }
+    }
+
     func logSavedMeal(_ meal: SavedMeal) async {
         do {
             let fix = await LocationSampler.shared.fixForLogging()

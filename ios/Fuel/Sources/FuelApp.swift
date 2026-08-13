@@ -29,6 +29,10 @@ struct FuelApp: App {
                     await store.load()
                     await store.loadEditableState()
                     await store.loadContext()
+                    // The dashboard marks which logged foods are already saved meals, so
+                    // the library has to be known before the food rows are first swiped
+                    // — not only once the library sheet has been opened.
+                    await store.loadLibrary()
                     if store.healthAuthorized { await BackgroundSync.enableHealthKitDelivery() }
                     await store.syncHealth(reason: "app open")
                     await LocationSampler.shared.captureIfDue()

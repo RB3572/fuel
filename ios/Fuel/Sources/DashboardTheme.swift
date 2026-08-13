@@ -19,22 +19,26 @@ struct DashboardPalette: Identifiable, Equatable {
     /// opposed colours, so one accent used for both would throw away that signal.
     var positive: UInt32
     var negative: UInt32
+    /// Calories eaten — the intake track on the energy bars and the Consumed box. It was
+    /// plain ink before, which reads as "text" rather than as a quantity next to the two
+    /// coloured burn tracks it is meant to be compared against.
+    var consumed: UInt32
 
     static let presets: [DashboardPalette] = [
         // The default, and what fuel.rishib.com uses: teal burn, coral active, amber
         // intake. First in the list because it is what a fresh install gets.
         DashboardPalette(name: "Default", primary: 0x2C7A7B, secondary: 0xE8674C, tertiary: 0x4FD1C5,
-                          positive: 0xF0876F, negative: 0x217F7F),
+                          positive: 0xF0876F, negative: 0x217F7F, consumed: 0xD69E2E),
         DashboardPalette(name: "Flame", primary: 0xF2531B, secondary: 0xEF8F4D, tertiary: 0x7D8FA3,
-                          positive: 0xF2531B, negative: 0x3F5A70),
+                          positive: 0xF2531B, negative: 0x3F5A70, consumed: 0x2B6CB0),
         DashboardPalette(name: "Ocean", primary: 0x1B6FF2, secondary: 0x35B4E0, tertiary: 0x7D93A8,
-                          positive: 0xE0603F, negative: 0x1B6FF2),
+                          positive: 0xE0603F, negative: 0x1B6FF2, consumed: 0xE0A32E),
         DashboardPalette(name: "Forest", primary: 0x1E8F4E, secondary: 0x8FBF3F, tertiary: 0x8FA391,
-                          positive: 0xD9541E, negative: 0x1E8F4E),
+                          positive: 0xD9541E, negative: 0x1E8F4E, consumed: 0xB7791F),
         DashboardPalette(name: "Berry", primary: 0xC0208A, secondary: 0xE0708F, tertiary: 0x9E8AA3,
-                          positive: 0xC0208A, negative: 0x5B4B8A),
+                          positive: 0xC0208A, negative: 0x5B4B8A, consumed: 0x2F855A),
         DashboardPalette(name: "Slate", primary: 0x3F3F3F, secondary: 0x8A8A85, tertiary: 0xB5B5B0,
-                          positive: 0x6E6E6E, negative: 0x2A2A2A),
+                          positive: 0x6E6E6E, negative: 0x2A2A2A, consumed: 0x1F1F1F),
     ]
 }
 
@@ -48,6 +52,7 @@ final class DashboardTheme {
     private(set) var tertiary: Color
     private(set) var positive: Color
     private(set) var negative: Color
+    private(set) var consumed: Color
     /// The matching preset's name, or nil once any one color has been hand-picked — so
     /// the presets list can show which one (if any) is currently active.
     private(set) var activePresetName: String?
@@ -63,6 +68,7 @@ final class DashboardTheme {
         tertiary = Color(hex: preset.tertiary)
         positive = Color(hex: preset.positive)
         negative = Color(hex: preset.negative)
+        consumed = Color(hex: preset.consumed)
         activePresetName = preset.name
         persist()
     }
@@ -72,10 +78,19 @@ final class DashboardTheme {
     func setTertiary(_ color: Color) { tertiary = color; activePresetName = nil; persist() }
     func setPositive(_ color: Color) { positive = color; activePresetName = nil; persist() }
     func setNegative(_ color: Color) { negative = color; activePresetName = nil; persist() }
+    func setConsumed(_ color: Color) { consumed = color; activePresetName = nil; persist() }
 
     private init() {
         let d = UserDefaults.standard
-        let fallback = DashboardPalette.presets[0]
+        // This palette shipped as "Website" before it became the default. Anyone who
+        // had picked it keeps their checkmark instead of the list looking unselected.
+        let savedName = d.string(forKey: "fuelDashPresetName")
+        let resolvedName = savedName == "Website" ? DashboardPalette.presets[0].name : savedName
+        // Fall back to the preset actually in use, not always to Default: a color added
+        // after someone chose "Ocean" has never been written to defaults, and answering
+        // with Default's version of it would drop one stripe of their palette back to a
+        // colour from a scheme they are not using.
+        let fallback = DashboardPalette.presets.first { $0.name == resolvedName } ?? DashboardPalette.presets[0]
         func stored(_ key: String, _ fallbackHex: UInt32) -> Color {
             Color(hex: d.string(forKey: key).flatMap { UInt32($0, radix: 16) } ?? fallbackHex)
         }
@@ -84,10 +99,8 @@ final class DashboardTheme {
         tertiary = stored("fuelDashTertiary", fallback.tertiary)
         positive = stored("fuelDashPositive", fallback.positive)
         negative = stored("fuelDashNegative", fallback.negative)
-        // This palette shipped as "Website" before it became the default. Anyone who
-        // had picked it keeps their checkmark instead of the list looking unselected.
-        let savedName = d.string(forKey: "fuelDashPresetName")
-        activePresetName = savedName == "Website" ? fallback.name : (savedName ?? fallback.name)
+        consumed = stored("fuelDashConsumed", fallback.consumed)
+        activePresetName = resolvedName ?? DashboardPalette.presets[0].name
     }
 
     private func persist() {
@@ -97,6 +110,7 @@ final class DashboardTheme {
         d.set(tertiary.hexString, forKey: "fuelDashTertiary")
         d.set(positive.hexString, forKey: "fuelDashPositive")
         d.set(negative.hexString, forKey: "fuelDashNegative")
+        d.set(consumed.hexString, forKey: "fuelDashConsumed")
         if let name = activePresetName { d.set(name, forKey: "fuelDashPresetName") }
         else { d.removeObject(forKey: "fuelDashPresetName") }
         WidgetPublisher.republishPalette()
@@ -130,7 +144,7 @@ struct DashboardColorsSheet: View {
                             HStack(spacing: 12) {
                                 HStack(spacing: 4) {
                                     ForEach(Array([preset.primary, preset.secondary, preset.tertiary,
-                                                   preset.positive, preset.negative].enumerated()), id: \.offset) { _, hex in
+                                                   preset.consumed, preset.positive, preset.negative].enumerated()), id: \.offset) { _, hex in
                                         Circle().fill(Color(hex: hex)).frame(width: 16, height: 16)
                                     }
                                 }
@@ -152,6 +166,8 @@ struct DashboardColorsSheet: View {
                         get: { theme.secondary }, set: { theme.setSecondary($0) }))
                     ColorPicker("Resting energy", selection: Binding(
                         get: { theme.tertiary }, set: { theme.setTertiary($0) }))
+                    ColorPicker("Consumed", selection: Binding(
+                        get: { theme.consumed }, set: { theme.setConsumed($0) }))
                 } header: {
                     Text("Custom")
                 } footer: {
