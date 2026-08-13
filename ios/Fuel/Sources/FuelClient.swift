@@ -291,7 +291,14 @@ struct FoodHistoryItem: Decodable, Identifiable, Hashable {
     var fiber: Double?
     var lastLoggedAt: String?
 
-    var id: String { description.lowercased() }
+    /// Case- and whitespace-insensitive, because this doubles as the SwiftUI list
+    /// identity: two spellings of one food reaching the same list would otherwise be
+    /// two rows sharing an id, which renders as a duplicate rather than as one entry.
+    var id: String { FoodHistoryItem.key(description) }
+
+    static func key(_ text: String) -> String {
+        text.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
 }
 
 /// The shared, global recipe bank — same rows the website's /recipes.html renders,

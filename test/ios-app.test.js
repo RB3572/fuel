@@ -929,7 +929,7 @@ test('swiping a food entry reveals three real buttons, not a menu behind a menu'
 test('building a meal suggests your own recent history ahead of the common-foods table', () => {
   const editor = read('../ios/Fuel/Sources/FoodLibraryView.swift')
   const body = editor.slice(editor.indexOf('struct MealItemEditor'))
-  assert.match(body, /store\.foodHistory\.filter/)
+  assert.match(body, /store\.foodHistory\s*\n?\s*\.filter/)
   const historyPos = body.indexOf('ForEach(historyMatches)')
   const commonPos = body.indexOf('ForEach(commonMatches)')
   assert.ok(historyPos > 0 && historyPos < commonPos, 'history suggestions must render before common foods')
@@ -1180,21 +1180,29 @@ test('the day-paging transition rasterizes into one layer while it animates, and
   assert.match(today, /private var pagingActive: Bool \{ pageAnimating \|\| pageDragOffset != 0 \}/)
 })
 
-test('the "return to Dashboard" button is a plain titled button, so it lays out as a full pill', () => {
+test('the "return to Today" button is a plain titled button, so it lays out as a full pill', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
   // Two earlier attempts — .buttonStyle(.bordered), then a custom Text+Capsule label —
   // both ended up as a circle with the word clipped: a toolbar item built from custom
   // label content is treated as icon-shaped and packed into a fixed round container.
   // A title-only Button is laid out as a capsule sized to its own text instead.
-  assert.match(today, /Button\("Dashboard"\) \{/)
+  assert.match(today, /Button\("Today"\) \{/)
   assert.match(today, /\.fixedSize\(\)/)
   const toolbar = today.slice(today.indexOf('.toolbar {'), today.indexOf('.refreshable'))
   assert.doesNotMatch(toolbar, /Capsule\(\)/, 'no hand-rolled capsule — let the system size the button')
-  assert.doesNotMatch(toolbar, /label: \{[\s\S]{0,200}Text\("Dashboard"\)/,
+  assert.doesNotMatch(toolbar, /label: \{[\s\S]{0,200}Text\("Today"\)/,
     'a custom label view is what caused the circular clipping')
+})
 
-  // And the main dashboard is titled "Dashboard", not "Today".
-  assert.match(today, /if store\.isViewingToday \{ return "Dashboard" \}/)
+test('the bottom tab is called Dashboard, while the page still titles the day it shows', () => {
+  // Two different labels for two different things: the tab bar names the destination,
+  // the navigation title names which day is on screen — so paging back to Yesterday
+  // renames the title without renaming the tab.
+  assert.match(read('../ios/Fuel/Sources/FuelApp.swift'),
+    /Tab\("Dashboard", systemImage: "flame\.fill", value: AppTab\.today\)/)
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /if store\.isViewingToday \{ return "Today" \}/)
+  assert.match(today, /if store\.dayOffset == 1 \{ return "Yesterday" \}/)
 })
 
 test('widgets never use informal "in/out" language — always Burned/Consumed', () => {
@@ -1257,4 +1265,34 @@ test('a failed library load says so instead of rendering as an empty list', () =
   // And loading is distinguishable from empty.
   assert.match(lib, /if store\.libraryLoading \{/)
   assert.match(lib, /Text\("Loading your history…"\)/)
+})
+
+test('food history is deduplicated, trimmed, and never offers a nutrition-less row', () => {
+  const meals = read('../api/_lib/meals.js')
+  const fn = meals.slice(meals.indexOf('export async function foodHistory'))
+  // Lowercasing alone left "Centrum Multivitamin Gummie " (trailing space) and
+  // "centrum multivitamin gummie" as two separate foods in one list.
+  assert.match(fn, /btrim\(regexp_replace\(description, '\\\\s\+', ' ', 'g'\)\) AS label/)
+  assert.match(fn, /PARTITION BY lower\(label\)/)
+  // Within a food, show the most recent row that actually has numbers — otherwise
+  // re-logging it without filling calories in blanks out what was already known.
+  assert.match(fn, /ORDER BY \(calories_kcal IS NOT NULL\) DESC, occurred_at DESC/)
+  // ...while the timestamp stays the true most recent, so ordering is still honest.
+  assert.match(fn, /max\(occurred_at\) OVER \(PARTITION BY lower\(label\)\) AS last_logged/)
+  assert.match(fn, /ORDER BY last_logged DESC/)
+  // A food with no nutrition at all cannot be re-logged as anything useful.
+  assert.match(fn, /calories_kcal IS NOT NULL OR protein_g IS NOT NULL/)
+
+  // The client's list identity is normalised the same way, so even an older server
+  // deployment cannot produce two rows sharing a SwiftUI id.
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  assert.match(client, /static func key\(_ text: String\) -> String/)
+  assert.match(client, /var id: String \{ FoodHistoryItem\.key\(description\) \}/)
+
+  const lib = read('../ios/Fuel/Sources/FoodLibraryView.swift')
+  assert.match(lib, /seen\.insert\(key\)\.inserted/)
+  // The meal-item editor renders history and common foods back to back, so a food in
+  // both showed up twice with two different sets of numbers.
+  assert.match(lib, /let alreadyOffered = Set\(historyMatches\.map \{ FoodHistoryItem\.key\(\$0\.description\) \}\)/)
+  assert.match(lib, /\.filter \{ !alreadyOffered\.contains\(FoodHistoryItem\.key\(\$0\.name\)\) \}/)
 })

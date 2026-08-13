@@ -195,29 +195,53 @@ export async function foodHistory(userId, { limit = 100, days = 180 } = {}) {
   const db = sql()
   const window = Math.min(730, Math.max(1, Number(days) || 180))
   const cap = Math.min(300, Math.max(1, Number(limit) || 100))
+  // Three things this has to get right, all of which read as "the history list is
+  // buggy" when it doesn't:
+  //   - The dedup key is trimmed and has runs of whitespace collapsed, not just
+  //     lowercased. "Centrum Multivitamin Gummie " and "centrum multivitamin gummie"
+  //     are the same food and must not both appear.
+  //   - Within a food, the row shown is the most recent one that actually carries
+  //     nutrition, so re-logging something without filling calories in cannot blank out
+  //     the good numbers already recorded for it. `last_logged` is still the true most
+  //     recent time, so ordering stays honest.
+  //   - A food with no nutrition at all anywhere is dropped: it can't be re-logged as
+  //     anything useful, and shows as a bare "— kcal" row.
   const rows = await db`
-    SELECT DISTINCT ON (lower(description))
-      description, portion, meal, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, occurred_at
-    FROM food_entries
-    WHERE user_id = ${userId}
-      AND description IS NOT NULL AND description <> ''
-      AND occurred_at > now() - (${window} * interval '1 day')
-    ORDER BY lower(description), occurred_at DESC
+    WITH tidy AS (
+      SELECT
+        btrim(regexp_replace(description, '\\s+', ' ', 'g')) AS label,
+        portion, meal, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, occurred_at
+      FROM food_entries
+      WHERE user_id = ${userId}
+        AND description IS NOT NULL AND btrim(description) <> ''
+        AND occurred_at > now() - (${window} * interval '1 day')
+    ),
+    ranked AS (
+      SELECT *,
+        max(occurred_at) OVER (PARTITION BY lower(label)) AS last_logged,
+        row_number() OVER (
+          PARTITION BY lower(label)
+          ORDER BY (calories_kcal IS NOT NULL) DESC, occurred_at DESC
+        ) AS row_num
+      FROM tidy
+    )
+    SELECT label, portion, meal, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, last_logged
+    FROM ranked
+    WHERE row_num = 1
+      AND (calories_kcal IS NOT NULL OR protein_g IS NOT NULL
+           OR carbs_g IS NOT NULL OR fat_g IS NOT NULL)
+    ORDER BY last_logged DESC
+    LIMIT ${cap}
   `
-  // Postgres forces DISTINCT ON to order by its key first, so the recency sort and the
-  // limit both have to happen here rather than in the query.
-  return rows
-    .map((row) => ({
-      description: row.description,
-      portion: row.portion || null,
-      meal: row.meal || null,
-      calories: number(row.calories_kcal),
-      protein: number(row.protein_g),
-      carbs: number(row.carbs_g),
-      fat: number(row.fat_g),
-      fiber: number(row.fiber_g),
-      lastLoggedAt: new Date(row.occurred_at).toISOString(),
-    }))
-    .sort((a, b) => (a.lastLoggedAt < b.lastLoggedAt ? 1 : -1))
-    .slice(0, cap)
+  return rows.map((row) => ({
+    description: row.label,
+    portion: row.portion || null,
+    meal: row.meal || null,
+    calories: number(row.calories_kcal),
+    protein: number(row.protein_g),
+    carbs: number(row.carbs_g),
+    fat: number(row.fat_g),
+    fiber: number(row.fiber_g),
+    lastLoggedAt: new Date(row.last_logged).toISOString(),
+  }))
 }

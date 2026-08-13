@@ -80,9 +80,10 @@ struct TodayView: View {
         }
     }
 
-    /// "Dashboard", "Yesterday", or "Mon Aug 11" — what the day-paging swipe landed on.
+    /// "Today", "Yesterday", or "Mon Aug 11" — what the day-paging swipe landed on. The
+    /// tab itself is called Dashboard; this title names the day being shown.
     private var pageTitle: String {
-        if store.isViewingToday { return "Dashboard" }
+        if store.isViewingToday { return "Today" }
         if store.dayOffset == 1 { return "Yesterday" }
         guard let date = store.viewingDate else { return "Today" }
         return NetBalanceTrendChart.label(for: date)
@@ -202,7 +203,7 @@ struct TodayView: View {
                     // is laid out as a capsule sized to its own text, which is the shape
                     // this wants; .fixedSize() then guarantees it is never squeezed.
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Dashboard") {
+                        Button("Today") {
                             withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() }
                         }
                         .fixedSize()

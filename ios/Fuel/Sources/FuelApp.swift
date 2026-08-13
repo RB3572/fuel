@@ -68,7 +68,7 @@ struct RootView: View {
             SetupView()
         } else {
             TabView(selection: $tab) {
-                Tab("Today", systemImage: "flame.fill", value: AppTab.today) { TodayView() }
+                Tab("Dashboard", systemImage: "flame.fill", value: AppTab.today) { TodayView() }
                 Tab("Trends", systemImage: "chart.xyaxis.line", value: AppTab.trends) { TrendsView() }
                 Tab("Log", systemImage: "camera.fill", value: AppTab.log) { CameraLogView() }
                 Tab("Coach", systemImage: "sparkles", value: AppTab.coach) { CoachView(onBack: { tab = .today }) }

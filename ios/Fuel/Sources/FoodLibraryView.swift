@@ -56,10 +56,15 @@ struct FoodLibraryView: View {
         // Anything already saved as a meal is left out: the same food appearing twice,
         // once as a meal and once as history, reads as a duplicate rather than as two
         // ways in.
-        let saved = Set(store.savedMeals.map { $0.name.lowercased() })
+        let saved = Set(store.savedMeals.map { FoodHistoryItem.key($0.name) })
+        var seen = Set<String>()
         let matches = store.foodHistory.filter {
-            !saved.contains($0.description.lowercased())
-                && (query.isEmpty || $0.description.lowercased().contains(query))
+            let key = FoodHistoryItem.key($0.description)
+            guard !saved.contains(key), query.isEmpty || $0.description.lowercased().contains(query) else { return false }
+            // Belt and braces on top of the server's own dedup: the app can be talking
+            // to an older deployment, and a repeated row here is exactly the "it loads
+            // some things twice" symptom.
+            return seen.insert(key).inserted
         }
         return query.isEmpty ? Array(matches.prefix(Self.historyBrowseLimit)) : matches
     }
@@ -363,9 +368,20 @@ struct MealItemEditor: View {
 
     private var historyMatches: [FoodHistoryItem] {
         guard query.count >= 2 else { return [] }
-        return Array(store.foodHistory.filter { $0.description.lowercased().contains(query) }.prefix(4))
+        var seen = Set<String>()
+        return Array(store.foodHistory
+            .filter { $0.description.lowercased().contains(query) && seen.insert(FoodHistoryItem.key($0.description)).inserted }
+            .prefix(4))
     }
-    private var commonMatches: [CommonFood] { CommonFoods.matches(description, limit: 4) }
+
+    /// The built-in table minus anything the history shelf above is already offering.
+    /// Both lists render one after the other, so a food in both — now that history
+    /// actually loads — appeared twice in a row, with two different sets of numbers.
+    private var commonMatches: [CommonFood] {
+        let alreadyOffered = Set(historyMatches.map { FoodHistoryItem.key($0.description) })
+        return CommonFoods.matches(description, limit: 4)
+            .filter { !alreadyOffered.contains(FoodHistoryItem.key($0.name)) }
+    }
 
     var body: some View {
         NavigationStack {
