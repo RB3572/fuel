@@ -670,10 +670,15 @@ struct TodayView: View {
     }
 }
 
-/// One logged entry: swipe left to reveal Delete, and a persistent "…" for the actions
-/// that aren't destructive — Edit, and turning this one entry into a reusable meal. A
-/// standalone struct rather than inline in the ForEach because the swipe needs its own
-/// per-row drag state, which only works with real view identity, not a closure.
+/// One logged entry: swipe left to reveal three real buttons — Edit, Add as a meal,
+/// Delete — each its own rectangle, the way Mail's swipe actions work. No menu, no
+/// second tap to get a list of choices; the swipe already is the menu. A standalone
+/// struct rather than inline in the ForEach because the swipe needs its own per-row
+/// drag state, which only works with real view identity, not a closure.
+///
+/// The row's own background is the *panel's* color, not a card-toned "surface" color —
+/// using surface here was the bug that made every row read as a smaller card nested
+/// inside the section's card, when it should look like one seamless list.
 struct FoodEntryRow: View {
     @Environment(AppStore.self) private var store
     @Environment(\.colorScheme) private var scheme
@@ -685,39 +690,53 @@ struct FoodEntryRow: View {
     var onEdit: () -> Void
 
     @State private var offset: CGFloat = 0
-    @State private var confirmingDelete = false
     @GestureState private var dragTranslation: CGFloat = 0
-    private let revealWidth: CGFloat = 74
+    private let actionWidth: CGFloat = 64
+    private var revealWidth: CGFloat { actionWidth * 3 }
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            deleteButton
+            actionsStrip
             row
-                .background(Palette.surface(scheme))
+                .background(Palette.panel(scheme))
                 .offset(x: min(0, offset + dragTranslation))
                 .gesture(swipeGesture)
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .confirmationDialog("Delete this entry?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                withAnimation(.snappy) { offset = 0 }
+    }
+
+    /// Ordered so the button nearest the row's edge — the one a short swipe reveals
+    /// first — is Delete, matching the platform convention (Mail, Messages) where the
+    /// destructive action sits closest and everything else needs a fuller swipe.
+    private var actionsStrip: some View {
+        HStack(spacing: 0) {
+            actionButton("Edit", "pencil", .gray) { close(); onEdit() }
+            actionButton("Add", "bookmark.fill", DashboardTheme.shared.accent) {
+                close()
+                Task { await store.saveMeal(named: entry.food, fromEntryIDs: [entry.id]) }
+            }
+            actionButton("Delete", "trash", .red) {
+                close()
                 Task { await store.deleteFood(entry) }
             }
         }
     }
 
-    private var deleteButton: some View {
-        Button(role: .destructive) { confirmingDelete = true } label: {
+    private func actionButton(_ title: String, _ systemImage: String, _ color: Color,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             VStack(spacing: 3) {
-                Image(systemName: "trash")
-                Text("Delete").font(.system(size: 10))
+                Image(systemName: systemImage)
+                Text(title).font(.system(size: 10))
             }
-            .frame(width: revealWidth)
+            .frame(width: actionWidth)
             .frame(maxHeight: .infinity)
             .foregroundStyle(.white)
         }
-        .background(Color.red)
+        .background(color)
     }
+
+    private func close() { withAnimation(.snappy) { offset = 0 } }
 
     private var swipeGesture: some Gesture {
         DragGesture(minimumDistance: 16)
@@ -757,19 +776,6 @@ struct FoodEntryRow: View {
                     .font(.system(size: 14, weight: .medium, design: .rounded))
                 Text("\(Format.number(entry.protein, decimals: 1))p · \(Format.number(entry.carbs, decimals: 1))c · \(Format.number(entry.fat, decimals: 1))f · \(Format.number(entry.fiber, decimals: 1))fib")
                     .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
-            }
-            if !selecting {
-                Menu {
-                    Button { onEdit() } label: { Label("Edit", systemImage: "pencil") }
-                    Button {
-                        Task { await store.saveMeal(named: entry.food, fromEntryIDs: [entry.id]) }
-                    } label: { Label("Add as a meal", systemImage: "bookmark") }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .foregroundStyle(Palette.muted(scheme))
-                        .frame(width: 26, height: 26)
-                        .contentShape(Rectangle())
-                }
             }
         }
         .padding(.vertical, 6)

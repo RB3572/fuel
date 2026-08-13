@@ -881,13 +881,25 @@ test('a Lock Screen control opens the app via a universal link, not a custom sch
   assert.match(app, /url\.host == "fuel\.rishib\.com", url\.path == "\/open"/)
 })
 
-test('a food entry can be swiped to delete, with edit and add-as-meal behind a menu', () => {
+test('swiping a food entry reveals three real buttons, not a menu behind a menu', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
-  assert.match(today, /struct FoodEntryRow: View/)
-  assert.match(today, /DragGesture\(minimumDistance: 16\)/)
-  assert.match(today, /Label\("Edit", systemImage: "pencil"\)/)
-  assert.match(today, /Label\("Add as a meal", systemImage: "bookmark"\)/)
+  const rowStart = today.indexOf('struct FoodEntryRow: View')
+  const rowEnd = today.indexOf('\n/// The website\'s NUTRIENT_DISPLAY')
+  const row = today.slice(rowStart, rowEnd > rowStart ? rowEnd : undefined)
+  assert.match(row, /DragGesture\(minimumDistance: 16\)/)
+  // Each action is its own rectangle in the revealed strip — no Menu anywhere in the
+  // row, which would mean a tap-to-reveal list sitting behind the swipe instead of
+  // being replaced by it.
+  assert.doesNotMatch(row, /\bMenu\s*\{/)
+  assert.doesNotMatch(row, /Image\(systemName: "ellipsis"\)/)
+  assert.match(today, /actionButton\("Edit", "pencil"/)
+  assert.match(today, /actionButton\("Add", "bookmark\.fill"/)
+  assert.match(today, /actionButton\("Delete", "trash", \.red\)/)
   assert.match(today, /store\.saveMeal\(named: entry\.food, fromEntryIDs: \[entry\.id\]\)/)
+  // The row's background matches the panel it sits in, not the separate "surface" tone
+  // — that mismatch was what made every row read as its own smaller card.
+  assert.match(today, /\.background\(Palette\.panel\(scheme\)\)/)
+  assert.doesNotMatch(today, /row\s*\n\s*\.background\(Palette\.surface/)
   // The row keeps its scroll-to id, or the "jump to what I just logged" feature breaks.
   assert.match(today, /FoodEntryRow\(entry: entry,[\s\S]{0,400}\n\s*\.id\(entry\.id\)/)
   // The old always-visible Edit/Delete button pair is gone, not left as a duplicate.
