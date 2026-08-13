@@ -906,7 +906,7 @@ test('swiping a food entry reveals three real buttons, not a menu behind a menu'
   const rowStart = today.indexOf('struct FoodEntryRow: View')
   const rowEnd = today.indexOf('\n/// The website\'s NUTRIENT_DISPLAY')
   const row = today.slice(rowStart, rowEnd > rowStart ? rowEnd : undefined)
-  assert.match(row, /DragGesture\(minimumDistance: 8\)/)
+  assert.match(row, /HorizontalPan \{ translation in/)
   // Each action is its own rectangle in the revealed strip — no Menu anywhere in the
   // row, which would mean a tap-to-reveal list sitting behind the swipe instead of
   // being replaced by it.
@@ -962,8 +962,11 @@ test('the food-row swipe is driven by one committed state, not a GestureState ra
   // onEnded's withAnimation was setting the committed offset, so the row visibly
   // jumped to zero for a frame before animating to where it was headed.
   assert.doesNotMatch(row, /@GestureState private var offset/)
-  assert.match(row, /\.onChanged \{ value in/)
-  assert.match(row, /predictedEndTranslation/)
+  assert.match(row, /offset = max\(-revealWidth, min\(0, dragStartOffset \+ translation\)\)/)
+  // A flick still opens or closes past the halfway point, now from the pan's own
+  // release velocity rather than DragGesture's predictedEndTranslation.
+  assert.match(row, /let settled = dragStartOffset \+ predicted/)
+  assert.match(read('../ios/Fuel/Sources/HorizontalPan.swift'), /translation \+ velocity \* 0\.25/)
 })
 
 test('the food-consumed selection bar is Select-first and closes when you tap elsewhere', () => {
@@ -1410,14 +1413,25 @@ test('a food already saved as a meal shows a filled bookmark that removes it aga
 
 test('a finger landing on a food row can still scroll the page', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
-  // A plain .gesture claimed the touch after 8pt in ANY direction, so starting a scroll
-  // on top of a logged item did nothing at all. Sharing the touch lets the scroll view
-  // keep its vertical pan while the row only reacts to horizontal movement.
   const row = today.slice(today.indexOf('struct FoodEntryRow: View'), today.indexOf('\n/// The website\'s NUTRIENT_DISPLAY'))
-  assert.match(row, /\.simultaneousGesture\(swipeGesture\)/)
-  assert.doesNotMatch(row, /\.gesture\(swipeGesture\)/)
-  // The horizontal-dominance guard is what keeps that from opening rows mid-scroll.
-  assert.match(row, /abs\(value\.translation\.width\) > abs\(value\.translation\.height\) else \{ return \}/)
+  // The row must not carry a SwiftUI DragGesture at all. Plain or simultaneous, one
+  // takes the touch as soon as it passes its minimum distance in ANY direction, which
+  // made every logged food a spot where the page refused to scroll. Filtering by
+  // direction inside onChanged is too late — recognition has already happened.
+  assert.doesNotMatch(row, /DragGesture\(/,
+    'a DragGesture here claims vertical touches from the scroll view')
+  assert.match(row, /\.gesture\(swipeGesture\)/)
+  assert.match(row, /private var swipeGesture: HorizontalPan/)
+
+  // The fix lives in the recognizer: UIKit asks before recognising, so a mostly-
+  // vertical drag can be declined outright and left to the scroll view.
+  const pan = read('../ios/Fuel/Sources/HorizontalPan.swift')
+  assert.match(pan, /struct HorizontalPan: UIGestureRecognizerRepresentable/)
+  assert.match(pan, /func gestureRecognizerShouldBegin/)
+  assert.match(pan, /return abs\(velocity\.x\) > abs\(velocity\.y\)/)
+  assert.match(pan, /shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer\) -> Bool \{ true \}/)
+  // It has to be in the app target, not just on disk.
+  assert.match(read('../ios/Fuel/project.yml'), /path: Sources/)
 })
 
 test('consumed is a themeable colour, not fixed ink', () => {

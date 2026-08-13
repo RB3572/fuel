@@ -904,12 +904,12 @@ struct FoodEntryRow: View {
             row
                 .background(Palette.panel(scheme))
                 .offset(x: offset)
-                // Simultaneous, not exclusive: a plain `.gesture` here claimed the touch
-                // as soon as it moved 8pt in any direction, so a finger that happened to
-                // land on a food row could not scroll the page vertically at all. Sharing
-                // the touch lets the scroll view keep its vertical pan while this only
-                // acts on a mostly-horizontal drag.
-                .simultaneousGesture(swipeGesture)
+                // A UIKit pan rather than a SwiftUI DragGesture, because only the former
+                // can decline a touch before recognising it. A DragGesture — plain or
+                // simultaneous — takes the touch the moment it moves far enough in any
+                // direction, which turned every food row into a spot where the page
+                // would not scroll. See HorizontalPan.
+                .gesture(swipeGesture)
                 .onTapGesture { if offset != 0 { close() } }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -958,32 +958,30 @@ struct FoodEntryRow: View {
 
     private func close() { withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) { offset = 0 } }
 
-    private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 8)
-            .onChanged { value in
-                guard !selecting else { return }
-                // Only a mostly-horizontal drag counts, so scrolling the page past this
-                // row does not also nudge it open.
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                if !isDragging { isDragging = true; dragStartOffset = offset; rowSwiping = true }
-                // The row follows the finger exactly, clamped to the reveal strip —
-                // no animation here, so there is zero lag between touch and motion.
-                offset = max(-revealWidth, min(0, dragStartOffset + value.translation.width))
+    /// Only ever fires for drags already judged horizontal — a vertical one is declined
+    /// before recognition and left to the scroll view, so this row is not a dead spot on
+    /// the page. See HorizontalPan.
+    private var swipeGesture: HorizontalPan {
+        HorizontalPan { translation in
+            guard !selecting else { return }
+            if !isDragging { isDragging = true; dragStartOffset = offset; rowSwiping = true }
+            // The row follows the finger exactly, clamped to the reveal strip — no
+            // animation here, so there is zero lag between touch and motion.
+            offset = max(-revealWidth, min(0, dragStartOffset + translation))
+        } onEnded: { _, predicted in
+            guard isDragging else { return }
+            isDragging = false
+            rowSwiping = false
+            guard !selecting else { return }
+            // A fast flick opens or closes it even short of the halfway point: `predicted`
+            // is where the drag would land if it kept going at its release velocity,
+            // which is what makes a quick swipe feel decisive instead of requiring a
+            // full, deliberate drag every time.
+            let settled = dragStartOffset + predicted
+            withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
+                offset = settled < -revealWidth / 2 ? -revealWidth : 0
             }
-            .onEnded { value in
-                guard isDragging else { return }
-                isDragging = false
-                rowSwiping = false
-                guard !selecting else { return }
-                // A fast flick opens or closes it even short of the halfway point —
-                // predictedEndTranslation is where the drag would land if it kept
-                // going at its release velocity, which is what makes a quick swipe
-                // feel decisive instead of requiring a full, deliberate drag every time.
-                let settled = dragStartOffset + value.predictedEndTranslation.width
-                withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
-                    offset = settled < -revealWidth / 2 ? -revealWidth : 0
-                }
-            }
+        }
     }
 
     private var row: some View {
