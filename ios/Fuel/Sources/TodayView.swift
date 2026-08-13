@@ -713,10 +713,10 @@ struct TodayView: View {
                 Divider().opacity(0.4)
             }
 
-            // The AI fill only ever operates on today's queue, so the affordance for it
-            // only makes sense while today is what's on screen — on a past day it would
-            // show a count here and then silently fill a different day's entries.
-            if store.isViewingToday, !missing.isEmpty {
+            // Shown on whatever day is open, because the fill now works on that day.
+            // Older days are where blank entries actually accumulate — they are the ones
+            // you are no longer around to notice and correct at the time.
+            if !missing.isEmpty {
                 HStack(spacing: 10) {
                     Text("\(missing.count) \(missing.count == 1 ? "entry is" : "entries are") missing nutrition detail.")
                         .font(.caption).foregroundStyle(Palette.muted(scheme))

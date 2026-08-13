@@ -135,6 +135,9 @@ final class AppStore {
         } catch {
             self.error = error.localizedDescription
         }
+        // Whatever prompted the reload may have changed the day being looked at, and
+        // that day is served from a cache the dashboard fetch does not touch.
+        await refreshViewingDay()
     }
 
     /// Layout and goals ride alongside the dashboard rather than blocking it — a slow
@@ -423,6 +426,16 @@ final class AppStore {
     /// Fetches whatever the current `dayOffset` is missing. Today needs nothing — its
     /// food, workouts and supplements are already on the dashboard payload — so this
     /// only ever calls the network for a day actually being paged back to.
+    /// Drops the cached copy of the day on screen and fetches it again. Every mutation
+    /// path already calls `load()`, which refreshes the dashboard — but a past day is
+    /// served from `dayDetailCache`, so without this an edit, a delete or an AI fill on
+    /// an older day would appear to do nothing at all until you paged away and back.
+    func refreshViewingDay() async {
+        guard !isViewingToday, let date = viewingDate else { return }
+        dayDetailCache[date] = nil
+        await loadViewingDay()
+    }
+
     func loadViewingDay() async {
         guard !isViewingToday, let date = viewingDate, dayDetailCache[date] == nil else { return }
         dayDetailLoading = true
@@ -611,8 +624,12 @@ final class AppStore {
     /// Fills missing macros for today's food with the on-device model, one entry at a
     /// time. No quota to run into, so there is no batching and no backoff — the reason
     /// the web version needed both.
+    /// Fills whichever day is on screen, not today specifically. Reading `today` here is
+    /// what forced the affordance to be hidden on past days, which left older entries
+    /// showing as permanently blank rows with no way to resolve them.
     func fillMissingNutrition(progress: @escaping (Int, Int) -> Void) async {
-        guard let entries = dashboard?.today.foodEntries.filter({ $0.needsNutrition }), !entries.isEmpty else { return }
+        let entries = viewingFoodEntries.filter { $0.needsNutrition }
+        guard !entries.isEmpty else { return }
         var done = 0
         for entry in entries {
             progress(done, entries.count)

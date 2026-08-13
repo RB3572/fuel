@@ -27,9 +27,11 @@ export async function getDayDetail(userId, date) {
     db`SELECT f.*, COALESCE(p.label, p.suggested_label) AS place_label
        FROM food_entries f
        LEFT JOIN user_places p ON p.id = f.place_id AND p.user_id = f.user_id
-       WHERE f.user_id = ${userId} AND (f.occurred_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date`,
+       WHERE f.user_id = ${userId} AND (f.occurred_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date
+       ORDER BY f.occurred_at ASC`,
     db`SELECT * FROM supplements
-       WHERE user_id = ${userId} AND (occurred_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date`,
+       WHERE user_id = ${userId} AND (occurred_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date
+       ORDER BY occurred_at ASC`,
     db`SELECT hk_uuid, activity_type, start_at, end_at, duration_s, active_kcal, distance_m, average_heart_rate_bpm
        FROM hk_workouts
        WHERE user_id = ${userId} AND (start_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date

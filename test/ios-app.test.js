@@ -1296,3 +1296,34 @@ test('food history is deduplicated, trimmed, and never offers a nutrition-less r
   assert.match(lib, /let alreadyOffered = Set\(historyMatches\.map \{ FoodHistoryItem\.key\(\$0\.description\) \}\)/)
   assert.match(lib, /\.filter \{ !alreadyOffered\.contains\(FoodHistoryItem\.key\(\$0\.name\)\) \}/)
 })
+
+test('a past day\'s blank entries can be filled, and the day refreshes to show it', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  // Reading today's entries here is what forced the fill affordance to be hidden on
+  // older days — which is exactly where blank entries pile up, since nobody is around
+  // to notice them at log time.
+  const fill = store.slice(store.indexOf('func fillMissingNutrition'), store.indexOf('// MARK: - Coach'))
+  assert.match(fill, /let entries = viewingFoodEntries\.filter \{ \$0\.needsNutrition \}/)
+  assert.doesNotMatch(fill, /dashboard\?\.today\.foodEntries/)
+
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /if !missing\.isEmpty \{/)
+  assert.doesNotMatch(today, /if store\.isViewingToday, !missing\.isEmpty/)
+
+  // A past day is served from dayDetailCache, which a dashboard reload never touches —
+  // so an edit, a delete or a fill would appear to do nothing until you paged away.
+  assert.match(store, /func refreshViewingDay\(\) async \{/)
+  assert.match(store, /dayDetailCache\[date\] = nil/)
+  const load = store.slice(store.indexOf('func load() async'), store.indexOf('func loadEditableState'))
+  assert.match(load, /await refreshViewingDay\(\)/)
+})
+
+test('a past day\'s entries come back in the order they were eaten', () => {
+  // getDayDetail had no ORDER BY at all, so an older day's food and supplements arrived
+  // in whatever order the rows happened to come out of Postgres.
+  const dash = read('../api/_lib/neon-dashboard.js')
+  const fn = dash.slice(dash.indexOf('export async function getDayDetail'), dash.indexOf('export async function getNeonDashboard'))
+  assert.match(fn, /f\.occurred_at AT TIME ZONE[\s\S]*?ORDER BY f\.occurred_at ASC/)
+  assert.match(fn, /FROM supplements[\s\S]*?ORDER BY occurred_at ASC/)
+  assert.match(fn, /FROM hk_workouts[\s\S]*?ORDER BY start_at ASC/)
+})
