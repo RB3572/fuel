@@ -787,19 +787,35 @@ test('a logged meal can be tagged with where it was eaten', () => {
   assert.match(sampler, /status == \.authorizedWhenInUse \|\| status == \.authorizedAlways/)
 })
 
-test('the log library is one menu over meals, history and common foods', () => {
+test('the log library is three tabs — history, foods, and my meals — not one long list', () => {
   const lib = read('../ios/Fuel/Sources/FoodLibraryView.swift')
-  // The user's own meals come first — that is the whole point of saving them.
-  const order = ['My meals', 'Recently logged'].map(s => lib.indexOf(s))
-  assert.ok(order[0] > 0 && order[0] < order[1], 'saved meals must precede history')
+  assert.match(lib, /private enum LibraryTab: String, CaseIterable \{/)
+  assert.match(lib, /case history = "History"/)
+  assert.match(lib, /case foods = "Foods"/)
+  assert.match(lib, /case meals = "My meals"/)
+  assert.match(lib, /\.pickerStyle\(\.segmented\)/)
+  assert.match(lib, /case \.history: historyTab/)
+  assert.match(lib, /case \.foods: foodsTab/)
+  assert.match(lib, /case \.meals: mealsTab/)
   assert.match(lib, /CommonFoods\.groups/)
-  // One search box covers all three shelves.
-  assert.match(lib, /\.searchable\(text: \$search/)
+  // One search box, contextual to whichever tab is active.
+  assert.match(lib, /\.searchable\(text: \$search, prompt: searchPrompt\)/)
   for (const shelf of ['meals', 'history', 'common']) {
     assert.match(lib, new RegExp(`private var ${shelf}: \\[`), `${shelf} shelf must filter on the query`)
   }
+  // History is capped to a recent handful while browsing — a bottomless "everything
+  // you've ever logged" list defeats the point of "what did I just eat" — but a search
+  // lifts the cap so a real lookup isn't truncated.
+  assert.match(lib, /private static let historyBrowseLimit = 20/)
+  assert.match(lib, /query\.isEmpty \? Array\(matches\.prefix\(Self\.historyBrowseLimit\)\) : matches/)
+
   // And the old common-foods-only picker is gone rather than left as a second door.
-  assert.doesNotMatch(read('../ios/Fuel/Sources/CameraLogView.swift'), /CommonFoodPicker/)
+  const camera = read('../ios/Fuel/Sources/CameraLogView.swift')
+  assert.doesNotMatch(camera, /CommonFoodPicker/)
+  // The library entry point is its own full-width card, not a small text link buried
+  // inside the manual-entry form.
+  assert.match(camera, /private var libraryCard: some View/)
+  assert.match(camera, /Text\("Log from my library"\)\.font\(\.system\(size: 16, weight: \.semibold\)\)/)
 })
 
 test('notifications are opt-in, Coach-only, and never fire in the foreground', () => {
@@ -1115,7 +1131,7 @@ test('day-paging carries the outgoing day off-screen and slides the new one in',
   // with a plain, clearly-labelled button in the same toolbar slot (already above the
   // date, since the date is the large title below the nav bar row).
   assert.doesNotMatch(today, /arrow\.uturn\.backward/)
-  assert.match(today, /Button\("Today"\) \{ withAnimation\(\.easeInOut\(duration: 0\.22\)\) \{ store\.resetToToday\(\) \} \}/)
+  assert.match(today, /withAnimation\(\.easeInOut\(duration: 0\.22\)\) \{ store\.resetToToday\(\) \} \}/)
 })
 
 test('the Trends axis pickers sit over their own axis, with the legend below the chart', () => {
@@ -1143,4 +1159,28 @@ test('the compare bar\'s dot and tick sit centered on the bar line, not above it
   assert.doesNotMatch(bar, /y: -3/)
   assert.match(bar, /\.offset\(x: pos\(ref\.p50\) - 1\)/)
   assert.match(bar, /\.offset\(x: pos\(value\) - 5\.5\)/)
+})
+
+test('the day-paging transition rasterizes into one layer while it animates, and only then', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // Sliding the full card stack (charts included) with a live per-frame offset re-runs
+  // layout across every descendant on each touch delta unless it's composited into a
+  // single bitmap first — that per-frame cost was the actual jank, not the animation
+  // curve. drawingGroup() is applied only while a transition is actually in flight so
+  // idle scrolling and interaction keep native, non-rasterized rendering.
+  assert.match(today, /struct RasterizeWhilePaging: ViewModifier/)
+  const modifier = today.slice(today.indexOf('private struct RasterizeWhilePaging'))
+  assert.match(modifier.slice(0, 400), /content\.compositingGroup\(\)\.drawingGroup\(\)/)
+  assert.match(today, /\.modifier\(RasterizeWhilePaging\(active: pagingActive\)\)/)
+  assert.match(today, /private var pagingActive: Bool \{ pageAnimating \|\| pageDragOffset != 0 \}/)
+})
+
+test('the "return to Today" button is a labelled pill, not a bare icon that reads as a circle', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // .buttonStyle(.bordered) on this short a label collapsed to a circle around the
+  // text instead of a pill sized to fit it — an explicit Capsule background with real
+  // horizontal padding is what actually guarantees the elongated shape.
+  assert.doesNotMatch(today, /\.buttonStyle\(\.bordered\)\s*\n\s*\.tint\(DashboardTheme\.shared\.accent\)/)
+  assert.match(today, /\.background\(Capsule\(\)\.fill\(DashboardTheme\.shared\.accent\.opacity\(0\.15\)\)\)/)
+  assert.match(today, /\.padding\(\.horizontal, 14\)/)
 })

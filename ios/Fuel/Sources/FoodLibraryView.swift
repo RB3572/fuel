@@ -1,15 +1,15 @@
 import SwiftUI
 
-// One place to log something you have eaten before. Three shelves, in the order a person
+// One place to log something you have eaten before. Three tabs, in the order a person
 // actually reaches for them:
 //
-//   My meals   — things they built and named, so these come first and stay first.
-//   Recent     — everything they have logged before, deduplicated, newest first.
-//   Common     — the built-in USDA table, for the first week before the other two fill.
+//   History  — everything they have logged before, deduplicated, newest first.
+//   Foods    — the built-in USDA table, grouped fruit/veggies/grains/protein/etc.
+//   My meals — things they built and named.
 //
-// These were nearly three separate menus. They are one because the question is always
-// the same — "what did I eat?" — and making someone guess which of three lists holds the
-// answer is a worse experience than one list with headings.
+// These used to be one long list with headings; that read fine with a handful of items
+// each, but history and the common-foods table both run long, and scrolling past one to
+// reach the other got tedious. Tabs let each shelf be exactly as long as it needs to be.
 
 /// What the picker hands back. The caller decides whether to log it directly or drop it
 /// into the manual form for editing.
@@ -19,6 +19,12 @@ enum FoodLibraryPick {
     case common(CommonFood)
 }
 
+private enum LibraryTab: String, CaseIterable {
+    case history = "History"
+    case foods = "Foods"
+    case meals = "My meals"
+}
+
 struct FoodLibraryView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -26,9 +32,15 @@ struct FoodLibraryView: View {
 
     var onPick: (FoodLibraryPick) -> Void
 
+    @State private var tab: LibraryTab = .history
     @State private var search = ""
     @State private var composing = false
     @State private var mealPendingDeletion: SavedMeal?
+
+    /// Browsing (no search) shows only the most recent handful — the point of this tab
+    /// is "what did I just eat," not a full log. Searching lifts the cap: someone typing
+    /// is looking for something specific and shouldn't be capped out of finding it.
+    private static let historyBrowseLimit = 20
 
     private var query: String { search.trimmingCharacters(in: .whitespaces).lowercased() }
 
@@ -41,14 +53,15 @@ struct FoodLibraryView: View {
     }
 
     private var history: [FoodHistoryItem] {
-        // Anything already saved as a meal is left out: the same food appearing twice in
-        // one list, once as a meal and once as history, reads as a duplicate rather than
-        // as two ways in.
+        // Anything already saved as a meal is left out: the same food appearing twice,
+        // once as a meal and once as history, reads as a duplicate rather than as two
+        // ways in.
         let saved = Set(store.savedMeals.map { $0.name.lowercased() })
-        return store.foodHistory.filter {
+        let matches = store.foodHistory.filter {
             !saved.contains($0.description.lowercased())
                 && (query.isEmpty || $0.description.lowercased().contains(query))
         }
+        return query.isEmpty ? Array(matches.prefix(Self.historyBrowseLimit)) : matches
     }
 
     private var common: [CommonFood] {
@@ -56,57 +69,33 @@ struct FoodLibraryView: View {
         return CommonFoods.all.filter { $0.name.lowercased().contains(query) }
     }
 
+    private var searchPrompt: String {
+        switch tab {
+        case .history: return "Search your history"
+        case .foods: return "Search foods"
+        case .meals: return "Search your meals"
+        }
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Button { composing = true } label: {
-                        Label("Build a new meal", systemImage: "plus.circle.fill")
-                            .font(.system(size: 15, weight: .medium))
-                    }
+            VStack(spacing: 0) {
+                Picker("", selection: $tab) {
+                    ForEach(LibraryTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
 
-                if !meals.isEmpty {
-                    Section("My meals") {
-                        ForEach(meals) { meal in
-                            Button { onPick(.meal(meal)) } label: { mealRow(meal) }
-                                .buttonStyle(.plain)
-                                .swipeActions {
-                                    Button(role: .destructive) { mealPendingDeletion = meal } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
-                        }
+                List {
+                    switch tab {
+                    case .history: historyTab
+                    case .foods: foodsTab
+                    case .meals: mealsTab
                     }
-                }
-
-                if !history.isEmpty {
-                    Section("Recently logged") {
-                        ForEach(history) { item in
-                            Button { onPick(.history(item)) } label: { historyRow(item) }
-                                .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                ForEach(CommonFoods.groups, id: \.self) { group in
-                    let items = common.filter { $0.group == group }
-                    if !items.isEmpty {
-                        Section(group) {
-                            ForEach(items) { item in
-                                Button { onPick(.common(item)) } label: { commonRow(item) }
-                                    .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-
-                if meals.isEmpty && history.isEmpty && common.isEmpty {
-                    Text("Nothing matches “\(search)”.")
-                        .font(.footnote).foregroundStyle(Palette.muted(scheme))
                 }
             }
-            .searchable(text: $search, prompt: "Search meals, history and foods")
+            .searchable(text: $search, prompt: searchPrompt)
             .navigationTitle("Log something")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
@@ -124,6 +113,71 @@ struct FoodLibraryView: View {
                 Text("Entries you already logged from it stay in your diary.")
             }
         }
+    }
+
+    @ViewBuilder
+    private var historyTab: some View {
+        if history.isEmpty {
+            emptyState
+        } else {
+            Section {
+                ForEach(history) { item in
+                    Button { onPick(.history(item)) } label: { historyRow(item) }
+                        .buttonStyle(.plain)
+                }
+            } header: {
+                if query.isEmpty { Text("Most recently logged") }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var foodsTab: some View {
+        if common.isEmpty {
+            emptyState
+        } else {
+            ForEach(CommonFoods.groups, id: \.self) { group in
+                let items = common.filter { $0.group == group }
+                if !items.isEmpty {
+                    Section(group) {
+                        ForEach(items) { item in
+                            Button { onPick(.common(item)) } label: { commonRow(item) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var mealsTab: some View {
+        Section {
+            Button { composing = true } label: {
+                Label("Build a new meal", systemImage: "plus.circle.fill")
+                    .font(.system(size: 15, weight: .medium))
+            }
+        }
+        if meals.isEmpty {
+            if !query.isEmpty { emptyState }
+        } else {
+            Section("My meals") {
+                ForEach(meals) { meal in
+                    Button { onPick(.meal(meal)) } label: { mealRow(meal) }
+                        .buttonStyle(.plain)
+                        .swipeActions {
+                            Button(role: .destructive) { mealPendingDeletion = meal } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        Text(query.isEmpty ? "Nothing here yet." : "Nothing matches “\(search)”.")
+            .font(.footnote).foregroundStyle(Palette.muted(scheme))
     }
 
     private func mealRow(_ meal: SavedMeal) -> some View {

@@ -351,11 +351,9 @@ struct ManualLogView: View {
                             ForEach(meals, id: \.self) { Text($0.capitalized).tag($0) }
                         }
                         .pickerStyle(.segmented)
-                        Button { browsing = true } label: {
-                            Label("Log from my library", systemImage: "list.bullet")
-                                .font(.system(size: 14))
-                        }
                     }
+
+                    libraryCard
 
                     Panel(title: "Nutrition",
                           subtitle: "Fill in what you know — anything left blank is logged as unknown, not as zero.") {
@@ -423,6 +421,35 @@ struct ManualLogView: View {
                 }
             }
         }
+    }
+
+    /// Its own full-width card rather than a small text link inside the manual-entry
+    /// panel — logging from history, a saved meal, or the common-foods table is a first-
+    /// class alternative to typing, not an afterthought buried in the form.
+    private var libraryCard: some View {
+        Button { browsing = true } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle().fill(DashboardTheme.shared.accent.opacity(0.15)).frame(width: 44, height: 44)
+                    Image(systemName: "books.vertical.fill").foregroundStyle(DashboardTheme.shared.accent)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Log from my library").font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Palette.ink(scheme))
+                    Text("Meals, history, and common foods").font(.system(size: 12))
+                        .foregroundStyle(Palette.muted(scheme))
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.muted(scheme))
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(Palette.panel(scheme))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Palette.border(scheme), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private func field(_ label: String, _ unit: String, _ value: Binding<String>) -> some View {

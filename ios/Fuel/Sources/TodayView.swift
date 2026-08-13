@@ -47,6 +47,7 @@ struct TodayView: View {
     /// changing under a static view.
     @State private var pageDragOffset: CGFloat = 0
     @State private var pageAnimating = false
+    private var pagingActive: Bool { pageAnimating || pageDragOffset != 0 }
 
     private var summary: DaySummary? { store.viewingSummary }
 
@@ -122,6 +123,14 @@ struct TodayView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity)
+                // Rasterizing the whole card stack into one Metal-backed layer only while
+                // a page transition is live turns the per-frame cost of the offset
+                // animation from "re-layout every card, including every chart" into "move
+                // one bitmap" — without it, dragging this much content (energy charts,
+                // vitals bar, every section) redraws the full tree on every touch delta
+                // and the transition visibly drops frames. Left off the rest of the time
+                // so idle scrolling and interaction keep native, non-rasterized rendering.
+                .modifier(RasterizeWhilePaging(active: pagingActive))
                 .offset(x: pageDragOffset)
                 // Tapping anywhere outside the food card exits selection mode. The food
                 // card itself absorbs its own taps (see foodSection's contentShape), so
@@ -176,11 +185,19 @@ struct TodayView: View {
                 if !store.isViewingToday {
                     // A plain arrow read as "go back," not "return to today" — this
                     // sits right above the date title and says exactly what it does.
+                    // A custom Capsule background, not .buttonStyle(.bordered): the
+                    // system style shrank around this short a label until it read as a
+                    // circle rather than a pill, with the text off-center inside it.
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Today") { withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() } }
-                            .font(.system(size: 14, weight: .semibold))
-                            .buttonStyle(.bordered)
-                            .tint(DashboardTheme.shared.accent)
+                        Button { withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() } } label: {
+                            Text("Today")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(DashboardTheme.shared.accent)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(DashboardTheme.shared.accent.opacity(0.15)))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -1126,6 +1143,22 @@ private extension View {
     /// from its key) so a whole screen of cards doesn't move in lockstep.
     func jiggling(_ active: Bool, seed: String) -> some View {
         modifier(JiggleModifier(active: active, seed: seed))
+    }
+}
+
+/// Composites the wrapped content into one Metal-backed layer while `active`, so an
+/// offset animation over it moves a bitmap instead of re-running layout across every
+/// descendant (charts included) on each frame. Off outside that window — rasterizing
+/// content that never stops changing (the dashboard while idle) would cost more than it
+/// saves and can dull interactive elements, so this only ever applies mid-transition.
+private struct RasterizeWhilePaging: ViewModifier {
+    let active: Bool
+    func body(content: Content) -> some View {
+        if active {
+            content.compositingGroup().drawingGroup()
+        } else {
+            content
+        }
     }
 }
 
