@@ -547,7 +547,7 @@ struct FuelClient {
 
     func savedMeals() async throws -> [SavedMeal] {
         struct Response: Decodable { var meals: [SavedMeal] }
-        let data = try await send(try request("/api/mlog?integration=meals"))
+        let data = try await send(try request("/api/mlog?fuel_route=meals"))
         return try JSONDecoder().decode(Response.self, from: data).meals
     }
 
@@ -556,7 +556,7 @@ struct FuelClient {
         struct Response: Decodable { var meal: SavedMeal }
         var body: [String: Any] = ["name": name, "items": items.map(\.payload)]
         if let meal, !meal.isEmpty { body["meal"] = meal }
-        let data = try await send(try request("/api/mlog?integration=meals", method: "POST", body: body))
+        let data = try await send(try request("/api/mlog?fuel_route=meals", method: "POST", body: body))
         return try JSONDecoder().decode(Response.self, from: data).meal
     }
 
@@ -568,37 +568,37 @@ struct FuelClient {
         struct Response: Decodable { var meal: SavedMeal }
         var body: [String: Any] = ["entryIds": ids]
         if let name, !name.isEmpty { body["name"] = name }
-        let data = try await send(try request("/api/mlog?integration=meals", method: "POST", body: body))
+        let data = try await send(try request("/api/mlog?fuel_route=meals", method: "POST", body: body))
         return try JSONDecoder().decode(Response.self, from: data).meal
     }
 
     func logSavedMeal(id: String, at fix: MealFix? = nil) async throws {
         var body: [String: Any] = ["action": "log", "id": id]
         if let fix { fix.apply(to: &body) }
-        _ = try await send(try request("/api/mlog?integration=meals", method: "POST", body: body))
+        _ = try await send(try request("/api/mlog?fuel_route=meals", method: "POST", body: body))
     }
 
     func deleteSavedMeal(id: String) async throws {
-        _ = try await send(try request("/api/mlog?integration=meals&id=\(id)", method: "DELETE"))
+        _ = try await send(try request("/api/mlog?fuel_route=meals&id=\(id)", method: "DELETE"))
     }
 
     func foodHistory(limit: Int = 100) async throws -> [FoodHistoryItem] {
         struct Response: Decodable { var items: [FoodHistoryItem] }
-        let data = try await send(try request("/api/mlog?integration=food-history&limit=\(limit)"))
+        let data = try await send(try request("/api/mlog?fuel_route=food-history&limit=\(limit)"))
         return try JSONDecoder().decode(Response.self, from: data).items
     }
 
     /// Food, workouts and supplements for one day other than today — that day's summary
     /// is already on hand in `Dashboard.trends`, so this fetches only what isn't.
     func dayDetail(date: String) async throws -> DayDetail {
-        let data = try await send(try request("/api/mlog?integration=day-detail&date=\(date)"))
+        let data = try await send(try request("/api/mlog?fuel_route=day-detail&date=\(date)"))
         return try JSONDecoder().decode(DayDetail.self, from: data)
     }
 
     /// Deterministically-mined candidate patterns for "Learn from me" — every number is
     /// real, computed server-side; nothing here is AI-generated. See api/_lib/learning.js.
     func learningSignals() async throws -> LearningSignals {
-        let data = try await send(try request("/api/mlog?integration=learning-signals"))
+        let data = try await send(try request("/api/mlog?fuel_route=learning-signals"))
         return try JSONDecoder().decode(LearningSignals.self, from: data)
     }
 

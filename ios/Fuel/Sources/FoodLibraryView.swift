@@ -80,21 +80,40 @@ struct FoodLibraryView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // The tab bar sits on the same background as the list below it, with a
+                // hairline between them — floating it on the default white left a seam
+                // where the two backgrounds met and made the first section read as a
+                // detached box.
                 Picker("", selection: $tab) {
                     ForEach(LibraryTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 10)
+                .background(Palette.background(scheme))
+
+                Divider()
 
                 List {
+                    if let libraryError = store.libraryError {
+                        Section {
+                            Label(libraryError, systemImage: "exclamationmark.triangle")
+                                .font(.footnote).foregroundStyle(.orange)
+                        }
+                    }
                     switch tab {
                     case .history: historyTab
                     case .foods: foodsTab
                     case .meals: mealsTab
                     }
                 }
+                .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+                .background(Palette.background(scheme))
             }
+            .background(Palette.background(scheme))
             .searchable(text: $search, prompt: searchPrompt)
             .navigationTitle("Log something")
             .navigationBarTitleDisplayMode(.inline)
@@ -118,7 +137,17 @@ struct FoodLibraryView: View {
     @ViewBuilder
     private var historyTab: some View {
         if history.isEmpty {
-            emptyState
+            // "Still loading" and "you have nothing" look identical as a blank list, and
+            // telling them apart is exactly what was missing while the history route was
+            // silently failing.
+            if store.libraryLoading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading your history…").font(.footnote).foregroundStyle(Palette.muted(scheme))
+                }
+            } else {
+                emptyState
+            }
         } else {
             Section {
                 ForEach(history) { item in

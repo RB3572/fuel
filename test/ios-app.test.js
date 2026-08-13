@@ -1131,7 +1131,12 @@ test('day-paging carries the outgoing day off-screen and slides the new one in',
   // with a plain, clearly-labelled button in the same toolbar slot (already above the
   // date, since the date is the large title below the nav bar row).
   assert.doesNotMatch(today, /arrow\.uturn\.backward/)
-  assert.match(today, /withAnimation\(\.easeInOut\(duration: 0\.22\)\) \{ store\.resetToToday\(\) \} \}/)
+  assert.match(today, /store\.resetToToday\(\)/)
+  // The slide clears the content's measured width, not the screen's — a split view or
+  // resized window changes one without touching the other. (UIScreen.main is also
+  // deprecated, and this repo builds warning-free.)
+  assert.doesNotMatch(today, /UIScreen\.main/)
+  assert.match(today, /let width = pageWidth > 0 \? pageWidth : 420/)
 })
 
 test('the Trends axis pickers sit over their own axis, with the legend below the chart', () => {
@@ -1175,14 +1180,21 @@ test('the day-paging transition rasterizes into one layer while it animates, and
   assert.match(today, /private var pagingActive: Bool \{ pageAnimating \|\| pageDragOffset != 0 \}/)
 })
 
-test('the "return to Today" button is a labelled pill, not a bare icon that reads as a circle', () => {
+test('the "return to Dashboard" button is a plain titled button, so it lays out as a full pill', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
-  // .buttonStyle(.bordered) on this short a label collapsed to a circle around the
-  // text instead of a pill sized to fit it — an explicit Capsule background with real
-  // horizontal padding is what actually guarantees the elongated shape.
-  assert.doesNotMatch(today, /\.buttonStyle\(\.bordered\)\s*\n\s*\.tint\(DashboardTheme\.shared\.accent\)/)
-  assert.match(today, /\.background\(Capsule\(\)\.fill\(DashboardTheme\.shared\.accent\.opacity\(0\.15\)\)\)/)
-  assert.match(today, /\.padding\(\.horizontal, 14\)/)
+  // Two earlier attempts — .buttonStyle(.bordered), then a custom Text+Capsule label —
+  // both ended up as a circle with the word clipped: a toolbar item built from custom
+  // label content is treated as icon-shaped and packed into a fixed round container.
+  // A title-only Button is laid out as a capsule sized to its own text instead.
+  assert.match(today, /Button\("Dashboard"\) \{/)
+  assert.match(today, /\.fixedSize\(\)/)
+  const toolbar = today.slice(today.indexOf('.toolbar {'), today.indexOf('.refreshable'))
+  assert.doesNotMatch(toolbar, /Capsule\(\)/, 'no hand-rolled capsule — let the system size the button')
+  assert.doesNotMatch(toolbar, /label: \{[\s\S]{0,200}Text\("Dashboard"\)/,
+    'a custom label view is what caused the circular clipping')
+
+  // And the main dashboard is titled "Dashboard", not "Today".
+  assert.match(today, /if store\.isViewingToday \{ return "Dashboard" \}/)
 })
 
 test('widgets never use informal "in/out" language — always Burned/Consumed', () => {
@@ -1203,4 +1215,46 @@ test('widgets never use informal "in/out" language — always Burned/Consumed', 
   assert.match(energy, /WidgetTitle\(text: "Burned vs\. consumed", palette: p\)/)
   const bundle = read('../ios/FuelWidgets/Sources/FuelWidgetBundle.swift')
   assert.match(bundle, /\.configurationDisplayName\("Burned vs\. consumed"\)/)
+})
+
+test('every app API call names a route the server actually dispatches on', () => {
+  // The bug this pins: the client asked for `?integration=meals` / `food-history` /
+  // `day-detail` / `learning-signals`, but api/mlog.js routes on `fuel_route` only. An
+  // unmatched route falls through to the default handler and answers with a payload
+  // that decodes as nothing — so saved meals and history looked permanently empty
+  // rather than broken, and the user_meals table was never even created.
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  assert.doesNotMatch(client, /api\/mlog\?integration=/,
+    'api/mlog dispatches on fuel_route; ?integration= silently matches nothing')
+
+  const mlog = read('../api/mlog.js')
+  // The dispatcher reads exactly one parameter — assert it, so a future rename can't
+  // quietly re-open this gap.
+  assert.match(mlog, /searchParams\.get\('fuel_route'\)/)
+
+  // Every fuel_route the client asks for must have a branch on the server.
+  const asked = [...client.matchAll(/api\/mlog\?fuel_route=([a-z-]+)/g)].map((m) => m[1])
+  assert.ok(asked.length >= 10, `expected the app's routes, found ${asked.length}`)
+  for (const route of new Set(asked)) {
+    assert.match(mlog, new RegExp(`integrationRoute === '${route}'`),
+      `the app calls fuel_route=${route}, which api/mlog.js never handles`)
+  }
+})
+
+test('a failed library load says so instead of rendering as an empty list', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  // Two `try?`s used to swallow exactly the failure above — an error and "you have
+  // logged nothing" produced an identical blank screen, which is why a dead route went
+  // unnoticed for so long.
+  const fn = store.slice(store.indexOf('func loadLibrary() async'), store.indexOf('func logSavedMeal'))
+  assert.doesNotMatch(fn, /try\? client\(\)/)
+  assert.match(fn, /catch \{ failed\.append\("saved meals"\) \}/)
+  assert.match(fn, /catch \{ failed\.append\("history"\) \}/)
+  assert.match(store, /var libraryError: String\?/)
+
+  const lib = read('../ios/Fuel/Sources/FoodLibraryView.swift')
+  assert.match(lib, /if let libraryError = store\.libraryError/)
+  // And loading is distinguishable from empty.
+  assert.match(lib, /if store\.libraryLoading \{/)
+  assert.match(lib, /Text\("Loading your history…"\)/)
 })

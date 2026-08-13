@@ -47,6 +47,7 @@ struct TodayView: View {
     /// changing under a static view.
     @State private var pageDragOffset: CGFloat = 0
     @State private var pageAnimating = false
+    @State private var pageWidth: CGFloat = 0
     private var pagingActive: Bool { pageAnimating || pageDragOffset != 0 }
 
     private var summary: DaySummary? { store.viewingSummary }
@@ -60,7 +61,10 @@ struct TodayView: View {
     /// opposite edge — the same illusion UIKit's page view controller gives, built from
     /// one view whose content changes under it rather than two views crossfading.
     private func slidePage(goingBack: Bool) {
-        let width = UIScreen.main.bounds.width
+        // Measured from the view itself rather than read off the screen: the slide has
+        // to clear the content's own width, which is what a split view or a resized
+        // window changes without the screen's bounds ever moving.
+        let width = pageWidth > 0 ? pageWidth : 420
         pageAnimating = true
         withAnimation(.easeIn(duration: 0.16)) {
             pageDragOffset = goingBack ? width : -width
@@ -76,9 +80,9 @@ struct TodayView: View {
         }
     }
 
-    /// "Today", "Yesterday", or "Mon Aug 11" — what the day-paging swipe landed on.
+    /// "Dashboard", "Yesterday", or "Mon Aug 11" — what the day-paging swipe landed on.
     private var pageTitle: String {
-        if store.isViewingToday { return "Today" }
+        if store.isViewingToday { return "Dashboard" }
         if store.dayOffset == 1 { return "Yesterday" }
         guard let date = store.viewingDate else { return "Today" }
         return NetBalanceTrendChart.label(for: date)
@@ -123,6 +127,13 @@ struct TodayView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { pageWidth = geo.size.width }
+                            .onChange(of: geo.size.width) { _, width in pageWidth = width }
+                    }
+                )
                 // Rasterizing the whole card stack into one Metal-backed layer only while
                 // a page transition is live turns the per-frame cost of the offset
                 // animation from "re-layout every card, including every chart" into "move
@@ -183,21 +194,18 @@ struct TodayView: View {
             .navigationTitle(pageTitle)
             .toolbar {
                 if !store.isViewingToday {
-                    // A plain arrow read as "go back," not "return to today" — this
-                    // sits right above the date title and says exactly what it does.
-                    // A custom Capsule background, not .buttonStyle(.bordered): the
-                    // system style shrank around this short a label until it read as a
-                    // circle rather than a pill, with the text off-center inside it.
+                    // Deliberately a bare title-only Button: no custom label view, no
+                    // style, no background of its own. A custom label — even a Text with
+                    // padding and a Capsule behind it — is treated as icon-shaped content
+                    // and packed into a fixed circular container, which is what kept
+                    // clipping the word and leaving it off-centre. A plain titled button
+                    // is laid out as a capsule sized to its own text, which is the shape
+                    // this wants; .fixedSize() then guarantees it is never squeezed.
                     ToolbarItem(placement: .topBarLeading) {
-                        Button { withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() } } label: {
-                            Text("Today")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(DashboardTheme.shared.accent)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 6)
-                                .background(Capsule().fill(DashboardTheme.shared.accent.opacity(0.15)))
+                        Button("Dashboard") {
+                            withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() }
                         }
-                        .buttonStyle(.plain)
+                        .fixedSize()
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {

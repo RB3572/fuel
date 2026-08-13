@@ -356,6 +356,9 @@ final class AppStore {
     var savedMeals: [SavedMeal] = []
     var foodHistory: [FoodHistoryItem] = []
     var libraryLoading = false
+    /// Set when a library shelf fails to load, so the picker can say so instead of
+    /// showing an empty list that reads as "nothing logged yet".
+    var libraryError: String?
 
     // MARK: - Day paging on Today
 
@@ -471,14 +474,20 @@ final class AppStore {
     /// Loads the two server-backed shelves of the log library. Common foods need no
     /// fetch — they ship with the app — so the library is usable offline even when this
     /// fails.
+    /// Each shelf is fetched and reported separately: one failing must not blank the
+    /// other, and — the reason this is not a pair of `try?`s any more — a swallowed
+    /// error here looks exactly like "you have not logged anything yet". That is how a
+    /// broken route (the client asked for `?integration=`, the server dispatches on
+    /// `?fuel_route=`) sat unnoticed while every request quietly fell through to the
+    /// wrong handler and decoded as nothing.
     func loadLibrary() async {
         guard isSignedIn else { return }
         libraryLoading = true
         defer { libraryLoading = false }
-        async let meals = try? client().savedMeals()
-        async let history = try? client().foodHistory()
-        savedMeals = await meals ?? savedMeals
-        foodHistory = await history ?? foodHistory
+        var failed: [String] = []
+        do { savedMeals = try await client().savedMeals() } catch { failed.append("saved meals") }
+        do { foodHistory = try await client().foodHistory() } catch { failed.append("history") }
+        libraryError = failed.isEmpty ? nil : "Couldn't load your \(failed.joined(separator: " or "))."
     }
 
     func logSavedMeal(_ meal: SavedMeal) async {
