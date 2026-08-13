@@ -64,7 +64,7 @@ struct DailyInsight: Codable {
 /// what they've actually logged rather than anything they typed themselves.
 @Generable
 struct LearnedNotes: Codable {
-    @Guide(description: "4 to 8 short, specific observations grounded only in the data given — routines, preferred foods, places, and workout patterns including timing. Never repeat anything already covered by their existing stated preferences.")
+    @Guide(description: "Up to 6 short, specific associations picked from the candidate patterns given — a food that clusters on one weekday, what a workout does to the next night's sleep or HRV, a habit's usual time of day. Skip a candidate rather than force a weak one; fewer genuinely interesting notes beats a full list of dull ones. Phrase each as the actual finding, e.g. \"Usually gets ice cream on Fridays\" or \"Sleeps about an hour longer after a swim,\" not as a restated statistic. Never repeat anything already covered by their existing stated preferences.")
     var bullets: [String]
 }
 
@@ -385,11 +385,15 @@ final class OnDeviceAI {
                                                     provider: remote.provider, key: remote.key, model: remote.model)
         }
         let instructions = """
-        You study a person's own logged health data and identify short, durable patterns \
-        a coach should remember about them — routines, preferred foods, places, and \
-        workout patterns including timing. Ground every observation in the data given; \
-        never invent a pattern the data doesn't support. Never repeat anything already \
-        covered by their existing stated preferences below.
+        Below are candidate patterns already mined from a person's own logged health \
+        data — every number in them is real and computed, not something you need to \
+        verify. Your job is to pick the handful that are actually interesting (a \
+        genuine association, not a flat average) and phrase each as the finding itself, \
+        the way you'd mention it to a friend: "Usually gets ice cream on Fridays," or \
+        "Sleeps noticeably longer the night after a swim." Do not restate a candidate as \
+        a raw statistic, and do not invent a pattern beyond what's listed. Skip anything \
+        already covered by their existing stated preferences below, and skip a candidate \
+        entirely rather than include a weak or obvious one.
 
         EXISTING STATED PREFERENCES:
         \(existingContext.isEmpty ? "(none yet)" : existingContext)

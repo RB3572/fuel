@@ -302,10 +302,10 @@ private struct CompareBar: View {
                 Capsule().fill(Palette.muted(scheme).opacity(0.45))
                     .frame(width: max(2, pos(ref.p75) - pos(ref.p25)), height: 6)
                     .offset(x: pos(ref.p25))
-                Rectangle().fill(Palette.ink(scheme)).frame(width: 2, height: 12).offset(x: pos(ref.p50) - 1, y: -3)
+                Rectangle().fill(Palette.ink(scheme)).frame(width: 2, height: 12).offset(x: pos(ref.p50) - 1)
                 Circle().fill(toneColor).frame(width: 11, height: 11)
                     .overlay(Circle().stroke(Palette.panel(scheme), lineWidth: 1.5))
-                    .offset(x: pos(value) - 5.5, y: -3)
+                    .offset(x: pos(value) - 5.5)
             }
         }
         .frame(height: 12)

@@ -41,7 +41,39 @@ struct TodayView: View {
     @State private var draftLayout = DashboardLayout.default
     @State private var draggingKey: String?
 
+    /// The day-paging slide: follows the finger while dragging, then on release either
+    /// snaps back or carries the current day fully off-screen while the new one slides
+    /// in from the opposite edge — a real page transition rather than the data simply
+    /// changing under a static view.
+    @State private var pageDragOffset: CGFloat = 0
+    @State private var pageAnimating = false
+
     private var summary: DaySummary? { store.viewingSummary }
+
+    private func snapBack() {
+        withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) { pageDragOffset = 0 }
+    }
+
+    /// Carries the current day fully off-screen in the direction it was dragged, swaps
+    /// the underlying data once it's clear, then slides the new day in from the
+    /// opposite edge — the same illusion UIKit's page view controller gives, built from
+    /// one view whose content changes under it rather than two views crossfading.
+    private func slidePage(goingBack: Bool) {
+        let width = UIScreen.main.bounds.width
+        pageAnimating = true
+        withAnimation(.easeIn(duration: 0.16)) {
+            pageDragOffset = goingBack ? width : -width
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(0.16))
+            store.page(goingBack ? 1 : -1)
+            // No animation: parks the new content off-screen on the entry side before
+            // the next line animates it in — a silent jump, since it happens off-screen.
+            pageDragOffset = goingBack ? -width : width
+            withAnimation(.easeOut(duration: 0.24)) { pageDragOffset = 0 }
+            pageAnimating = false
+        }
+    }
 
     /// "Today", "Yesterday", or "Mon Aug 11" — what the day-paging swipe landed on.
     private var pageTitle: String {
@@ -90,6 +122,7 @@ struct TodayView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity)
+                .offset(x: pageDragOffset)
                 // Tapping anywhere outside the food card exits selection mode. The food
                 // card itself absorbs its own taps (see foodSection's contentShape), so
                 // this only ever fires for genuinely outside taps — other cards, gaps
@@ -105,12 +138,23 @@ struct TodayView: View {
                 // is why the charts had to lose their own drag-to-scroll.
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 40)
-                        .onEnded { value in
-                            guard !selecting, !dashboardEditing else { return }
+                        .onChanged { value in
+                            guard !selecting, !dashboardEditing, !pageAnimating else { return }
                             guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                            withAnimation(.easeInOut(duration: 0.22)) {
-                                store.page(value.translation.width > 0 ? 1 : -1)
+                            pageDragOffset = value.translation.width
+                        }
+                        .onEnded { value in
+                            guard !selecting, !dashboardEditing, !pageAnimating,
+                                  abs(value.translation.width) > abs(value.translation.height) * 1.5 else {
+                                snapBack()
+                                return
                             }
+                            let goingBack = value.translation.width > 0
+                            guard store.canPage(goingBack ? 1 : -1) else {
+                                snapBack()
+                                return
+                            }
+                            slidePage(goingBack: goingBack)
                         }
                 )
                 // A meal logged from the camera lands here: scroll to the row it made
@@ -130,10 +174,13 @@ struct TodayView: View {
             .navigationTitle(pageTitle)
             .toolbar {
                 if !store.isViewingToday {
+                    // A plain arrow read as "go back," not "return to today" — this
+                    // sits right above the date title and says exactly what it does.
                     ToolbarItem(placement: .topBarLeading) {
-                        Button { withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() } } label: {
-                            Label("Today", systemImage: "arrow.uturn.backward")
-                        }
+                        Button("Today") { withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() } }
+                            .font(.system(size: 14, weight: .semibold))
+                            .buttonStyle(.bordered)
+                            .tint(DashboardTheme.shared.accent)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {

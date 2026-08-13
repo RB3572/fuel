@@ -53,6 +53,7 @@ struct TrendsView: View {
                     Panel {
                         pickers
                         chartBody
+                        legend
                     }
                     averagesPanel
                     CompareSection()
@@ -65,35 +66,53 @@ struct TrendsView: View {
         }
     }
 
+    /// One picker over each axis it drives — left-aligned above the chart's left axis,
+    /// right-aligned above its right axis — so position alone says which is which. The
+    /// color/label pairing that used to live here moved to `legend`, below the chart.
     private var pickers: some View {
-        VStack(spacing: 8) {
-            metricPicker(title: "Left axis", selection: $primaryKey, colour: DashboardTheme.shared.accent,
-                         storageKey: "fuelTrendPrimary", allowNone: false)
-            metricPicker(title: "Right axis", selection: $secondaryKey, colour: DashboardTheme.shared.secondary,
-                         storageKey: "fuelTrendSecondary", allowNone: true)
+        HStack(alignment: .top) {
+            metricPicker(selection: $primaryKey, storageKey: "fuelTrendPrimary", allowNone: false)
+                .accessibilityLabel("Left axis")
+            Spacer()
+            metricPicker(selection: $secondaryKey, storageKey: "fuelTrendSecondary", allowNone: true)
+                .accessibilityLabel("Right axis")
         }
     }
 
-    private func metricPicker(title: String, selection: Binding<String>, colour: Color,
-                              storageKey: String, allowNone: Bool) -> some View {
-        HStack(spacing: 8) {
-            Capsule().fill(colour).frame(width: 12, height: 4)
-            Text(title).font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
-            Spacer()
-            Picker(title, selection: selection) {
-                if allowNone { Text("None").tag("") }
-                ForEach(exploreGroups, id: \.self) { group in
-                    Section(group) {
-                        ForEach(metrics.filter { $0.group == group }, id: \.key) { m in
-                            Text(m.label).tag(m.key)
-                        }
+    private func metricPicker(selection: Binding<String>, storageKey: String, allowNone: Bool) -> some View {
+        Picker("", selection: selection) {
+            if allowNone { Text("None").tag("") }
+            ForEach(exploreGroups, id: \.self) { group in
+                Section(group) {
+                    ForEach(metrics.filter { $0.group == group }, id: \.key) { m in
+                        Text(m.label).tag(m.key)
                     }
                 }
             }
-            .pickerStyle(.menu)
-            .onChange(of: selection.wrappedValue) { _, value in
-                UserDefaults.standard.set(value, forKey: storageKey)
+        }
+        .pickerStyle(.menu)
+        .onChange(of: selection.wrappedValue) { _, value in
+            UserDefaults.standard.set(value, forKey: storageKey)
+        }
+    }
+
+    /// The color-to-metric key, moved below the chart so the pickers above can sit
+    /// directly over the axis each one drives instead of doubling as the legend.
+    @ViewBuilder
+    private var legend: some View {
+        if primary != nil || secondary != nil {
+            HStack(spacing: 16) {
+                if let primary { legendItem(primary.def.label, DashboardTheme.shared.accent) }
+                if let secondary { legendItem(secondary.def.label, DashboardTheme.shared.secondary) }
+                Spacer()
             }
+        }
+    }
+
+    private func legendItem(_ label: String, _ colour: Color) -> some View {
+        HStack(spacing: 6) {
+            Capsule().fill(colour).frame(width: 12, height: 4)
+            Text(label).font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
         }
     }
 

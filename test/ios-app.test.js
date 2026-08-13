@@ -183,8 +183,8 @@ test('Trends plots two metrics on independent axes, and every chart zooms', () =
 
   // Two pickers, each driving its own vertical axis — steps (~10,000) against sleep
   // (~7h) on one shared domain would flatten the smaller into a straight line.
-  assert.match(trends, /metricPicker\(title: "Left axis"/)
-  assert.match(trends, /metricPicker\(title: "Right axis"/)
+  assert.match(trends, /metricPicker\(selection: \$primaryKey/)
+  assert.match(trends, /metricPicker\(selection: \$secondaryKey/)
   assert.match(trends, /AxisMarks\(position: \.leading/)
   assert.match(trends, /AxisMarks\(position: \.trailing/)
   // The trailing axis is labelled in the secondary metric's own units even though its
@@ -966,7 +966,7 @@ test('the food-consumed selection bar is Select-first and closes when you tap el
 
 test('the Today dashboard pages between days by swiping, without fighting the page scroll', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
-  assert.match(today, /store\.page\(value\.translation\.width > 0 \? 1 : -1\)/)
+  assert.match(today, /store\.page\(goingBack \? 1 : -1\)/)
   // The same disambiguation the row swipe uses — mostly-horizontal, a real minimum
   // distance — is what lets this live inside a vertical ScrollView at all.
   assert.match(today, /DragGesture\(minimumDistance: 40\)/)
@@ -1016,13 +1016,34 @@ test('"Learn from me" appends observations mined from logged data, never replaci
 
   const store = read('../ios/Fuel/Sources/AppStore.swift')
   assert.match(store, /func learnFromMe\(\) async throws -> \[String\]/)
-  // Reads what's actually been logged, not anything the user typed as a preference.
-  assert.match(store, /foodHistory\.prefix\(15\)/)
+  // Built from mined associations (a food clustering on a weekday, a workout's effect
+  // on next-night sleep/HRV, a habit's usual time of day), not flat averages — those
+  // read as "you eat 2400 kcal on average," which isn't an insight.
+  assert.match(store, /client\(\)\.learningSignals\(\)/)
+  assert.match(store, /signals\.foodWeekdayPatterns/)
+  assert.match(store, /signals\.workoutAftereffects/)
+  assert.match(store, /signals\.workoutTiming/)
+  assert.match(store, /signals\.activeWeekdays/)
   assert.match(store, /client\(\)\.places\(days: 30\)/)
 
   for (const file of ['OnDeviceAI', 'RemoteAI']) {
-    assert.match(read(`../ios/Fuel/Sources/${file}.swift`), /func learnFromData/)
+    const src = read(`../ios/Fuel/Sources/${file}.swift`)
+    assert.match(src, /func learnFromData/)
+    // The candidates are real, computed numbers — the model's job is to pick and
+    // phrase, not to invent or re-derive them.
+    assert.match(src, /every number in them is real and computed, not something you need to/)
   }
+
+  // The server mines these deterministically (plain aggregation over real rows), not
+  // via AI — see api/_lib/learning.js.
+  const learning = read('../api/_lib/learning.js')
+  assert.match(learning, /export async function getLearningSignals/)
+  assert.match(learning, /function foodWeekdayPatterns/)
+  assert.match(learning, /function workoutAftereffects/)
+  assert.match(learning, /function workoutTiming/)
+  assert.match(learning, /function activeWeekdayPattern/)
+  const mlog = read('../api/mlog.js')
+  assert.match(mlog, /integrationRoute === 'learning-signals'/)
 })
 
 test('notification kinds are independent: replies always on, outreach behind its own switch', () => {
@@ -1071,4 +1092,55 @@ test('the weekly rundown is opportunistic, Saturday-morning-gated, and once per 
   assert.ok(fn.indexOf('markWeeklyRundownSent') < fn.indexOf('OnDeviceAI.shared.ask'),
     'the week must be marked sent before the rundown is generated')
   assert.match(fn.slice(0, 2000), /Notifications\.shared\.canSendWeeklyRundown/)
+})
+
+test('day-paging carries the outgoing day off-screen and slides the new one in', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // Live-tracks the finger, then either snaps back or animates fully off-screen before
+  // the data swaps — the old version just changed the data under a static view, which
+  // read as an abrupt cut rather than a page turning.
+  assert.match(today, /@State private var pageDragOffset: CGFloat = 0/)
+  assert.match(today, /\.offset\(x: pageDragOffset\)/)
+  assert.match(today, /func snapBack\(\)/)
+  assert.match(today, /func slidePage\(goingBack: Bool\)/)
+  const slide = today.slice(today.indexOf('private func slidePage'))
+  assert.match(slide.slice(0, 700), /store\.page\(goingBack \? 1 : -1\)/)
+  // The data only swaps once the outgoing content is off-screen — swapping first would
+  // flash the new day's data on top of the old one still sliding.
+  const easeInAt = slide.indexOf('.easeIn')
+  const pageAt = slide.indexOf('store.page(')
+  assert.ok(easeInAt > 0 && easeInAt < pageAt, 'the exit animation must start before the data swaps')
+
+  // The old icon-only back arrow read as "go back," not "return to today" — replaced
+  // with a plain, clearly-labelled button in the same toolbar slot (already above the
+  // date, since the date is the large title below the nav bar row).
+  assert.doesNotMatch(today, /arrow\.uturn\.backward/)
+  assert.match(today, /Button\("Today"\) \{ withAnimation\(\.easeInOut\(duration: 0\.22\)\) \{ store\.resetToToday\(\) \} \}/)
+})
+
+test('the Trends axis pickers sit over their own axis, with the legend below the chart', () => {
+  const trends = read('../ios/Fuel/Sources/TrendsView.swift')
+  // Left-aligned picker above the left axis, right-aligned above the right axis — the
+  // old stacked layout put both above the chart with no relation to either axis.
+  const pickers = trends.slice(trends.indexOf('private var pickers'), trends.indexOf('private func metricPicker'))
+  assert.match(pickers, /HStack\(alignment: \.top\)/)
+  assert.match(pickers, /metricPicker\(selection: \$primaryKey[\s\S]*Spacer\(\)[\s\S]*metricPicker\(selection: \$secondaryKey/)
+  // The color/label pairing moved out of the picker row into its own legend, rendered
+  // after the chart rather than doubling as the axis picker's caption.
+  assert.match(trends, /private var legend: some View/)
+  const panelBody = trends.slice(trends.indexOf('Panel {'), trends.indexOf('averagesPanel'))
+  const chartAt = panelBody.indexOf('chartBody')
+  const legendAt = panelBody.indexOf('legend')
+  assert.ok(chartAt > 0 && legendAt > chartAt, 'the legend must render after the chart, not before it')
+})
+
+test('the compare bar\'s dot and tick sit centered on the bar line, not above it', () => {
+  const compare = read('../ios/Fuel/Sources/CompareView.swift')
+  const bar = compare.slice(compare.indexOf('private struct CompareBar'))
+  // ZStack(alignment: .leading) already centers every child vertically within the 12pt
+  // frame — the same frame the Capsule bar is centered in — so a child needs no extra
+  // y-offset to land on the bar. The old "y: -3" pushed the tick and dot up off it.
+  assert.doesNotMatch(bar, /y: -3/)
+  assert.match(bar, /\.offset\(x: pos\(ref\.p50\) - 1\)/)
+  assert.match(bar, /\.offset\(x: pos\(value\) - 5\.5\)/)
 })

@@ -308,39 +308,36 @@ final class AppStore {
         catch { self.error = error.localizedDescription }
     }
 
-    /// "Learn from me": a compact digest of what has actually been logged — trends,
-    /// recently-eaten foods, frequently-visited places — handed to the AI to mine short,
-    /// durable observations from. Returns bullets for the caller to append to context;
-    /// nothing here writes anything itself, so the stored preferences are never at risk
-    /// even if this is called repeatedly.
+    /// "Learn from me": candidate patterns mined server-side — see
+    /// api/_lib/learning.js — handed to the AI to pick from and phrase as short, durable
+    /// observations. Deliberately not a digest of plain averages: those read as "you eat
+    /// 2400 kcal on average," which is neither surprising nor actionable. What's useful
+    /// is a real association — a food that clusters on one weekday, what a workout does
+    /// to the next night's sleep or HRV, a habit's usual time of day. Returns bullets for
+    /// the caller to append to context; nothing here writes anything itself, so the
+    /// stored preferences are never at risk even if this is called repeatedly.
     func learnFromMe() async throws -> [String] {
-        if savedMeals.isEmpty && foodHistory.isEmpty { await loadLibrary() }
+        let signals = try? await client().learningSignals()
         let places = try? await client().places(days: 30)
 
         var lines: [String] = []
-        let trends = dashboard?.trends ?? []
-        let loggedDays = trends.filter { $0.caloriesConsumed != nil }
-        if !loggedDays.isEmpty {
-            lines.append("Food logged on \(loggedDays.count) of the last \(trends.count) days.")
-            if let avg = average(loggedDays.compactMap(\.caloriesConsumed)) {
-                lines.append("Average calories eaten on logged days: \(Int(avg)) kcal.")
+        if let signals {
+            for p in signals.foodWeekdayPatterns {
+                lines.append("\(p.food): logged \(p.timesOnWeekday) of its \(p.timesTotal) times on a \(p.weekday).")
             }
-            if let avg = average(loggedDays.compactMap(\.protein)) {
-                lines.append("Average protein: \(Int(avg)) g.")
+            for a in signals.workoutAftereffects {
+                let direction = a.afterAvg > a.otherwiseAvg ? "higher" : "lower"
+                let diff = abs(a.afterAvg - a.otherwiseAvg)
+                lines.append("The night after \(a.activity.lowercased()), \(a.metric) averages "
+                    + "\(Format.number(a.afterAvg, decimals: 1))\(a.unit) versus \(Format.number(a.otherwiseAvg, decimals: 1))\(a.unit) "
+                    + "on days with no workout — \(Format.number(diff, decimals: 1))\(a.unit) \(direction) (n=\(a.sampleSize)).")
             }
-        }
-        if let avg = average(trends.compactMap(\.sleepHours)) {
-            lines.append("Average sleep: \(String(format: "%.1f", avg)) hours.")
-        }
-        let activeDays = trends.filter { ($0.exerciseMinutes ?? 0) > 0 }
-        if !activeDays.isEmpty {
-            lines.append("Exercised on \(activeDays.count) of the last \(trends.count) days.")
-            if let avg = average(activeDays.compactMap(\.exerciseMinutes)) {
-                lines.append("Average exercise minutes on those days: \(Int(avg)) min.")
+            for t in signals.workoutTiming {
+                lines.append("\(t.activity) is consistently a \(t.timeOfDay) activity (\(t.sampleSize) sessions).")
             }
-        }
-        if !foodHistory.isEmpty {
-            lines.append("Recently logged foods: " + foodHistory.prefix(15).map(\.description).joined(separator: ", ") + ".")
+            for w in signals.activeWeekdays {
+                lines.append("\(w.weekday)s average \(Int(w.averageMinutes)) exercise minutes, versus \(Int(w.overallAverageMinutes)) overall — notably more active.")
+            }
         }
         if let notable = places?.places.filter({ !$0.likelyHome }).prefix(5), !notable.isEmpty {
             lines.append("Frequently visited places besides home: "
@@ -349,11 +346,6 @@ final class AppStore {
 
         guard !lines.isEmpty else { return [] }
         return try await OnDeviceAI.shared.learnFromData(digest: lines.joined(separator: "\n"), existingContext: context)
-    }
-
-    private func average(_ values: [Double]) -> Double? {
-        guard !values.isEmpty else { return nil }
-        return values.reduce(0, +) / Double(values.count)
     }
 
     // MARK: - Food

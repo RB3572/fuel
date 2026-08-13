@@ -252,7 +252,7 @@ const ACTIVITY_NAMES = {
   flexibility: 'Flexibility', cooldown: 'Cooldown', mindAndBody: 'Mind and body',
   dance: 'Dance', badminton: 'Badminton', pickleball: 'Pickleball',
 }
-function activityName(wireName) {
+export function activityName(wireName) {
   if (ACTIVITY_NAMES[wireName]) return ACTIVITY_NAMES[wireName]
   if (!wireName) return 'Workout'
   // camelCase -> "Camel case" for anything not in the table above.
@@ -328,7 +328,7 @@ function groupByDate(rows, field) {
   }
   return map
 }
-function databaseDateKey(value) {
+export function databaseDateKey(value) {
   if (value == null) return ''
   if (typeof value === 'string') {
     const direct = value.match(/^(\d{4}-\d{2}-\d{2})/)

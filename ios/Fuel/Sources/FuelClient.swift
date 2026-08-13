@@ -54,6 +54,44 @@ struct DayDetail: Decodable {
     var supplements: [Supplement]?
 }
 
+/// Raw candidate patterns mined server-side for "Learn from me" — see
+/// api/_lib/learning.js. Every field is a real, computed number; the model only picks
+/// which of these are worth surfacing and phrases them.
+struct LearningSignals: Decodable {
+    struct FoodWeekday: Decodable {
+        var food: String
+        var weekday: String
+        var timesOnWeekday: Int
+        var timesTotal: Int
+    }
+    struct WorkoutAftereffect: Decodable {
+        var activity: String
+        var metric: String
+        var unit: String
+        var afterAvg: Double
+        var otherwiseAvg: Double
+        var sampleSize: Int
+    }
+    struct WorkoutTiming: Decodable {
+        var activity: String
+        var timeOfDay: String
+        var sampleSize: Int
+    }
+    struct ActiveWeekday: Decodable {
+        var weekday: String
+        var averageMinutes: Double
+        var overallAverageMinutes: Double
+    }
+    var foodWeekdayPatterns: [FoodWeekday]
+    var workoutAftereffects: [WorkoutAftereffect]
+    var workoutTiming: [WorkoutTiming]
+    var activeWeekdays: [ActiveWeekday]
+
+    var isEmpty: Bool {
+        foodWeekdayPatterns.isEmpty && workoutAftereffects.isEmpty && workoutTiming.isEmpty && activeWeekdays.isEmpty
+    }
+}
+
 /// One day, whether it's today's summary or a point on the trend line — the server
 /// sends the same shape for both.
 /// The 39 micronutrients the website's detailed-nutrition grid can show. Decoded as a
@@ -555,6 +593,13 @@ struct FuelClient {
     func dayDetail(date: String) async throws -> DayDetail {
         let data = try await send(try request("/api/mlog?integration=day-detail&date=\(date)"))
         return try JSONDecoder().decode(DayDetail.self, from: data)
+    }
+
+    /// Deterministically-mined candidate patterns for "Learn from me" — every number is
+    /// real, computed server-side; nothing here is AI-generated. See api/_lib/learning.js.
+    func learningSignals() async throws -> LearningSignals {
+        let data = try await send(try request("/api/mlog?integration=learning-signals"))
+        return try JSONDecoder().decode(LearningSignals.self, from: data)
     }
 
     func deleteFood(id: String) async throws {
