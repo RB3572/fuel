@@ -26,6 +26,10 @@ const TIME_ZONE = 'America/Los_Angeles'
 
 export default async function handler(req, res) {
   const integrationRoute = routeFromRequest(req)
+  if (integrationRoute === 'apple-app-site-association') {
+    handleAppleAppSiteAssociation(req, res)
+    return
+  }
   if (integrationRoute === 'authorization-server') {
     if (req.method !== 'GET') {
       methodNotAllowed(res, ['GET'])
@@ -945,6 +949,27 @@ function finite(value) {
   if (value == null || value === '') return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+// Tells iOS that fuel.rishib.com/open is Fuel's own universal link, so an OpenURLIntent
+// fired from a Lock Screen or Control Center control can open the app. Controls cannot
+// open a custom URL scheme (fuel://) the way the Home Screen widgets' widgetURL can —
+// only a universal link — so this is the one indirection that makes them work at all.
+function handleAppleAppSiteAssociation(req, res) {
+  if (req.method !== 'GET') {
+    methodNotAllowed(res, ['GET'])
+    return
+  }
+  res.setHeader('Content-Type', 'application/json')
+  res.setHeader('Cache-Control', 'public, max-age=3600')
+  res.status(200).send(JSON.stringify({
+    applinks: {
+      apps: [],
+      details: [
+        { appIDs: ['9VVDB6UALA.com.labloggercompany.fuel'], paths: ['/open', '/open/*'] },
+      ],
+    },
+  }))
 }
 
 function routeFromRequest(req) {

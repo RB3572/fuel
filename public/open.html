@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Opening Fuel…</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #111; color: #eee;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+  a { color: #4fd1c5; }
+</style>
+</head>
+<body>
+<p id="msg">Opening Fuel…</p>
+<script>
+  // This page only renders if iOS did not intercept /open as a universal link — the app
+  // installed, associated-domains verified, and the tap in-app. That should be the
+  // normal case; this is the fallback for everything else (app not installed yet, or a
+  // Control tapped before Apple's CDN has cached this device's AASA fetch).
+  //
+  // A same-page navigation to a custom scheme, unlike one fired from a background
+  // AppIntent, is something Safari allows on a user-initiated tap, so trying it here
+  // recovers the cases a Control on its own cannot.
+  var dest = new URLSearchParams(location.search).get('dest') || 'today';
+  var fallback = 'fuel://' + dest;
+  document.getElementById('msg').innerHTML =
+    'Opening Fuel… <a href="' + fallback + '">Tap here</a> if nothing happens.';
+  location.href = fallback;
+</script>
+</body>
+</html>

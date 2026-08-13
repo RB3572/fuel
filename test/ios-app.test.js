@@ -825,3 +825,80 @@ test('a coach answer survives leaving the app', () => {
   assert.match(ask, /endBackgroundTask\(task\)/)
   assert.match(ask, /await announceIfAway/)
 })
+
+test('workouts come from real HKWorkout data, not inferred from daily step/distance totals', () => {
+  // The reported bug: the dashboard treated any day with nonzero walking distance as
+  // "a workout", and since that distance climbs all day, every sync looked like a new
+  // one — the Coach congratulated a walk to the kitchen, repeatedly.
+  const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
+  assert.match(engine, /private func recentWorkouts\(days: Int\) async throws -> \[WorkoutSample\]/)
+  assert.match(engine, /sampleType: \.workoutType\(\)/)
+  assert.match(engine, /payload\.tables\.workoutSamples = try await recentWorkouts\(days: days\)/)
+
+  const dash = read('../api/_lib/neon-dashboard.js')
+  assert.doesNotMatch(dash, /function healthWorkouts/)
+  assert.match(dash, /FROM hk_workouts/)
+  assert.match(dash, /workouts: \(workoutsByDate\.get\(today\) \|\| \[\]\)\.map\(normalizeWorkout\)/)
+  // Distance goes to exactly one field depending on activity, never both — a swim's
+  // meters becoming both "1.2 mi" and "1312 yd" on the same row would be double-counted.
+  assert.match(dash, /isSwim \|\| distanceM == null \? null : distanceM \/ 1609\.344/)
+  assert.match(dash, /isSwim && distanceM != null \? distanceM \* 1\.09361 : null/)
+
+  // Dedup uses the workout's own stable id (the HealthKit UUID), not fields that
+  // change as the day goes on.
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  assert.match(client, /var id: String \{ workoutId \?\? /)
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  const react = store.slice(store.indexOf('private func reactToNewWorkouts'))
+  assert.match(react, /"\\\(summary\.date\)\|\\\(workout\.id\)"/)
+})
+
+test('a Lock Screen control opens the app via a universal link, not a custom scheme', () => {
+  // Verified against Apple's own forums: OpenURLIntent from a Control silently does
+  // nothing for a custom fuel:// scheme — only a universal link works there, unlike the
+  // Home Screen widgets' widgetURL, which is a different mechanism and handles fuel://
+  // fine (left untouched).
+  const intents = read('../ios/FuelWidgets/Sources/FuelControlIntents.swift')
+  assert.match(intents, /https:\/\/fuel\.rishib\.com\/open\?dest=log/)
+  assert.match(intents, /https:\/\/fuel\.rishib\.com\/open\?dest=today/)
+  assert.doesNotMatch(intents, /fuel:\/\/log/)
+
+  // The intent types must be compiled into the app target too, not only the extension
+  // — reported as required for the app to reliably foreground from a Control.
+  const spec = read('../ios/Fuel/project.yml')
+  assert.match(spec, /path: \.\.\/FuelWidgets\/Sources\/FuelControlIntents\.swift/)
+  assert.match(spec, /com\.apple\.developer\.associated-domains: \[applinks:fuel\.rishib\.com\]/)
+
+  // The app must actually be able to answer the AASA lookup at the well-known path.
+  assert.match(read('../vercel.json'), /"\/\.well-known\/apple-app-site-association"/)
+  const mlog = read('../api/mlog.js')
+  assert.match(mlog, /function handleAppleAppSiteAssociation/)
+  assert.match(mlog, /9VVDB6UALA\.com\.labloggercompany\.fuel/)
+
+  // And the app must read both shapes of the deep link once opened.
+  const app = read('../ios/Fuel/Sources/FuelApp.swift')
+  assert.match(app, /url\.scheme == "fuel"/)
+  assert.match(app, /url\.host == "fuel\.rishib\.com", url\.path == "\/open"/)
+})
+
+test('a food entry can be swiped to delete, with edit and add-as-meal behind a menu', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /struct FoodEntryRow: View/)
+  assert.match(today, /DragGesture\(minimumDistance: 16\)/)
+  assert.match(today, /Label\("Edit", systemImage: "pencil"\)/)
+  assert.match(today, /Label\("Add as a meal", systemImage: "bookmark"\)/)
+  assert.match(today, /store\.saveMeal\(named: entry\.food, fromEntryIDs: \[entry\.id\]\)/)
+  // The row keeps its scroll-to id, or the "jump to what I just logged" feature breaks.
+  assert.match(today, /FoodEntryRow\(entry: entry,[\s\S]{0,400}\n\s*\.id\(entry\.id\)/)
+  // The old always-visible Edit/Delete button pair is gone, not left as a duplicate.
+  assert.doesNotMatch(today, /Label\("Delete", systemImage: "trash"\)\.font\(\.caption\)/)
+})
+
+test('building a meal suggests your own recent history ahead of the common-foods table', () => {
+  const editor = read('../ios/Fuel/Sources/FoodLibraryView.swift')
+  const body = editor.slice(editor.indexOf('struct MealItemEditor'))
+  assert.match(body, /store\.foodHistory\.filter/)
+  const historyPos = body.indexOf('ForEach(historyMatches)')
+  const commonPos = body.indexOf('ForEach(commonMatches)')
+  assert.ok(historyPos > 0 && historyPos < commonPos, 'history suggestions must render before common foods')
+})

@@ -25,6 +25,9 @@ targets:
       - path: ../HealthLogger/Sources/SyncStore.swift
       - path: ../HealthLogger/Sources/FuelAPI.swift
       - path: ../HealthLogger/Sources/BackgroundSync.swift
+      # Also compiled into the widget extension (FuelWidgets target below) — see that
+      # file's header for why a Control's AppIntent needs to live in both.
+      - path: ../FuelWidgets/Sources/FuelControlIntents.swift
     dependencies:
       - target: FuelWidgets
         embed: true
@@ -42,6 +45,12 @@ targets:
         # sync and the widgets, which cannot sign in or read HealthKit themselves, read
         # it back.
         com.apple.security.application-groups: [group.com.labloggercompany.fuel]
+        # Lets a Lock Screen / Control Center control open the app. Controls can only
+        # open a universal link via OpenURLIntent — a custom fuel:// scheme silently
+        # does nothing there, unlike the Home Screen widgets' widgetURL, which is a
+        # different mechanism and handles fuel:// fine. fuel.rishib.com/open is that
+        # universal link; see /.well-known/apple-app-site-association.
+        com.apple.developer.associated-domains: [applinks:fuel.rishib.com]
     info:
       path: Resources/Info.plist
       properties:
@@ -86,7 +95,7 @@ targets:
         INFOPLIST_KEY_UIUserInterfaceStyle: Automatic
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 9VVDB6UALA
-        CURRENT_PROJECT_VERSION: 15
+        CURRENT_PROJECT_VERSION: 16
         MARKETING_VERSION: "1.0"
         # Xcode's recommended settings, set here so `xcodegen generate` keeps them.
         ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -127,7 +136,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 9VVDB6UALA
-        CURRENT_PROJECT_VERSION: 15
+        CURRENT_PROJECT_VERSION: 16
         MARKETING_VERSION: "1.0"
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         SKIP_INSTALL: YES

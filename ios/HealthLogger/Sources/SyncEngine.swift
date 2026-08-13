@@ -93,8 +93,10 @@ final class SyncEngine {
             // The statistics queries are the only slow part, so they are what the
             // progress bar measures. The last tenth covers the snapshot and the upload.
             payload.tables.dailyTotals = try await dailyTotals(days: days) { done, total in
-                await self.setProgress(Double(done) / Double(total) * 0.9)
+                await self.setProgress(Double(done) / Double(total) * 0.85)
             }
+            payload.tables.workoutSamples = try await recentWorkouts(days: days)
+            await setProgress(0.92)
             payload.snapshot = try await todaySnapshot()
             await setProgress(0.95)
             try await sink.send(payload)
@@ -117,6 +119,71 @@ final class SyncEngine {
             await setStatus(.failed(error.localizedDescription))
             return false
         }
+    }
+
+    // MARK: Workouts
+
+    /// The actual logged sessions — a run, a lift, a swim — as opposed to the ambient
+    /// walking distance and step count everyone accumulates just by moving through a
+    /// day. Those two used to be conflated: with no real workout data coming from the
+    /// device, the dashboard inferred a "workout" from any day with nonzero walking
+    /// distance, which is every day, so the Coach congratulated a walk to the kitchen.
+    ///
+    /// This queries actual `HKWorkout` objects. There are a handful a day at most, so —
+    /// unlike the per-second samples the old sync used to upload — sending them whole is
+    /// no different a tradeoff than the daily totals already are.
+    private func recentWorkouts(days: Int) async throws -> [WorkoutSample] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let start = calendar.date(byAdding: .day, value: -(days - 1), to: today) else { return [] }
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: .strictStartDate)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+
+        let workouts: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: .workoutType(), predicate: predicate,
+                                      limit: HKObjectQueryNoLimit, sortDescriptors: [sort]) { _, results, error in
+                if let error { continuation.resume(throwing: error); return }
+                continuation.resume(returning: (results as? [HKWorkout]) ?? [])
+            }
+            healthStore.execute(query)
+        }
+
+        return workouts.map { workout in
+            WorkoutSample(
+                uuid: workout.uuid.uuidString,
+                activityType: workout.workoutActivityType.wireName,
+                start: iso.string(from: workout.startDate),
+                end: iso.string(from: workout.endDate),
+                duration: workout.duration,
+                activeEnergy: energy(for: workout, .activeEnergyBurned),
+                distance: distance(for: workout),
+                elevation: nil,
+                averageHeartRate: averageHeartRate(for: workout),
+                source: workout.sourceRevision.source.name,
+                route: nil
+            )
+        }
+    }
+
+    private func energy(for workout: HKWorkout, _ identifier: HKQuantityTypeIdentifier) -> Double? {
+        guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { return nil }
+        return workout.statistics(for: type)?.sumQuantity()?.doubleValue(for: .kilocalorie())
+    }
+
+    /// Whichever distance the workout actually recorded — walking/running, cycling or
+    /// swimming — since a workout only ever populates one.
+    private func distance(for workout: HKWorkout) -> Double? {
+        for identifier in [HKQuantityTypeIdentifier.distanceWalkingRunning, .distanceCycling, .distanceSwimming] {
+            guard let type = HKObjectType.quantityType(forIdentifier: identifier),
+                  let value = workout.statistics(for: type)?.sumQuantity()?.doubleValue(for: .meter()) else { continue }
+            return value
+        }
+        return nil
+    }
+
+    private func averageHeartRate(for workout: HKWorkout) -> Double? {
+        guard let type = HKObjectType.quantityType(forIdentifier: .heartRate) else { return nil }
+        return workout.statistics(for: type)?.averageQuantity()?.doubleValue(for: HKUnit.count().unitDivided(by: .minute()))
     }
 
     // MARK: Daily aggregates

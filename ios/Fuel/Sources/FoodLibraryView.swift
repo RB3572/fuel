@@ -259,9 +259,11 @@ struct MealComposerView: View {
     }
 }
 
-/// One item of a meal being built. Reuses the common-foods table for autocomplete, so
-/// adding "banana" fills its macros without a model call.
+/// One item of a meal being built. Suggests from what you've actually logged before,
+/// ahead of the built-in common-foods table — a saved meal is meant to be your own
+/// usual order, and your own history is a better guess at that than a reference table.
 struct MealItemEditor: View {
+    @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
     var onAdd: (SavedMeal.Item) -> Void
@@ -274,7 +276,13 @@ struct MealItemEditor: View {
     @State private var fat = ""
     @State private var fiber = ""
 
-    private var suggestions: [CommonFood] { CommonFoods.matches(description, limit: 4) }
+    private var query: String { description.trimmingCharacters(in: .whitespaces).lowercased() }
+
+    private var historyMatches: [FoodHistoryItem] {
+        guard query.count >= 2 else { return [] }
+        return Array(store.foodHistory.filter { $0.description.lowercased().contains(query) }.prefix(4))
+    }
+    private var commonMatches: [CommonFood] { CommonFoods.matches(description, limit: 4) }
 
     var body: some View {
         NavigationStack {
@@ -282,7 +290,28 @@ struct MealItemEditor: View {
                 Section("What") {
                     TextField("e.g. greek yogurt", text: $description)
                     TextField("Portion (optional)", text: $portion)
-                    ForEach(suggestions) { hit in
+                    ForEach(historyMatches) { hit in
+                        Button {
+                            description = hit.description
+                            if portion.isEmpty { portion = hit.portion ?? "" }
+                            calories = Format.number(hit.calories)
+                            protein = Format.number(hit.protein)
+                            carbs = Format.number(hit.carbs)
+                            fat = Format.number(hit.fat)
+                            fiber = Format.number(hit.fiber)
+                        } label: {
+                            HStack {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
+                                Text(hit.description).font(.system(size: 14))
+                                Spacer()
+                                Text(Format.kcal(hit.calories)).font(.system(size: 12))
+                                    .foregroundStyle(Palette.muted(scheme))
+                            }
+                        }
+                        .foregroundStyle(Palette.ink(scheme))
+                    }
+                    ForEach(commonMatches) { hit in
                         Button {
                             description = hit.name
                             if portion.isEmpty { portion = hit.portion }

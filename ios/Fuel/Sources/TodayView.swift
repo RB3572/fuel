@@ -572,52 +572,12 @@ struct TodayView: View {
               subtitle: store.dashboard?.today.foodEntries.isEmpty == true ? "Nothing logged yet" : nil) {
             if !(store.dashboard?.today.foodEntries.isEmpty ?? true) { saveAsMealBar }
             ForEach(store.dashboard?.today.foodEntries ?? []) { entry in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline) {
-                        if !selectedEntryIDs.isEmpty || selecting {
-                            Button { toggleSelection(entry.id) } label: {
-                                Image(systemName: selectedEntryIDs.contains(entry.id)
-                                      ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selectedEntryIDs.contains(entry.id)
-                                                     ? DashboardTheme.shared.accent : Palette.muted(scheme))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.food ?? entry.meal ?? "—")
-                                .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.ink(scheme))
-                            Text([entry.time, entry.meal, entry.portion, entry.place]
-                                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                                .font(.caption).foregroundStyle(Palette.muted(scheme))
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(entry.calories == nil ? "—" : "\(Format.kcal(entry.calories)) kcal")
-                                .font(.system(size: 14, weight: .medium, design: .rounded))
-                            Text("\(Format.number(entry.protein, decimals: 1))p · \(Format.number(entry.carbs, decimals: 1))c · \(Format.number(entry.fat, decimals: 1))f · \(Format.number(entry.fiber, decimals: 1))fib")
-                                .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
-                        }
-                    }
-                    HStack(spacing: 8) {
-                        Button { editingFood = entry } label: {
-                            Label("Edit", systemImage: "pencil").font(.caption)
-                        }
-                        .buttonStyle(.bordered).controlSize(.small)
-                        Button(role: .destructive) {
-                            Task { await store.deleteFood(entry) }
-                        } label: { Label("Delete", systemImage: "trash").font(.caption) }
-                        .buttonStyle(.bordered).controlSize(.small)
-                    }
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, store.highlightedEntryID == entry.id ? 8 : 0)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(DashboardTheme.shared.accent
-                            .opacity(store.highlightedEntryID == entry.id ? 0.18 : 0))
-                )
-                .animation(.easeInOut(duration: 0.4), value: store.highlightedEntryID)
-                .id(entry.id)
+                FoodEntryRow(entry: entry, selecting: selecting,
+                            selected: selectedEntryIDs.contains(entry.id),
+                            highlighted: store.highlightedEntryID == entry.id,
+                            onToggleSelect: { toggleSelection(entry.id) },
+                            onEdit: { editingFood = entry })
+                    .id(entry.id)
                 Divider().opacity(0.4)
             }
 
@@ -707,6 +667,118 @@ struct TodayView: View {
                 Stat(label: "Food entries", value: "\(store.dashboard?.coverage?.foodEntries ?? 0)")
             }
         }
+    }
+}
+
+/// One logged entry: swipe left to reveal Delete, and a persistent "…" for the actions
+/// that aren't destructive — Edit, and turning this one entry into a reusable meal. A
+/// standalone struct rather than inline in the ForEach because the swipe needs its own
+/// per-row drag state, which only works with real view identity, not a closure.
+struct FoodEntryRow: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.colorScheme) private var scheme
+    let entry: FoodEntry
+    let selecting: Bool
+    let selected: Bool
+    let highlighted: Bool
+    var onToggleSelect: () -> Void
+    var onEdit: () -> Void
+
+    @State private var offset: CGFloat = 0
+    @State private var confirmingDelete = false
+    @GestureState private var dragTranslation: CGFloat = 0
+    private let revealWidth: CGFloat = 74
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            deleteButton
+            row
+                .background(Palette.surface(scheme))
+                .offset(x: min(0, offset + dragTranslation))
+                .gesture(swipeGesture)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .confirmationDialog("Delete this entry?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                withAnimation(.snappy) { offset = 0 }
+                Task { await store.deleteFood(entry) }
+            }
+        }
+    }
+
+    private var deleteButton: some View {
+        Button(role: .destructive) { confirmingDelete = true } label: {
+            VStack(spacing: 3) {
+                Image(systemName: "trash")
+                Text("Delete").font(.system(size: 10))
+            }
+            .frame(width: revealWidth)
+            .frame(maxHeight: .infinity)
+            .foregroundStyle(.white)
+        }
+        .background(Color.red)
+    }
+
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 16)
+            .updating($dragTranslation) { value, state, _ in
+                // Only a mostly-horizontal drag counts, so scrolling the page past this
+                // row does not also nudge it open.
+                guard !selecting, abs(value.translation.width) > abs(value.translation.height) else { return }
+                state = value.translation.width
+            }
+            .onEnded { value in
+                guard !selecting else { return }
+                withAnimation(.snappy) {
+                    offset = (offset + value.translation.width) < -revealWidth / 2 ? -revealWidth : 0
+                }
+            }
+    }
+
+    private var row: some View {
+        HStack(alignment: .firstTextBaseline) {
+            if selecting {
+                Button(action: onToggleSelect) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(selected ? DashboardTheme.shared.accent : Palette.muted(scheme))
+                }
+                .buttonStyle(.plain)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.food ?? entry.meal ?? "—")
+                    .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.ink(scheme))
+                Text([entry.time, entry.meal, entry.portion, entry.place]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(Palette.muted(scheme))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(entry.calories == nil ? "—" : "\(Format.kcal(entry.calories)) kcal")
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                Text("\(Format.number(entry.protein, decimals: 1))p · \(Format.number(entry.carbs, decimals: 1))c · \(Format.number(entry.fat, decimals: 1))f · \(Format.number(entry.fiber, decimals: 1))fib")
+                    .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
+            }
+            if !selecting {
+                Menu {
+                    Button { onEdit() } label: { Label("Edit", systemImage: "pencil") }
+                    Button {
+                        Task { await store.saveMeal(named: entry.food, fromEntryIDs: [entry.id]) }
+                    } label: { Label("Add as a meal", systemImage: "bookmark") }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .foregroundStyle(Palette.muted(scheme))
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, highlighted ? 8 : 0)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(DashboardTheme.shared.accent.opacity(highlighted ? 0.18 : 0))
+        )
+        .animation(.easeInOut(duration: 0.4), value: highlighted)
     }
 }
 

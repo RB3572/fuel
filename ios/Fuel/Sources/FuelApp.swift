@@ -97,10 +97,21 @@ struct RootView: View {
                 notifications.openCoachRequested = false
             }
             .task { await notifications.refreshAuthorizationState() }
-            // Tapping a Home Screen widget opens the tab it came from.
+            // Tapping a Home Screen widget opens the tab it came from, via fuel://<tab>.
+            // A Lock Screen or Control Center control arrives differently: it can only
+            // open a universal link (https://fuel.rishib.com/open?dest=<tab>), never the
+            // custom scheme, so both shapes are read here into the same destination.
             .onOpenURL { url in
-                guard url.scheme == "fuel" else { return }
-                switch url.host {
+                let destination: String?
+                if url.scheme == "fuel" {
+                    destination = url.host
+                } else if url.host == "fuel.rishib.com", url.path == "/open" {
+                    destination = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                        .queryItems?.first { $0.name == "dest" }?.value
+                } else {
+                    destination = nil
+                }
+                switch destination {
                 case "today": tab = .today
                 case "trends": tab = .trends
                 case "log": tab = .log

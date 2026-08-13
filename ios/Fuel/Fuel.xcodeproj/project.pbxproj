@@ -12,6 +12,7 @@
 		05C1542808886A3D2E1DB567 /* FoodLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A404F3D7B76E95E6D46A27FA /* FoodLibraryView.swift */; };
 		0D6A4D54AC334FEC91E29321 /* FuelControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8AA4D96DE999C1F0E132F7A /* FuelControls.swift */; };
 		12239BAF7F793D39DE03D1CC /* SyncSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1833EA7687ECA1C1CF14B0 /* SyncSink.swift */; };
+		148B0A560C2A61F40D1CF042 /* FuelControlIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C76C5CAE8ABFC0A234260524 /* FuelControlIntents.swift */; };
 		17095686D41CDFCF7CB90DC2 /* ExploreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CEACC5A8135C313037AB184 /* ExploreView.swift */; };
 		1B44A3DEBEC4CF4DFD8C8B5E /* FuelAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E99656AED251FEA35F2F100C /* FuelAPI.swift */; };
 		1DD752F57B36749B817016E9 /* RemoteAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3603D8F4D4375B05FDCAD92 /* RemoteAI.swift */; };
@@ -24,6 +25,7 @@
 		5251364098C3A21B22FA0441 /* CompareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D026ABD99CA4B6658408B570 /* CompareView.swift */; };
 		55A5DC93B5930CFD60DC26F0 /* SignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FC3C7B7D4B5951095EF487C /* SignIn.swift */; };
 		5BABDA2D6CB6F7469FEA2E49 /* FuelWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DDE47FA166225FB7AD5457DA /* FuelWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		655E648EBCC9741577616E96 /* FuelControlIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C76C5CAE8ABFC0A234260524 /* FuelControlIntents.swift */; };
 		6A85BEE5B833F09BEE7DC5EF /* PlacesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE8BBF80AB6D80821F0788BC /* PlacesView.swift */; };
 		6ACA39F77BAEDC9AF69FDB8A /* WidgetShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED9F948A227FF5B43E2FB84 /* WidgetShared.swift */; };
 		6EA4432B193045BDE4B40D83 /* MarkdownText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F28885825E18C8C99FB8B952 /* MarkdownText.swift */; };
@@ -106,6 +108,7 @@
 		C3603D8F4D4375B05FDCAD92 /* RemoteAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteAI.swift; sourceTree = "<group>"; };
 		C440567FECEB2E771E84314D /* BackgroundSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSync.swift; sourceTree = "<group>"; };
 		C6C2EA6227B2FD6E2349E050 /* OnDeviceAI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceAI.swift; sourceTree = "<group>"; };
+		C76C5CAE8ABFC0A234260524 /* FuelControlIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuelControlIntents.swift; sourceTree = "<group>"; };
 		CC8DA8BDBC77172F295DFC31 /* APIKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeyStore.swift; sourceTree = "<group>"; };
 		D026ABD99CA4B6658408B570 /* CompareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompareView.swift; sourceTree = "<group>"; };
 		DB9C189F6CD08D62BBD78E93 /* Notifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Notifications.swift; sourceTree = "<group>"; };
@@ -232,6 +235,7 @@
 			isa = PBXGroup;
 			children = (
 				2214194DD516AEE8DA0B1003 /* EnergyWidgets.swift */,
+				C76C5CAE8ABFC0A234260524 /* FuelControlIntents.swift */,
 				E8AA4D96DE999C1F0E132F7A /* FuelControls.swift */,
 				8CC32DEDC7B326E986F87EE1 /* FuelWidgetBundle.swift */,
 				82CC9707C602909329392317 /* OtherWidgets.swift */,
@@ -350,6 +354,7 @@
 				1B44A3DEBEC4CF4DFD8C8B5E /* FuelAPI.swift in Sources */,
 				028DDE52F36882D6BEECDFEA /* FuelApp.swift in Sources */,
 				F948E38B03D9AC4378588BE2 /* FuelClient.swift in Sources */,
+				655E648EBCC9741577616E96 /* FuelControlIntents.swift in Sources */,
 				B35DE1A8E1AA67AD06DF0D9D /* HealthKitCatalog.swift in Sources */,
 				7DE5EFE41422522226BCEFB0 /* LiftingView.swift in Sources */,
 				9B6B8D55F7A46EA844AA943A /* LocationSampler.swift in Sources */,
@@ -379,6 +384,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				ECF574744DC755BA3003094C /* EnergyWidgets.swift in Sources */,
+				148B0A560C2A61F40D1CF042 /* FuelControlIntents.swift in Sources */,
 				0D6A4D54AC334FEC91E29321 /* FuelControls.swift in Sources */,
 				3969C073CBD7719404553DAC /* FuelWidgetBundle.swift in Sources */,
 				C5C06D90BA4AE88A150E4FA1 /* OtherWidgets.swift in Sources */,
@@ -459,7 +465,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -547,7 +553,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -570,7 +576,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -595,7 +601,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;

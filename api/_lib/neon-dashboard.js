@@ -22,7 +22,7 @@ export async function getNeonDashboard(userId) {
   await ensureNutrientSchema()
   const db = sql()
   const today = dateKey(new Date())
-  const [healthRows, foodRows, supplementRows, sharedRecipes, userGoals] = await Promise.all([
+  const [healthRows, foodRows, supplementRows, sharedRecipes, userGoals, workoutRows] = await Promise.all([
     db`SELECT * FROM health_daily WHERE user_id = ${userId} AND date >= (${today}::date - interval '30 days') ORDER BY date ASC`,
     // The place join is a left join on purpose: an entry logged with location off, or
     // before place tagging existed, is still an entry.
@@ -37,11 +37,20 @@ export async function getNeonDashboard(userId) {
     // dashboard — degrade to an empty list, as getIntradayEnergy already does.
     listRecipes().catch((error) => { console.error('Shared recipe bank load failed', error); return [] }),
     getUserGoals(userId),
+    // Real HKWorkout objects, not the daily walking-distance inference this replaced:
+    // that counted every day with any steps as "a workout", so the Coach congratulated
+    // a walk to the kitchen. Table may not exist yet on a database that predates it.
+    db`SELECT hk_uuid, activity_type, start_at, end_at, duration_s, active_kcal, distance_m, average_heart_rate_bpm
+       FROM hk_workouts
+       WHERE user_id = ${userId} AND start_at >= (${today}::date - interval '30 days')
+       ORDER BY start_at ASC`
+      .catch((error) => { console.error('Workout load failed', error); return [] }),
   ])
 
   const healthByDate = new Map(healthRows.map((row) => [databaseDateKey(row.date), row]))
   const foodsByDate = groupByDate(foodRows, 'occurred_at')
   const supplementsByDate = groupByDate(supplementRows, 'occurred_at')
+  const workoutsByDate = groupByDate(workoutRows, 'start_at')
   const todayHealth = healthByDate.get(today) || null
   const todayFoods = foodsByDate.get(today) || []
   const todaySupplements = supplementsByDate.get(today) || []
@@ -163,7 +172,7 @@ export async function getNeonDashboard(userId) {
     today: {
       summary,
       foodEntries: todayFoods.map(normalizeFood),
-      workouts: healthWorkouts(todayHealth),
+      workouts: (workoutsByDate.get(today) || []).map(normalizeWorkout),
       supplements: todaySupplements.map(normalizeSupplement),
     },
     recipes: sharedRecipes,
@@ -205,31 +214,48 @@ export async function getNeonDashboard(userId) {
 function range(target) { return { minimum: null, target, maximum: null } }
 
 
-function healthWorkouts(health) {
-  if (!health) return []
-  const entries = []
-  const swimDistance = number(health.swimming_distance_yd)
-  const swimStrokes = number(health.swimming_strokes)
-  if (swimDistance || swimStrokes) entries.push({
-    time: '', activity: 'Swimming', durationMinutes: null, activeCalories: null, totalCalories: null,
-    distanceMiles: null, averagePace: '', averageHeartRate: null, averageCadence: null, effort: '', location: '',
-    swimmingDistanceYards: swimDistance, stepCount: null, strokeCount: swimStrokes, dataQuality: 'Apple Health',
-    notes: 'Daily swimming totals synchronized from Apple Health.', source: 'Apple Shortcuts',
-  })
-  const cyclingDistance = number(health.cycling_distance_mi)
-  if (cyclingDistance) entries.push({
-    time: '', activity: 'Cycling', durationMinutes: null, activeCalories: null, totalCalories: null,
-    distanceMiles: cyclingDistance, averagePace: '', averageHeartRate: null, averageCadence: null, effort: '', location: '',
-    swimmingDistanceYards: null, stepCount: null, strokeCount: null, dataQuality: 'Apple Health',
-    notes: 'Daily cycling distance synchronized from Apple Health.', source: 'Apple Shortcuts',
-  })
-  if (number(health.walking_running_distance_mi) || number(health.step_count)) entries.push({
-    time: '', activity: 'Walking and running', durationMinutes: null, activeCalories: null, totalCalories: null,
-    distanceMiles: number(health.walking_running_distance_mi), averagePace: '', averageHeartRate: null, averageCadence: null,
-    effort: '', location: '', swimmingDistanceYards: null, stepCount: number(health.step_count), strokeCount: null,
-    dataQuality: 'Apple Health', notes: 'Daily walking and running totals.', source: 'Apple Shortcuts',
-  })
-  return entries
+/// Readable names for the activity-type strings SyncEngine.swift's `wireName` sends.
+/// Anything unrecognised (including the "other-N" fallback for a type Fuel does not
+/// name) still shows something rather than the raw wire token.
+const ACTIVITY_NAMES = {
+  running: 'Running', walking: 'Walking', cycling: 'Cycling', swimming: 'Swimming',
+  strengthTraining: 'Strength training', functionalStrength: 'Functional strength',
+  hiit: 'HIIT', yoga: 'Yoga', pilates: 'Pilates', elliptical: 'Elliptical',
+  rowing: 'Rowing', stairClimbing: 'Stair climbing', hiking: 'Hiking', tennis: 'Tennis',
+  basketball: 'Basketball', soccer: 'Soccer', coreTraining: 'Core training',
+  flexibility: 'Flexibility', cooldown: 'Cooldown', mindAndBody: 'Mind and body',
+  dance: 'Dance', badminton: 'Badminton', pickleball: 'Pickleball',
+}
+function activityName(wireName) {
+  if (ACTIVITY_NAMES[wireName]) return ACTIVITY_NAMES[wireName]
+  if (!wireName) return 'Workout'
+  // camelCase -> "Camel case" for anything not in the table above.
+  const spaced = wireName.replace(/^other-\d+$/, 'Workout').replace(/([A-Z])/g, ' $1')
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}
+
+/// A real logged workout, as opposed to the ambient walking distance and step count
+/// everyone accumulates just by moving through a day. Distance is reported under
+/// whichever field the activity actually recorded — a swim's meters become yards, a run
+/// or ride's become miles — never both, since a workout only ever populates one.
+function normalizeWorkout(row) {
+  const activity = row.activity_type || ''
+  const isSwim = /swim/i.test(activity)
+  const distanceM = number(row.distance_m)
+  return {
+    id: String(row.hk_uuid),
+    time: new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(row.start_at)),
+    activity: activityName(activity),
+    durationMinutes: row.duration_s != null ? number(row.duration_s) / 60 : null,
+    activeCalories: number(row.active_kcal),
+    totalCalories: null,
+    distanceMiles: isSwim || distanceM == null ? null : distanceM / 1609.344,
+    averagePace: '', averageHeartRate: number(row.average_heart_rate_bpm), averageCadence: null,
+    effort: '', location: '',
+    swimmingDistanceYards: isSwim && distanceM != null ? distanceM * 1.09361 : null,
+    stepCount: null, strokeCount: null,
+    dataQuality: 'Apple Health workout', notes: '', source: 'Apple Health',
+  }
 }
 
 function normalizeFood(row) {

@@ -119,13 +119,21 @@ struct FoodEntry: Decodable, Identifiable {
 }
 
 struct Workout: Decodable, Identifiable {
+    /// The HealthKit workout's own UUID, when this came from a real logged session.
+    /// Falls back to a composed key only for the (now rare) shape that has none, so
+    /// `id` is never empty.
+    var workoutId: String?
     var activity: String?
     var distanceMiles: Double?
     var swimmingDistanceYards: Double?
     var strokeCount: Double?
     var stepCount: Double?
     var dataQuality: String?
-    var id: String { (activity ?? "workout") + String(distanceMiles ?? 0) + String(stepCount ?? 0) }
+    var id: String { workoutId ?? (activity ?? "workout") + String(distanceMiles ?? 0) + String(stepCount ?? 0) }
+
+    enum CodingKeys: String, CodingKey {
+        case workoutId = "id", activity, distanceMiles, swimmingDistanceYards, strokeCount, stepCount, dataQuality
+    }
 }
 
 struct Supplement: Decodable, Identifiable {
