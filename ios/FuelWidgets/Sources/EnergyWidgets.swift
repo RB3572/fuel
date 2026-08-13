@@ -100,8 +100,8 @@ struct EnergyGaugeView: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    Text("in \(FuelWidgetFormat.whole(s.consumed))")
-                    Text("out \(FuelWidgetFormat.whole(s.burned))")
+                    Text("Burned \(FuelWidgetFormat.whole(s.burned))")
+                    Text("Consumed \(FuelWidgetFormat.whole(s.consumed))")
                 }
                 .font(.system(size: 9)).foregroundStyle(.secondary)
             }
@@ -132,7 +132,7 @@ struct EnergySplitView: View {
                     WidgetTitle(text: "Burn split", palette: p)
                     KeyDot(color: p.activeColor, label: "Active", value: FuelWidgetFormat.whole(s.active))
                     KeyDot(color: p.restingColor, label: "Resting", value: FuelWidgetFormat.whole(s.resting))
-                    KeyDot(color: p.surplusColor, label: "Eaten", value: FuelWidgetFormat.whole(s.consumed))
+                    KeyDot(color: p.surplusColor, label: "Consumed", value: FuelWidgetFormat.whole(s.consumed))
                 }
             }
         }
@@ -149,10 +149,10 @@ struct EnergyStackView: View {
         let (amount, caption) = balanceLine(s.deficit)
         Bubble(palette: p) {
             VStack(alignment: .leading, spacing: 8) {
-                WidgetTitle(text: "In versus out", palette: p)
+                WidgetTitle(text: "Burned vs. consumed", palette: p)
                 VStack(spacing: 3) {
                     HStack {
-                        Text("Out").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text("Burned").font(.system(size: 10)).foregroundStyle(.secondary)
                         Spacer()
                         Text(FuelWidgetFormat.whole(s.burned)).font(.system(size: 11, weight: .semibold))
                     }
@@ -173,7 +173,7 @@ struct EnergyStackView: View {
                 }
                 VStack(spacing: 3) {
                     HStack {
-                        Text("In").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text("Consumed").font(.system(size: 10)).foregroundStyle(.secondary)
                         Spacer()
                         Text(FuelWidgetFormat.whole(s.consumed)).font(.system(size: 11, weight: .semibold))
                     }

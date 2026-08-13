@@ -94,8 +94,8 @@ struct EnergyStackWidget: Widget {
         StaticConfiguration(kind: "FuelEnergyStack", provider: FuelProvider()) { entry in
             FuelWidgetShell(entry: entry, destination: "today") { EnergyStackView(entry: entry) }
         }
-        .configurationDisplayName("In versus out")
-        .description("Calories out stacked against calories in.")
+        .configurationDisplayName("Burned vs. consumed")
+        .description("Calories burned stacked against calories consumed.")
         .supportedFamilies([.systemMedium])
     }
 }

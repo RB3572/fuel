@@ -1184,3 +1184,23 @@ test('the "return to Today" button is a labelled pill, not a bare icon that read
   assert.match(today, /\.background\(Capsule\(\)\.fill\(DashboardTheme\.shared\.accent\.opacity\(0\.15\)\)\)/)
   assert.match(today, /\.padding\(\.horizontal, 14\)/)
 })
+
+test('widgets never use informal "in/out" language — always Burned/Consumed', () => {
+  // Hard rule: the person building this app explicitly rejected "In"/"Out" (and
+  // "Eaten") as too casual for a widget a stranger might glance at over your shoulder.
+  // Every energy widget must say "Burned" and "Consumed", spelled out, every time.
+  for (const file of ['EnergyWidgets', 'FuelWidgetBundle']) {
+    const src = read(`../ios/FuelWidgets/Sources/${file}.swift`)
+    assert.doesNotMatch(src, /"[Ii]n"/, `${file}.swift uses "In" instead of "Consumed"`)
+    assert.doesNotMatch(src, /"[Oo]ut"/, `${file}.swift uses "Out" instead of "Burned"`)
+    assert.doesNotMatch(src, /"[Ee]aten"/, `${file}.swift uses "Eaten" instead of "Consumed"`)
+    assert.doesNotMatch(src, /in versus out/i, `${file}.swift still has "in versus out" phrasing`)
+  }
+  const energy = read('../ios/FuelWidgets/Sources/EnergyWidgets.swift')
+  assert.match(energy, /Text\("Burned \\\(FuelWidgetFormat\.whole\(s\.burned\)\)"\)/)
+  assert.match(energy, /Text\("Consumed \\\(FuelWidgetFormat\.whole\(s\.consumed\)\)"\)/)
+  assert.match(energy, /KeyDot\(color: p\.surplusColor, label: "Consumed"/)
+  assert.match(energy, /WidgetTitle\(text: "Burned vs\. consumed", palette: p\)/)
+  const bundle = read('../ios/FuelWidgets/Sources/FuelWidgetBundle.swift')
+  assert.match(bundle, /\.configurationDisplayName\("Burned vs\. consumed"\)/)
+})
