@@ -6,7 +6,6 @@ import UIKit
 // tab, because "why has my data stopped arriving" is a question you answer here.
 
 struct MoreView: View {
-    @Bindable private var notifications = Notifications.shared
     @Environment(AppStore.self) private var store
     @Environment(OnDeviceAI.self) private var ai
     @Environment(\.colorScheme) private var scheme
@@ -80,21 +79,11 @@ struct MoreView: View {
                 }
 
                 Section {
-                    Toggle("Coach notifications", isOn: $notifications.enabled)
-                    if notifications.enabled && notifications.deniedBySystem {
-                        Button {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                UIApplication.shared.open(url)
-                            }
-                        } label: {
-                            Label("Allow notifications in Settings", systemImage: "exclamationmark.triangle")
-                                .font(.footnote)
-                        }
+                    NavigationLink { NotificationSettingsView() } label: {
+                        Label("Notifications", systemImage: "bell")
                     }
-                } header: {
-                    Text("Notifications")
                 } footer: {
-                    Text("The Coach tells you when it has finished an answer you asked for while you were elsewhere, and reacts when a workout syncs. Fuel never sends reminders to log — nothing here nags.")
+                    Text("Fuel never sends reminders to log — nothing here nags. Every notification is the Coach, either answering something you asked or telling you something it noticed.")
                 }
 
                 Section {
@@ -207,5 +196,52 @@ struct MoreView: View {
                 if !on { keyStore.setKey("", for: keyStore.selectedProvider) }
             }
         }
+    }
+}
+
+/// One master switch for the coach speaking up first, and separate toggles underneath
+/// for exactly which kinds of outreach that covers — plus a reply toggle that stands on
+/// its own, since answering a question isn't outreach.
+struct NotificationSettingsView: View {
+    @Bindable private var notifications = Notifications.shared
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("Coach replies", isOn: $notifications.repliesEnabled)
+            } footer: {
+                Text("When an answer you asked for finishes after you've left the app. Always available — this isn't outreach, it's the coach getting back to you.")
+            }
+
+            Section {
+                Toggle("Let coach message me", isOn: $notifications.proactiveEnabled)
+                if notifications.proactiveEnabled {
+                    Toggle("Workout reactions", isOn: $notifications.workoutReactionsEnabled)
+                    Toggle("Weekly rundown", isOn: $notifications.weeklyRundownEnabled)
+                }
+            } header: {
+                Text("The coach reaching out first")
+            } footer: {
+                Text("With this on, the coach can message you without being asked: a congratulations and a suggestion right after a workout syncs, and a rundown of your week — workouts, sleep, meals, what's working — Saturday mornings. Off means the coach never speaks first, only replies.")
+            }
+
+            if (notifications.repliesEnabled || notifications.proactiveEnabled) && notifications.deniedBySystem {
+                Section {
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Label("Allow notifications in Settings", systemImage: "exclamationmark.triangle")
+                    }
+                } footer: {
+                    Text("iOS is blocking notifications for Fuel. These toggles won't do anything until you allow them in Settings.")
+                }
+            }
+        }
+        .navigationTitle("Notifications")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await notifications.refreshAuthorizationState() }
     }
 }

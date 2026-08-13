@@ -326,6 +326,8 @@ struct ContextEditorSheet: View {
     @State private var text = ""
     @State private var saving = false
     @State private var loaded = false
+    @State private var learning = false
+    @State private var learnError: String?
 
     private static let limit = 20000
 
@@ -341,6 +343,31 @@ struct ContextEditorSheet: View {
                         }
                 } footer: {
                     Text("\(text.count) / \(Self.limit) characters. MCP clients can read this field and append newly learned preferences. Saving here replaces the complete stored context.")
+                }
+                Section {
+                    Button {
+                        Task {
+                            learning = true; learnError = nil
+                            do {
+                                let bullets = try await store.learnFromMe()
+                                appendLearned(bullets)
+                            } catch {
+                                learnError = "Couldn't learn anything just now — try again in a bit."
+                            }
+                            learning = false
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if learning { ProgressView().controlSize(.small) } else { Image(systemName: "sparkles") }
+                            Text(learning ? "Looking at what you've logged…" : "Learn from me")
+                        }
+                    }
+                    .disabled(learning || !loaded)
+                    if let learnError {
+                        Text(learnError).font(.footnote).foregroundStyle(.orange)
+                    }
+                } footer: {
+                    Text("Looks at your logged routines, places, food and workouts and adds what it notices below — it only ever adds to what's here, never removes or rewrites anything. Review it and tap Save when you're happy.")
                 }
             }
             .navigationTitle("Preferences & context")
@@ -360,5 +387,21 @@ struct ContextEditorSheet: View {
                 loaded = true
             }
         }
+    }
+
+    /// Appends, never replaces — a fresh header each time so repeated runs don't blur
+    /// together, and every existing line stays exactly where it was.
+    private func appendLearned(_ bullets: [String]) {
+        guard !bullets.isEmpty else { return }
+        let header = "— Learned from your data, \(Self.dateStamp()) —"
+        let block = ([header] + bullets.map { "- \($0)" }).joined(separator: "\n")
+        text = text.isEmpty ? block : text + "\n\n" + block
+        if text.count > Self.limit { text = String(text.prefix(Self.limit)) }
+    }
+
+    private static func dateStamp() -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        return f.string(from: Date())
     }
 }

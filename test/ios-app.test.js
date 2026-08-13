@@ -199,9 +199,11 @@ test('Trends plots two metrics on independent axes, and every chart zooms', () =
 
   // One metric catalogue shared with Explore, so the two can't drift apart.
   assert.match(trends, /private var metrics: \[ExploreMetric\] \{ exploreMetrics \}/)
-  // Shared zoom/scroll component and one date formatter for every axis.
+  // Shared zoom component and one date formatter for every axis. Zoom is pinch-only —
+  // a chart-level drag-to-scroll would race the page's own vertical ScrollView on a
+  // diagonal drag, which is why that combination was removed.
   assert.match(trends, /struct ZoomableDateChart<Content: ChartContent>: View/)
-  assert.match(trends, /\.chartScrollableAxes\(\.horizontal\)/)
+  assert.doesNotMatch(trends, /\.chartScrollableAxes\(\.horizontal\)/)
   assert.match(trends, /MagnificationGesture\(\)/)
   assert.match(trends, /Text\(DateAxis\.short\(iso\)\)/)
   assert.match(explore, /ZoomableDateChart\(dates:/)
@@ -216,8 +218,10 @@ test('Explore colours each series correctly and keeps one x-ordering', () => {
   assert.match(explore, /\.chartForegroundStyleScale\(domain: withData\.map\(\\.label\), range: withData\.map\(\\.color\)\)/)
   assert.doesNotMatch(explore, /\.foregroundStyle\(s\.color\)/)
   // Without an explicit domain each series contributed its own categories in its own
-  // order, so two metrics with different gaps crossed back over themselves.
-  assert.match(trends, /\.chartXScale\(domain: dates\)/)
+  // order, so two metrics with different gaps crossed back over themselves. The domain
+  // is now a trailing slice (visibleDates) rather than the full history, since zoom no
+  // longer scrolls — but it's still one shared, explicit x-ordering.
+  assert.match(trends, /\.chartXScale\(domain: visibleDates\)/)
 })
 
 test('Coach replies render markdown instead of showing raw asterisks', () => {
@@ -267,15 +271,12 @@ test('the Coach can act, but nothing mutates without an explicit confirmation', 
 
 test('the deficit chart opens on the most recent days and reads out a tapped bar', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
-  // A position bound in onAppear/task was applied before the scroll view had laid out
-  // and silently discarded, which is why this opened weeks in the past. initialX is
-  // applied at construction; it anchors the *leading* edge, so it has to be the start
-  // of the window rather than the last day or today parks at the far left.
-  assert.match(today, /\.chartScrollPosition\(initialX: initialScrollDate\)/)
-  assert.match(today, /let start = max\(0, points\.count - Self\.defaultWindow\)/)
-  assert.doesNotMatch(today, /scrollPosition = points\.last/)
-  // Today plus the previous three.
-  assert.match(today, /static let defaultWindow = 4/)
+  // The chart always opens on the newest data: its domain is a trailing slice of
+  // `points`, anchored off the end of the array rather than any scroll position that
+  // could be applied before layout and silently discarded.
+  assert.match(today, /private var visibleDates: \[String\] \{/)
+  assert.match(today, /points\.suffix\(count\)\.map\(\\\.date\)/)
+  assert.doesNotMatch(today, /\.chartScrollPosition\(/)
   // A plain tap that toggles, not chartXSelection's press-and-hold — which also cleared
   // on lift, so a reading never stayed up.
   assert.doesNotMatch(today, /\.chartXSelection\(/)
@@ -720,9 +721,12 @@ test('vitals axis ticks thin out as you zoom out', () => {
   // Zoomed all the way in, a tick per day.
   assert.equal(cases[0].unit, 'day')
   assert.equal(cases[0].count, 1)
-  // And the chart is actually zoomable, or the density would never change.
+  // And the chart is actually zoomable, or the density would never change. Zoom is
+  // pinch-only — no chart-level drag-to-scroll, which would race the page's own
+  // vertical ScrollView on a diagonal drag.
   assert.match(src, /MagnifyGesture\(\)/)
-  assert.match(src, /\.chartXVisibleDomain\(length: window \* 86_400\)/)
+  assert.doesNotMatch(src, /\.chartScrollableAxes/)
+  assert.match(src, /\.chartXScale\(domain: visibleRange\)/)
 })
 
 test('the widget scheme names a widget kind, so Run works on it', () => {
@@ -801,8 +805,9 @@ test('the log library is one menu over meals, history and common foods', () => {
 test('notifications are opt-in, Coach-only, and never fire in the foreground', () => {
   const notif = read('../ios/Fuel/Sources/Notifications.swift')
   // Off until asked for: permission requested on first launch gets declined forever.
-  assert.match(notif, /enabled = UserDefaults\.standard\.bool\(forKey: Self\.enabledKey\)/)
-  assert.match(notif, /guard enabled else \{ return \}/)
+  // (Replies/reactions/weekly default true, but only ever fire once something else —
+  // the master switch, or a reply actually being awaited — already applies.)
+  assert.match(notif, /proactiveEnabled = d\.bool\(forKey: Self\.proactiveKey\)/)
   assert.match(notif, /guard UIApplication\.shared\.applicationState != \.active else \{ return \}/)
   // A workout is reacted to once, not on every sync that re-reads the same day.
   assert.match(notif, /func isNewWorkout/)
@@ -814,7 +819,6 @@ test('notifications are opt-in, Coach-only, and never fire in the foreground', (
     'a workout must be marked seen before the reply is generated')
   // Tapping the notification lands in the chat.
   assert.match(read('../ios/Fuel/Sources/FuelApp.swift'), /notifications\.openCoachRequested/)
-  assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /Toggle\("Coach notifications"/)
 })
 
 test('a coach answer survives leaving the app', () => {
@@ -886,7 +890,7 @@ test('swiping a food entry reveals three real buttons, not a menu behind a menu'
   const rowStart = today.indexOf('struct FoodEntryRow: View')
   const rowEnd = today.indexOf('\n/// The website\'s NUTRIENT_DISPLAY')
   const row = today.slice(rowStart, rowEnd > rowStart ? rowEnd : undefined)
-  assert.match(row, /DragGesture\(minimumDistance: 16\)/)
+  assert.match(row, /DragGesture\(minimumDistance: 8\)/)
   // Each action is its own rectangle in the revealed strip — no Menu anywhere in the
   // row, which would mean a tap-to-reveal list sitting behind the swipe instead of
   // being replaced by it.
@@ -913,4 +917,158 @@ test('building a meal suggests your own recent history ahead of the common-foods
   const historyPos = body.indexOf('ForEach(historyMatches)')
   const commonPos = body.indexOf('ForEach(commonMatches)')
   assert.ok(historyPos > 0 && historyPos < commonPos, 'history suggestions must render before common foods')
+})
+
+test('charts no longer offer drag-to-scroll, only pinch — the outer page stays vertical-only', () => {
+  // chartScrollableAxes sat inside a vertical ScrollView; on a diagonal drag both the
+  // chart's own horizontal scroll and the page's vertical scroll could fire together,
+  // which read as the whole page being freely draggable rather than a chart with its
+  // own scroll. Pinch alone can't cause that ambiguity — it needs a second finger a
+  // one-finger page-scroll never provides.
+  for (const file of ['TrendsView', 'VitalsDetailView', 'TodayView']) {
+    const src = read(`../ios/Fuel/Sources/${file}.swift`)
+    assert.doesNotMatch(src, /\.chartScrollableAxes\(/, `${file}.swift still offers drag-to-scroll`)
+    assert.doesNotMatch(src, /\.chartScrollPosition\(/, `${file}.swift still offers drag-to-scroll`)
+  }
+  // Each chart still zooms — the window just resizes around a fixed trailing anchor
+  // instead of scrolling to an arbitrary position.
+  assert.match(read('../ios/Fuel/Sources/TrendsView.swift'), /MagnificationGesture\(\)/)
+  assert.match(read('../ios/Fuel/Sources/VitalsDetailView.swift'), /MagnifyGesture\(\)/)
+  assert.match(read('../ios/Fuel/Sources/TodayView.swift'), /MagnificationGesture\(\)/)
+})
+
+test('the food-row swipe is driven by one committed state, not a GestureState racing it', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  const row = today.slice(today.indexOf('struct FoodEntryRow: View'), today.indexOf('\n/// The website\'s NUTRIENT_DISPLAY'))
+  // The old @GestureState + separate committed offset combination was the actual bug:
+  // GestureState snaps to zero un-animated the instant a drag ends, the same beat
+  // onEnded's withAnimation was setting the committed offset, so the row visibly
+  // jumped to zero for a frame before animating to where it was headed.
+  assert.doesNotMatch(row, /@GestureState private var offset/)
+  assert.match(row, /\.onChanged \{ value in/)
+  assert.match(row, /predictedEndTranslation/)
+})
+
+test('the food-consumed selection bar is Select-first and closes when you tap elsewhere', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /Label\("Select", systemImage: "checkmark\.circle"\)/)
+  // Once something's picked, Select's slot becomes Save-as-meal plus a bulk Delete —
+  // not a fixed row of buttons some of which sit disabled.
+  assert.match(today, /Button\("Save as meal"\)/)
+  assert.match(today, /Label\("Delete", systemImage: "trash"\)\.font\(\.system\(size: 13\)\)/)
+  assert.match(today, /func exitSelection\(\)/)
+  // The food card absorbs its own taps so they can't reach the outside-the-card
+  // catcher and prematurely end selection.
+  assert.match(today, /onTapGesture \{\}/)
+  assert.match(today, /if selecting \{ exitSelection\(\) \}/)
+  assert.match(read('../ios/Fuel/Sources/AppStore.swift'), /func deleteFoods\(_ ids: \[String\]\) async/)
+})
+
+test('the Today dashboard pages between days by swiping, without fighting the page scroll', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /store\.page\(value\.translation\.width > 0 \? 1 : -1\)/)
+  // The same disambiguation the row swipe uses — mostly-horizontal, a real minimum
+  // distance — is what lets this live inside a vertical ScrollView at all.
+  assert.match(today, /DragGesture\(minimumDistance: 40\)/)
+  assert.match(today, /abs\(value\.translation\.width\) > abs\(value\.translation\.height\) \* 1\.5/)
+  assert.match(today, /private var pageTitle: String/)
+
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /var dayOffset = 0/)
+  assert.match(store, /func page\(_ direction: Int\)/)
+  assert.match(store, /func loadViewingDay\(\) async/)
+  // Today's own entries never trigger a fetch — they're already on the dashboard
+  // payload — only a day actually being paged back to does.
+  assert.match(store, /guard !isViewingToday, let date = viewingDate, dayDetailCache\[date\] == nil else \{ return \}/)
+
+  // Server side: a day's detail is fetched separately from its summary, which trends
+  // already carries — no duplicated per-day dashboard computation.
+  const dash = read('../api/_lib/neon-dashboard.js')
+  assert.match(dash, /export async function getDayDetail/)
+  const mlog = read('../api/mlog.js')
+  assert.match(mlog, /integrationRoute === 'day-detail'/)
+  assert.match(mlog, /ISO_DATE_RE\.test\(date\)/)
+})
+
+test('workouts show an icon, duration, time range and active calories', () => {
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  const workout = client.slice(client.indexOf('struct Workout: Decodable'), client.indexOf('struct Supplement'))
+  for (const field of ['durationMinutes', 'activeCalories', 'endTime', 'activityKey']) {
+    assert.match(workout, new RegExp(`var ${field}`), `Workout must decode ${field}`)
+  }
+  assert.match(workout, /var icon: String/)
+  // A handful of Apple's own Fitness-app glyphs, not just a single generic fallback.
+  for (const icon of ['figure.run', 'figure.pool.swim', 'figure.strengthtraining.traditional', 'figure.mixed.cardio']) {
+    assert.match(workout, new RegExp(icon.replace(/\./g, '\\.')))
+  }
+  const dash = read('../api/_lib/neon-dashboard.js')
+  assert.match(dash, /endTime: new Intl\.DateTimeFormat/)
+  assert.match(dash, /activityKey: activity/)
+})
+
+test('"Learn from me" appends observations mined from logged data, never replacing anything', () => {
+  const sheet = read('../ios/Fuel/Sources/EditSheets.swift')
+  assert.match(sheet, /Text\(learning \? "Looking at what you've logged…" : "Learn from me"\)/)
+  assert.match(sheet, /func appendLearned/)
+  // Appending means the existing text is always a prefix of the result.
+  assert.match(sheet, /text = text\.isEmpty \? block : text \+ "\\n\\n" \+ block/)
+  assert.doesNotMatch(sheet, /text = block\b/)
+
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /func learnFromMe\(\) async throws -> \[String\]/)
+  // Reads what's actually been logged, not anything the user typed as a preference.
+  assert.match(store, /foodHistory\.prefix\(15\)/)
+  assert.match(store, /client\(\)\.places\(days: 30\)/)
+
+  for (const file of ['OnDeviceAI', 'RemoteAI']) {
+    assert.match(read(`../ios/Fuel/Sources/${file}.swift`), /func learnFromData/)
+  }
+})
+
+test('notification kinds are independent: replies always on, outreach behind its own switch', () => {
+  const notif = read('../ios/Fuel/Sources/Notifications.swift')
+  assert.match(notif, /var proactiveEnabled: Bool/)
+  assert.match(notif, /var repliesEnabled: Bool/)
+  assert.match(notif, /var workoutReactionsEnabled: Bool/)
+  assert.match(notif, /var weeklyRundownEnabled: Bool/)
+  // Replies default on and are never gated by the proactive switch.
+  assert.match(notif, /repliesEnabled = d\.object\(forKey: Self\.repliesKey\) == nil \? true/)
+  assert.match(notif, /func postReply\(_ body: String\) async \{\s*guard repliesEnabled else \{ return \}/)
+  // Outreach needs both its own toggle and the master switch.
+  assert.match(notif, /var canReactToWorkouts: Bool \{ proactiveEnabled && workoutReactionsEnabled \}/)
+  assert.match(notif, /var canSendWeeklyRundown: Bool \{ proactiveEnabled && weeklyRundownEnabled \}/)
+  assert.match(notif, /func postProactive\(_ body: String, title: String\) async \{\s*guard proactiveEnabled else \{ return \}/)
+
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /Notifications\.shared\.postReply\(text\)/)
+  assert.match(store, /guard Notifications\.shared\.canReactToWorkouts, OnDeviceAI\.shared\.isUsable else \{ return \}/)
+  assert.match(store, /Notifications\.shared\.postProactive\(text, title: "Nice session"\)/)
+  assert.doesNotMatch(store, /Notifications\.shared\.enabled\b/)
+  assert.doesNotMatch(store, /postCoachMessage/)
+
+  // A dedicated settings screen with the four toggles, reachable from More.
+  const more = read('../ios/Fuel/Sources/MoreView.swift')
+  assert.match(more, /struct NotificationSettingsView: View/)
+  assert.match(more, /NavigationLink \{ NotificationSettingsView\(\) \}/)
+  assert.match(more, /Toggle\("Coach replies", isOn: \$notifications\.repliesEnabled\)/)
+  assert.match(more, /Toggle\("Let coach message me", isOn: \$notifications\.proactiveEnabled\)/)
+  assert.match(more, /Toggle\("Workout reactions", isOn: \$notifications\.workoutReactionsEnabled\)/)
+  assert.match(more, /Toggle\("Weekly rundown", isOn: \$notifications\.weeklyRundownEnabled\)/)
+})
+
+test('the weekly rundown is opportunistic, Saturday-morning-gated, and once per week', () => {
+  const notif = read('../ios/Fuel/Sources/Notifications.swift')
+  assert.match(notif, /func isDueForWeeklyRundown/)
+  assert.match(notif, /weekday == 7/) // Saturday
+  assert.match(notif, /func markWeeklyRundownSent/)
+
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /func sendWeeklyRundownIfDue\(\) async/)
+  assert.match(store, /await sendWeeklyRundownIfDue\(\)/)
+  // Marked sent before generating, so a slow or failed generation can't leave the week
+  // eligible to fire again on the very next sync.
+  const fn = store.slice(store.indexOf('private func sendWeeklyRundownIfDue'))
+  assert.ok(fn.indexOf('markWeeklyRundownSent') < fn.indexOf('OnDeviceAI.shared.ask'),
+    'the week must be marked sent before the rundown is generated')
+  assert.match(fn.slice(0, 2000), /Notifications\.shared\.canSendWeeklyRundown/)
 })

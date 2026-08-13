@@ -45,6 +45,15 @@ struct Today: Decodable {
     var supplements: [Supplement]?
 }
 
+/// Everything about a day other than its summary — fetched only when the day-paging
+/// swipe on Today lands on a day that isn't today, since the summary itself is already
+/// in `Dashboard.trends`.
+struct DayDetail: Decodable {
+    var foodEntries: [FoodEntry]
+    var workouts: [Workout]?
+    var supplements: [Supplement]?
+}
+
 /// One day, whether it's today's summary or a point on the trend line — the server
 /// sends the same shape for both.
 /// The 39 micronutrients the website's detailed-nutrition grid can show. Decoded as a
@@ -123,7 +132,15 @@ struct Workout: Decodable, Identifiable {
     /// Falls back to a composed key only for the (now rare) shape that has none, so
     /// `id` is never empty.
     var workoutId: String?
+    var time: String?
+    var endTime: String?
     var activity: String?
+    /// The wire name behind `activity` ("strengthTraining", not "Strength training") —
+    /// what picks the SF Symbol, so a rename of the display label can never silently
+    /// break the icon lookup.
+    var activityKey: String?
+    var durationMinutes: Double?
+    var activeCalories: Double?
     var distanceMiles: Double?
     var swimmingDistanceYards: Double?
     var strokeCount: Double?
@@ -132,7 +149,38 @@ struct Workout: Decodable, Identifiable {
     var id: String { workoutId ?? (activity ?? "workout") + String(distanceMiles ?? 0) + String(stepCount ?? 0) }
 
     enum CodingKeys: String, CodingKey {
-        case workoutId = "id", activity, distanceMiles, swimmingDistanceYards, strokeCount, stepCount, dataQuality
+        case workoutId = "id", time, endTime, activity, activityKey, durationMinutes, activeCalories,
+             distanceMiles, swimmingDistanceYards, strokeCount, stepCount, dataQuality
+    }
+
+    /// Apple's own Fitness-app glyph for this activity, where Fuel knows one.
+    var icon: String {
+        switch activityKey {
+        case "running": return "figure.run"
+        case "walking": return "figure.walk"
+        case "cycling": return "figure.outdoor.cycle"
+        case "swimming": return "figure.pool.swim"
+        case "strengthTraining": return "figure.strengthtraining.traditional"
+        case "functionalStrength": return "figure.strengthtraining.functional"
+        case "hiit": return "figure.highintensity.intervaltraining"
+        case "yoga": return "figure.yoga"
+        case "pilates": return "figure.pilates"
+        case "elliptical": return "figure.elliptical"
+        case "rowing": return "figure.rower"
+        case "stairClimbing": return "figure.stairs"
+        case "hiking": return "figure.hiking"
+        case "tennis": return "figure.tennis"
+        case "basketball": return "figure.basketball"
+        case "soccer": return "figure.soccer"
+        case "coreTraining": return "figure.core.training"
+        case "flexibility": return "figure.flexibility"
+        case "cooldown": return "figure.cooldown"
+        case "mindAndBody": return "figure.mind.and.body"
+        case "dance": return "figure.dance"
+        case "badminton": return "figure.badminton"
+        case "pickleball": return "figure.pickleball"
+        default: return "figure.mixed.cardio"
+        }
     }
 }
 
@@ -500,6 +548,13 @@ struct FuelClient {
         struct Response: Decodable { var items: [FoodHistoryItem] }
         let data = try await send(try request("/api/mlog?integration=food-history&limit=\(limit)"))
         return try JSONDecoder().decode(Response.self, from: data).items
+    }
+
+    /// Food, workouts and supplements for one day other than today — that day's summary
+    /// is already on hand in `Dashboard.trends`, so this fetches only what isn't.
+    func dayDetail(date: String) async throws -> DayDetail {
+        let data = try await send(try request("/api/mlog?integration=day-detail&date=\(date)"))
+        return try JSONDecoder().decode(DayDetail.self, from: data)
     }
 
     func deleteFood(id: String) async throws {

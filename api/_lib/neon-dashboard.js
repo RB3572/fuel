@@ -17,6 +17,32 @@ function applyRestingFloor(resting, total, floor, partialDay) {
   return { resting: floor, total: total == null ? null : total + delta }
 }
 
+/// The food, workouts and supplements for one specific day, in the same shape as
+/// `dashboard.today` — the payload the day-paging UI on Today reads when the user
+/// swipes to a day other than today (whose summary is already in `trends`, so this
+/// only needs to cover what `trends` doesn't carry).
+export async function getDayDetail(userId, date) {
+  const db = sql()
+  const [foodRows, supplementRows, workoutRows] = await Promise.all([
+    db`SELECT f.*, COALESCE(p.label, p.suggested_label) AS place_label
+       FROM food_entries f
+       LEFT JOIN user_places p ON p.id = f.place_id AND p.user_id = f.user_id
+       WHERE f.user_id = ${userId} AND (f.occurred_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date`,
+    db`SELECT * FROM supplements
+       WHERE user_id = ${userId} AND (occurred_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date`,
+    db`SELECT hk_uuid, activity_type, start_at, end_at, duration_s, active_kcal, distance_m, average_heart_rate_bpm
+       FROM hk_workouts
+       WHERE user_id = ${userId} AND (start_at AT TIME ZONE ${TIME_ZONE})::date = ${date}::date
+       ORDER BY start_at ASC`
+      .catch((error) => { console.error('Day-detail workout load failed', error); return [] }),
+  ])
+  return {
+    foodEntries: foodRows.map(normalizeFood),
+    workouts: workoutRows.map(normalizeWorkout),
+    supplements: supplementRows.map(normalizeSupplement),
+  }
+}
+
 export async function getNeonDashboard(userId) {
   if (!userId) throw new Error('Authenticated user ID is required')
   await ensureNutrientSchema()
@@ -245,7 +271,9 @@ function normalizeWorkout(row) {
   return {
     id: String(row.hk_uuid),
     time: new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(row.start_at)),
+    endTime: new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TIME_ZONE }).format(new Date(row.end_at)),
     activity: activityName(activity),
+    activityKey: activity,
     durationMinutes: row.duration_s != null ? number(row.duration_s) / 60 : null,
     activeCalories: number(row.active_kcal),
     totalCalories: null,

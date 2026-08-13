@@ -108,6 +108,24 @@ struct VitalTrendPanel: View {
         return min(max(4, visibleDays / Double(magnifyBy)), max(4, span))
     }
 
+    /// The trailing `window` days, always ending one day past the last reading so that
+    /// day's own mark falls inside the domain rather than sitting on its edge. No
+    /// drag-to-scroll: `chartScrollableAxes` sat inside this panel's outer vertical
+    /// ScrollView, and a diagonal drag could trigger both at once, which read as the
+    /// whole page being freely draggable rather than as a chart with its own scroll.
+    /// Pinch alone can't cause that ambiguity, so it is the only way to change what's
+    /// visible.
+    private var visibleRange: ClosedRange<Date> {
+        guard let last = points.last?.date else {
+            let now = Date()
+            return now...now
+        }
+        let calendar = Calendar.current
+        let start = calendar.date(byAdding: .day, value: -Int(window) + 1, to: last) ?? last
+        let end = calendar.date(byAdding: .day, value: 1, to: last) ?? last
+        return start...end
+    }
+
     var body: some View {
         Panel(title: item.key.label) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -132,7 +150,7 @@ struct VitalTrendPanel: View {
 
             if points.count > 1 {
                 chart
-                Text("Pinch to zoom · scroll for older days")
+                Text("Pinch to zoom out for more history")
                     .font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
             }
         }
@@ -192,9 +210,7 @@ struct VitalTrendPanel: View {
                 }
             }
         }
-        .chartScrollableAxes(.horizontal)
-        .chartXVisibleDomain(length: window * 86_400)
-        .chartScrollPosition(initialX: series.last?.date ?? Date())
+        .chartXScale(domain: visibleRange)
         .frame(height: 150)
         .gesture(
             MagnifyGesture()

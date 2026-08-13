@@ -41,7 +41,15 @@ struct TodayView: View {
     @State private var draftLayout = DashboardLayout.default
     @State private var draggingKey: String?
 
-    private var summary: DaySummary? { store.dashboard?.today.summary }
+    private var summary: DaySummary? { store.viewingSummary }
+
+    /// "Today", "Yesterday", or "Mon Aug 11" — what the day-paging swipe landed on.
+    private var pageTitle: String {
+        if store.isViewingToday { return "Today" }
+        if store.dayOffset == 1 { return "Yesterday" }
+        guard let date = store.viewingDate else { return "Today" }
+        return NetBalanceTrendChart.label(for: date)
+    }
     private var goals: Goals? { store.dashboard?.goals }
 
     /// The layout being displayed: the live, server-synced one normally, or the local
@@ -82,6 +90,29 @@ struct TodayView: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity)
+                // Tapping anywhere outside the food card exits selection mode. The food
+                // card itself absorbs its own taps (see foodSection's contentShape), so
+                // this only ever fires for genuinely outside taps — other cards, gaps
+                // between them, empty space — never for something happening inside it.
+                .contentShape(Rectangle())
+                .onTapGesture { if selecting { exitSelection() } }
+                // Swipe right to go back a day, further right for the day before that;
+                // swipe left to come forward toward today. A high minimumDistance plus
+                // requiring the drag to be clearly more horizontal than vertical is the
+                // same disambiguation FoodEntryRow's own swipe uses — that is what lets
+                // a horizontal gesture live inside a vertical ScrollView at all without
+                // fighting it, unlike chartScrollableAxes, which has no such guard and
+                // is why the charts had to lose their own drag-to-scroll.
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 40)
+                        .onEnded { value in
+                            guard !selecting, !dashboardEditing else { return }
+                            guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                store.page(value.translation.width > 0 ? 1 : -1)
+                            }
+                        }
+                )
                 // A meal logged from the camera lands here: scroll to the row it made
                 // and flash it, so the confirmation is the entry itself rather than a
                 // banner on a screen that never showed the result.
@@ -96,8 +127,15 @@ struct TodayView: View {
                 }
             }
             .background(Palette.background(scheme))
-            .navigationTitle("Today")
+            .navigationTitle(pageTitle)
             .toolbar {
+                if !store.isViewingToday {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { withAnimation(.easeInOut(duration: 0.22)) { store.resetToToday() } } label: {
+                            Label("Today", systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     if dashboardEditing {
                         Button("Done") { endEditing() }.fontWeight(.semibold)
@@ -131,24 +169,38 @@ struct TodayView: View {
     /// selection silently drops you out of selection mode.
     @State private var selecting = false
 
+    /// Idle: a "Select" button. Selecting: nothing chosen yet shows a Cancel and a hint;
+    /// the moment something is picked, that same slot becomes Save-as-meal plus a
+    /// Delete button — so the bar always shows exactly the actions that make sense for
+    /// where you are, instead of a fixed row of buttons some of which are disabled.
     private var saveAsMealBar: some View {
         HStack(spacing: 10) {
             if selecting {
-                Button("Cancel") { selecting = false; selectedEntryIDs = [] }
-                    .font(.system(size: 13))
-                Spacer()
-                Text(selectedEntryIDs.isEmpty ? "Pick entries"
-                     : "\(selectedEntryIDs.count) selected")
-                    .font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
-                Button("Save as meal") {
-                    newMealName = defaultMealName
-                    namingMeal = true
+                if selectedEntryIDs.isEmpty {
+                    Button("Cancel") { exitSelection() }
+                        .font(.system(size: 13))
+                    Spacer()
+                    Text("Tap entries to select").font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
+                } else {
+                    Button(role: .destructive) {
+                        let ids = Array(selectedEntryIDs)
+                        exitSelection()
+                        Task { await store.deleteFoods(ids) }
+                    } label: {
+                        Label("Delete", systemImage: "trash").font(.system(size: 13))
+                    }
+                    Spacer()
+                    Text("\(selectedEntryIDs.count) selected")
+                        .font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
+                    Button("Save as meal") {
+                        newMealName = defaultMealName
+                        namingMeal = true
+                    }
+                    .font(.system(size: 13, weight: .semibold))
                 }
-                .font(.system(size: 13, weight: .semibold))
-                .disabled(selectedEntryIDs.isEmpty)
             } else {
                 Button { selecting = true } label: {
-                    Label("Save as a meal", systemImage: "bookmark")
+                    Label("Select", systemImage: "checkmark.circle")
                         .font(.system(size: 13))
                 }
                 Spacer()
@@ -161,8 +213,7 @@ struct TodayView: View {
             Button("Save") {
                 let ids = Array(selectedEntryIDs)
                 let name = newMealName
-                selecting = false
-                selectedEntryIDs = []
+                exitSelection()
                 Task { await store.saveMeal(named: name, fromEntryIDs: ids) }
             }
         } message: {
@@ -173,7 +224,7 @@ struct TodayView: View {
     /// One selected entry names itself; several need a name from the user, so the field
     /// starts empty rather than guessing from whichever entry happened to be first.
     private var defaultMealName: String {
-        let entries = store.dashboard?.today.foodEntries ?? []
+        let entries = store.viewingFoodEntries
         let picked = entries.filter { selectedEntryIDs.contains($0.id) }
         return picked.count == 1 ? (picked[0].food ?? "") : ""
     }
@@ -181,6 +232,13 @@ struct TodayView: View {
     private func toggleSelection(_ id: String) {
         if selectedEntryIDs.contains(id) { selectedEntryIDs.remove(id) }
         else { selectedEntryIDs.insert(id) }
+    }
+
+    private func exitSelection() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            selecting = false
+            selectedEntryIDs = []
+        }
     }
 
     // MARK: Jiggle-mode dashboard editing
@@ -564,14 +622,15 @@ struct TodayView: View {
     }
 
     private var missing: [FoodEntry] {
-        store.dashboard?.today.foodEntries.filter { $0.needsNutrition } ?? []
+        store.viewingFoodEntries.filter { $0.needsNutrition }
     }
 
     private var foodSection: some View {
         Panel(title: "Food consumed",
-              subtitle: store.dashboard?.today.foodEntries.isEmpty == true ? "Nothing logged yet" : nil) {
-            if !(store.dashboard?.today.foodEntries.isEmpty ?? true) { saveAsMealBar }
-            ForEach(store.dashboard?.today.foodEntries ?? []) { entry in
+              subtitle: store.dayDetailLoading && !store.isViewingToday && store.viewingFoodEntries.isEmpty
+                ? "Loading…" : store.viewingFoodEntries.isEmpty ? "Nothing logged yet" : nil) {
+            if !store.viewingFoodEntries.isEmpty { saveAsMealBar }
+            ForEach(store.viewingFoodEntries) { entry in
                 FoodEntryRow(entry: entry, selecting: selecting,
                             selected: selectedEntryIDs.contains(entry.id),
                             highlighted: store.highlightedEntryID == entry.id,
@@ -581,7 +640,10 @@ struct TodayView: View {
                 Divider().opacity(0.4)
             }
 
-            if !missing.isEmpty {
+            // The AI fill only ever operates on today's queue, so the affordance for it
+            // only makes sense while today is what's on screen — on a past day it would
+            // show a count here and then silently fill a different day's entries.
+            if store.isViewingToday, !missing.isEmpty {
                 HStack(spacing: 10) {
                     Text("\(missing.count) \(missing.count == 1 ? "entry is" : "entries are") missing nutrition detail.")
                         .font(.caption).foregroundStyle(Palette.muted(scheme))
@@ -603,29 +665,25 @@ struct TodayView: View {
                 }
             }
         }
+        // Claims every tap that lands inside the card — including its title, the
+        // select bar, and the gaps between rows — so none of them reach the
+        // outside-the-card catcher on the page below and prematurely end selection.
+        .contentShape(Rectangle())
+        .onTapGesture {}
     }
 
     private var workoutsSection: some View {
         Panel(title: "Workouts") {
-            let workouts = store.dashboard?.today.workouts ?? []
+            let workouts = store.viewingWorkouts
             if workouts.isEmpty {
-                Text("No workouts recorded today.").font(.footnote).foregroundStyle(Palette.muted(scheme))
+                Text(store.dayDetailLoading && !store.isViewingToday ? "Loading…" : "No workouts recorded.")
+                    .font(.footnote).foregroundStyle(Palette.muted(scheme))
             } else {
                 ForEach(workouts) { workout in
-                    HStack {
-                        Text(workout.activity ?? "Activity").font(.system(size: 15, weight: .medium))
-                        Spacer()
-                        Text([
-                            workout.swimmingDistanceYards.map { "\(Format.number($0)) yd" },
-                            workout.distanceMiles.map { "\(Format.number($0, decimals: 2)) mi" },
-                            workout.stepCount.map { "\(Format.number($0)) steps" },
-                        ].compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption).foregroundStyle(Palette.muted(scheme))
-                    }
-                    .padding(.vertical, 3)
+                    workoutRow(workout)
                 }
             }
-            let supplements = store.dashboard?.today.supplements ?? []
+            let supplements = store.viewingSupplements
             if !supplements.isEmpty {
                 Divider()
                 ForEach(supplements) { supplement in
@@ -638,6 +696,37 @@ struct TodayView: View {
                 }
             }
         }
+    }
+
+    private func workoutRow(_ workout: Workout) -> some View {
+        let trailing = [workout.activeCalories.map { "\(Format.kcal($0)) kcal" },
+                        workout.durationMinutes.map { "\(Format.number($0)) min" }]
+            .compactMap { $0 }.joined(separator: " · ")
+        let timeRange = [workout.time, workout.endTime].compactMap { $0 }.joined(separator: "–")
+        let detail = [timeRange,
+                      workout.swimmingDistanceYards.map { "\(Format.number($0)) yd" },
+                      workout.distanceMiles.map { "\(Format.number($0, decimals: 2)) mi" },
+                      workout.stepCount.map { "\(Format.number($0)) steps" }]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+
+        return HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                Circle().fill(DashboardTheme.shared.accent.opacity(0.14))
+                Image(systemName: workout.icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(DashboardTheme.shared.accent)
+            }
+            .frame(width: 34, height: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(workout.activity ?? "Activity").font(.system(size: 15, weight: .medium))
+                    Spacer()
+                    Text(trailing).font(.system(size: 13, weight: .medium, design: .rounded))
+                }
+                Text(detail).font(.caption).foregroundStyle(Palette.muted(scheme))
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func metricSection(_ title: String, _ metrics: [(String, Double?, String, Int)]) -> some View {
@@ -689,8 +778,16 @@ struct FoodEntryRow: View {
     var onToggleSelect: () -> Void
     var onEdit: () -> Void
 
+    /// The one source of truth for the row's horizontal position — set directly by the
+    /// gesture, not summed with a separate `@GestureState`. That combination is why the
+    /// old version was glitchy: `@GestureState` snaps back to zero the instant a drag
+    /// ends, un-animated, in the same beat `.onEnded`'s `withAnimation` was setting the
+    /// committed offset — for one frame the row visibly jumped to zero before animating
+    /// to where it was actually headed. A single `@State` updated every frame has
+    /// nothing to desync against.
     @State private var offset: CGFloat = 0
-    @GestureState private var dragTranslation: CGFloat = 0
+    @State private var dragStartOffset: CGFloat = 0
+    @State private var isDragging = false
     private let actionWidth: CGFloat = 64
     private var revealWidth: CGFloat { actionWidth * 3 }
 
@@ -699,8 +796,9 @@ struct FoodEntryRow: View {
             actionsStrip
             row
                 .background(Palette.panel(scheme))
-                .offset(x: min(0, offset + dragTranslation))
+                .offset(x: offset)
                 .gesture(swipeGesture)
+                .onTapGesture { if offset != 0 { close() } }
         }
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -736,20 +834,31 @@ struct FoodEntryRow: View {
         .background(color)
     }
 
-    private func close() { withAnimation(.snappy) { offset = 0 } }
+    private func close() { withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) { offset = 0 } }
 
     private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 16)
-            .updating($dragTranslation) { value, state, _ in
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                guard !selecting else { return }
                 // Only a mostly-horizontal drag counts, so scrolling the page past this
                 // row does not also nudge it open.
-                guard !selecting, abs(value.translation.width) > abs(value.translation.height) else { return }
-                state = value.translation.width
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                if !isDragging { isDragging = true; dragStartOffset = offset }
+                // The row follows the finger exactly, clamped to the reveal strip —
+                // no animation here, so there is zero lag between touch and motion.
+                offset = max(-revealWidth, min(0, dragStartOffset + value.translation.width))
             }
             .onEnded { value in
+                guard isDragging else { return }
+                isDragging = false
                 guard !selecting else { return }
-                withAnimation(.snappy) {
-                    offset = (offset + value.translation.width) < -revealWidth / 2 ? -revealWidth : 0
+                // A fast flick opens or closes it even short of the halfway point —
+                // predictedEndTranslation is where the drag would land if it kept
+                // going at its release velocity, which is what makes a quick swipe
+                // feel decisive instead of requiring a full, deliberate drag every time.
+                let settled = dragStartOffset + value.predictedEndTranslation.width
+                withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.86)) {
+                    offset = settled < -revealWidth / 2 ? -revealWidth : 0
                 }
             }
     }
@@ -1030,12 +1139,15 @@ struct NetBalanceTrendChart: View {
         _visibleCount = State(initialValue: Double(min(Self.defaultWindow, max(trends.count, 1))))
     }
 
-    /// The date the visible window should start at so it *ends* on the most recent day.
-    /// chartScrollPosition anchors the leading edge, so scrolling to the last date alone
-    /// would park today at the far left with empty space after it.
-    private var initialScrollDate: String {
-        let start = max(0, points.count - Self.defaultWindow)
-        return points.indices.contains(start) ? points[start].date : (points.last?.date ?? "")
+    /// The trailing slice of `points` currently shown, sized by pinch and always
+    /// anchored on the most recent day. No drag-to-scroll: `chartScrollableAxes` sat
+    /// inside Today's outer vertical ScrollView, and a diagonal drag could trigger both
+    /// at once, which read as the whole dashboard being freely draggable instead of a
+    /// chart with its own scroll. Pinch can't cause that ambiguity — it needs a second
+    /// finger a page-scroll never provides — so it is the only way to widen the window.
+    private var visibleDates: [String] {
+        let count = min(points.count, max(3, Int((visibleCount / magnifyBy).rounded())))
+        return points.suffix(count).map(\.date)
     }
 
     private var points: [(date: String, net: Double?)] {
@@ -1077,7 +1189,7 @@ struct NetBalanceTrendChart: View {
                 Text("Daily deficit and surplus").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink(scheme))
                 Spacer()
                 if points.count > Self.defaultWindow {
-                    Text("Tap a bar · scroll · pinch").font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
+                    Text("Tap a bar · pinch for more history").font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
                 }
             }
             if points.allSatisfy({ $0.net == nil }) {
@@ -1121,16 +1233,11 @@ struct NetBalanceTrendChart: View {
                     }
                 }
                 .chartYAxis { AxisMarks(values: .automatic(desiredCount: 3)) }
-                // Same shape as the website's own horizontally-scrolled bar strip
-                // (net-scroll, defaulting scrolled to today) — pinch adjusts how many
-                // days are visible at once, matching the website's implicit zoom via
-                // its own bar width.
-                .chartScrollableAxes(.horizontal)
-                .chartXVisibleDomain(length: max(3, Int((visibleCount / magnifyBy).rounded())))
-                // initialX rather than a bound position set in onAppear/task: the
-                // binding was applied before the scroll view had laid out and was
-                // silently discarded, which is why this opened weeks in the past.
-                .chartScrollPosition(initialX: initialScrollDate)
+                // Same shape as the website's own horizontally-scrolled bar strip, minus
+                // the scrolling: pinch adjusts how many days are visible at once,
+                // matching the website's implicit zoom via its own bar width, and the
+                // window always trails the most recent day rather than being draggable.
+                .chartXScale(domain: visibleDates)
                 // A plain tap that toggles, instead of chartXSelection's press-and-hold
                 // (which also clears the moment you lift, so a reading never stayed up).
                 //

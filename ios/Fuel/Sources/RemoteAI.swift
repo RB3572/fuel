@@ -76,6 +76,31 @@ enum RemoteAI {
     /// The bring-your-own-key half of OnDeviceAI.interpret. The schema is spelled out in
     /// the prompt because these providers have no equivalent of constrained decoding —
     /// what comes back is ordinary JSON text that still has to parse into CoachAction.
+    static func learnFromData(digest: String, existingContext: String,
+                              provider: AIProvider, key: String, model: String) async throws -> [String] {
+        let instructions = """
+        You study a person's own logged health data and identify short, durable patterns \
+        a coach should remember about them — routines, preferred foods, places, and \
+        workout patterns including timing. Ground every observation in the data given; \
+        never invent a pattern the data doesn't support. Never repeat anything already \
+        covered by their existing stated preferences below.
+
+        EXISTING STATED PREFERENCES:
+        \(existingContext.isEmpty ? "(none yet)" : existingContext)
+        """
+        let text = try await complete(
+            provider: provider, key: key, model: model, instructions: instructions,
+            prompt: """
+            \(digest)
+
+            Respond with ONLY a JSON object of this exact shape, no other text: \
+            {"bullets": ["...", "..."]} — 4 to 8 short strings.
+            """,
+            image: nil, jsonMode: true
+        )
+        return try decode(LearnedNotes.self, from: text).bullets
+    }
+
     static func interpret(_ message: String, instructions: String,
                           provider: AIProvider, key: String, model: String) async throws -> CoachAction {
         let text = try await complete(

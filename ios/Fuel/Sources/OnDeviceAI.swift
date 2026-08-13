@@ -60,6 +60,14 @@ struct DailyInsight: Codable {
     var suggestion: String
 }
 
+/// What "Learn from me" produces: durable observations about the person, mined from
+/// what they've actually logged rather than anything they typed themselves.
+@Generable
+struct LearnedNotes: Codable {
+    @Guide(description: "4 to 8 short, specific observations grounded only in the data given — routines, preferred foods, places, and workout patterns including timing. Never repeat anything already covered by their existing stated preferences.")
+    var bullets: [String]
+}
+
 // MARK: - Engine
 
 @MainActor
@@ -368,6 +376,28 @@ final class OnDeviceAI {
     /// Deliberately a separate, cheap call rather than folding actions into `ask`: a
     /// small model asked to both converse and emit structured commands does neither
     /// reliably, and a misfire here would mutate someone's food log.
+    /// "Learn from me": mines observations from what the person has actually logged —
+    /// never from what they've typed as preferences, which is `existingContext`'s job
+    /// and is passed in only so this doesn't repeat it.
+    func learnFromData(digest: String, existingContext: String) async throws -> [String] {
+        if let remote {
+            return try await RemoteAI.learnFromData(digest: digest, existingContext: existingContext,
+                                                    provider: remote.provider, key: remote.key, model: remote.model)
+        }
+        let instructions = """
+        You study a person's own logged health data and identify short, durable patterns \
+        a coach should remember about them — routines, preferred foods, places, and \
+        workout patterns including timing. Ground every observation in the data given; \
+        never invent a pattern the data doesn't support. Never repeat anything already \
+        covered by their existing stated preferences below.
+
+        EXISTING STATED PREFERENCES:
+        \(existingContext.isEmpty ? "(none yet)" : existingContext)
+        """
+        let response = try await session(instructions).respond(to: digest, generating: LearnedNotes.self)
+        return response.content.bullets
+    }
+
     func interpret(_ message: String, todayFoods: [String], today: String) async throws -> CoachAction {
         let instructions = Self.interpreterInstructions(todayFoods: todayFoods, today: today)
         if let remote {

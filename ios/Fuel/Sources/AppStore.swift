@@ -308,6 +308,54 @@ final class AppStore {
         catch { self.error = error.localizedDescription }
     }
 
+    /// "Learn from me": a compact digest of what has actually been logged — trends,
+    /// recently-eaten foods, frequently-visited places — handed to the AI to mine short,
+    /// durable observations from. Returns bullets for the caller to append to context;
+    /// nothing here writes anything itself, so the stored preferences are never at risk
+    /// even if this is called repeatedly.
+    func learnFromMe() async throws -> [String] {
+        if savedMeals.isEmpty && foodHistory.isEmpty { await loadLibrary() }
+        let places = try? await client().places(days: 30)
+
+        var lines: [String] = []
+        let trends = dashboard?.trends ?? []
+        let loggedDays = trends.filter { $0.caloriesConsumed != nil }
+        if !loggedDays.isEmpty {
+            lines.append("Food logged on \(loggedDays.count) of the last \(trends.count) days.")
+            if let avg = average(loggedDays.compactMap(\.caloriesConsumed)) {
+                lines.append("Average calories eaten on logged days: \(Int(avg)) kcal.")
+            }
+            if let avg = average(loggedDays.compactMap(\.protein)) {
+                lines.append("Average protein: \(Int(avg)) g.")
+            }
+        }
+        if let avg = average(trends.compactMap(\.sleepHours)) {
+            lines.append("Average sleep: \(String(format: "%.1f", avg)) hours.")
+        }
+        let activeDays = trends.filter { ($0.exerciseMinutes ?? 0) > 0 }
+        if !activeDays.isEmpty {
+            lines.append("Exercised on \(activeDays.count) of the last \(trends.count) days.")
+            if let avg = average(activeDays.compactMap(\.exerciseMinutes)) {
+                lines.append("Average exercise minutes on those days: \(Int(avg)) min.")
+            }
+        }
+        if !foodHistory.isEmpty {
+            lines.append("Recently logged foods: " + foodHistory.prefix(15).map(\.description).joined(separator: ", ") + ".")
+        }
+        if let notable = places?.places.filter({ !$0.likelyHome }).prefix(5), !notable.isEmpty {
+            lines.append("Frequently visited places besides home: "
+                + notable.map { $0.label ?? $0.suggestedLabel ?? "an unnamed place" }.joined(separator: ", ") + ".")
+        }
+
+        guard !lines.isEmpty else { return [] }
+        return try await OnDeviceAI.shared.learnFromData(digest: lines.joined(separator: "\n"), existingContext: context)
+    }
+
+    private func average(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
     // MARK: - Food
 
     /// The user's own saved meals and their previously-logged foods. Loaded lazily when
@@ -316,6 +364,81 @@ final class AppStore {
     var savedMeals: [SavedMeal] = []
     var foodHistory: [FoodHistoryItem] = []
     var libraryLoading = false
+
+    // MARK: - Day paging on Today
+
+    /// How far back the horizontal swipe on Today currently sits: 0 is today, 1 is
+    /// yesterday, 2 the day before, and so on.
+    var dayOffset = 0
+    private var dayDetailCache: [String: DayDetail] = [:]
+    var dayDetailLoading = false
+
+    /// Every date `dayOffset` can land on, oldest first — bounded by however much
+    /// history `trends` actually carries, so paging stops rather than requesting a day
+    /// with nothing to show.
+    private var pageableDates: [String] { (dashboard?.trends ?? []).map(\.date).sorted() }
+
+    var viewingDate: String? {
+        let dates = pageableDates
+        guard !dates.isEmpty else { return dashboard?.today.summary.date }
+        let index = dates.count - 1 - dayOffset
+        return dates.indices.contains(index) ? dates[index] : dates.first
+    }
+
+    var isViewingToday: Bool { dayOffset == 0 }
+
+    var viewingSummary: DaySummary? {
+        guard !isViewingToday, let date = viewingDate else { return dashboard?.today.summary }
+        return dashboard?.trends.first { $0.date == date } ?? dashboard?.today.summary
+    }
+
+    var viewingFoodEntries: [FoodEntry] {
+        guard !isViewingToday, let date = viewingDate else { return dashboard?.today.foodEntries ?? [] }
+        return dayDetailCache[date]?.foodEntries ?? []
+    }
+
+    var viewingWorkouts: [Workout] {
+        guard !isViewingToday, let date = viewingDate else { return dashboard?.today.workouts ?? [] }
+        return dayDetailCache[date]?.workouts ?? []
+    }
+
+    var viewingSupplements: [Supplement] {
+        guard !isViewingToday, let date = viewingDate else { return dashboard?.today.supplements ?? [] }
+        return dayDetailCache[date]?.supplements ?? []
+    }
+
+    /// Whether swiping further in the requested direction would land on a real day.
+    /// -1 = toward today (a smaller offset), 1 = further into the past.
+    func canPage(_ direction: Int) -> Bool {
+        let target = dayOffset + direction
+        guard target >= 0 else { return false }
+        let dates = pageableDates
+        guard !dates.isEmpty else { return target == 0 }
+        return dates.indices.contains(dates.count - 1 - target)
+    }
+
+    func page(_ direction: Int) {
+        guard canPage(direction) else { return }
+        dayOffset += direction
+        Task { await loadViewingDay() }
+    }
+
+    func resetToToday() { dayOffset = 0 }
+
+    /// Fetches whatever the current `dayOffset` is missing. Today needs nothing — its
+    /// food, workouts and supplements are already on the dashboard payload — so this
+    /// only ever calls the network for a day actually being paged back to.
+    func loadViewingDay() async {
+        guard !isViewingToday, let date = viewingDate, dayDetailCache[date] == nil else { return }
+        dayDetailLoading = true
+        defer { dayDetailLoading = false }
+        do {
+            dayDetailCache[date] = try await client().dayDetail(date: date)
+        } catch {
+            // Left uncached on failure so the next visit to this day retries the fetch
+            // instead of silently showing an empty day forever.
+        }
+    }
 
     /// The entry the app just created, so Today can scroll to it and flash it. Logging
     /// used to end with the camera still on screen and a one-line "Logged X" — which
@@ -473,6 +596,17 @@ final class AppStore {
         }
     }
 
+    /// Deletes several entries as one operation — a single dashboard reload afterward
+    /// rather than one per entry, which would otherwise flicker the whole card once per
+    /// selected row.
+    func deleteFoods(_ ids: [String]) async {
+        for id in ids {
+            do { try await client().deleteFood(id: id) }
+            catch { self.error = error.localizedDescription }
+        }
+        await load()
+    }
+
     /// Fills missing macros for today's food with the on-device model, one entry at a
     /// time. No quota to run into, so there is no batching and no backoff — the reason
     /// the web version needed both.
@@ -544,7 +678,7 @@ final class AppStore {
     /// something they can see.
     private func announceIfAway(_ text: String) async {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        await Notifications.shared.postCoachMessage(text)
+        await Notifications.shared.postReply(text)
     }
 
     /// Nil when interpretation fails for any reason. A model that can't produce a clean
@@ -615,6 +749,7 @@ final class AppStore {
         _ = await SyncEngine.shared.sync(reason: reason)
         await load()
         await reactToNewWorkouts()
+        await sendWeeklyRundownIfDue()
     }
 
     /// Congratulates the person on a workout that just arrived and follows it with one
@@ -626,7 +761,7 @@ final class AppStore {
     /// session in one afternoon is still recognised while the first is not repeated on
     /// every sync.
     private func reactToNewWorkouts() async {
-        guard Notifications.shared.enabled, OnDeviceAI.shared.isUsable else { return }
+        guard Notifications.shared.canReactToWorkouts, OnDeviceAI.shared.isUsable else { return }
         guard let summary = dashboard?.today.summary else { return }
         let workouts = dashboard?.today.workouts ?? []
         guard !workouts.isEmpty else { return }
@@ -644,7 +779,10 @@ final class AppStore {
                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
 
             let prompt = """
-            I just finished a workout: \(described.isEmpty ? "a training session" : described).             Congratulate me in one short sentence, then give me one specific, useful suggestion             for the rest of today based on my vitals, what I have eaten so far and my recent trends.             Keep the whole thing under 60 words and do not use headings or lists.
+            I just finished a workout: \(described.isEmpty ? "a training session" : described). \
+            Congratulate me in one short sentence, then give me one specific, useful suggestion \
+            for the rest of today based on my vitals, what I have eaten so far and my recent trends. \
+            Keep the whole thing under 60 words and do not use headings or lists.
             """
 
             var reply = ""
@@ -660,8 +798,58 @@ final class AppStore {
             let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             messages.append(ChatMessage(role: .coach, text: text))
-            await Notifications.shared.postCoachMessage(text, title: "Nice session")
+            await Notifications.shared.postProactive(text, title: "Nice session")
         }
+    }
+
+    /// Once a week — Saturday morning — a rundown of how the week went: workouts,
+    /// sleep, meal habits, what's working and what needs work. There is no server push
+    /// behind this: it is purely opportunistic, checked on every sync the same way a
+    /// workout reaction is, and simply fires the first time that check happens to land
+    /// on a Saturday morning.
+    private func sendWeeklyRundownIfDue() async {
+        guard Notifications.shared.canSendWeeklyRundown, OnDeviceAI.shared.isUsable else { return }
+        guard Notifications.shared.isDueForWeeklyRundown() else { return }
+        guard let summary = dashboard?.today.summary else { return }
+        // Marked before generating, so a failed or slow generation cannot leave this
+        // week eligible to fire again on the next sync a few minutes later.
+        Notifications.shared.markWeeklyRundownSent()
+
+        let week = (dashboard?.trends ?? []).suffix(7)
+        guard !week.isEmpty else { return }
+        var lines = ["THE LAST 7 DAYS:"]
+        for day in week {
+            var parts = [day.date]
+            if let cal = day.caloriesConsumed { parts.append("\(Int(cal)) kcal eaten") }
+            if let ex = day.exerciseMinutes, ex > 0 { parts.append("\(Int(ex)) min exercise") }
+            if let sleep = day.sleepHours { parts.append("\(String(format: "%.1f", sleep))h sleep") }
+            if let steps = day.stepCount { parts.append("\(Int(steps)) steps") }
+            lines.append("- " + parts.joined(separator: ", "))
+        }
+
+        let prompt = """
+        Here is my last 7 days of data:
+        \(lines.joined(separator: "\n"))
+
+        Give me a short weekly rundown: how many days had a workout, how that lined up \
+        with my sleep, how my eating went, what was good and what could use work. Write \
+        it as a friendly paragraph or two, under 120 words, no headings or lists. Only \
+        use what's in the data above — do not invent specific times or activities it \
+        doesn't give you.
+        """
+
+        var reply = ""
+        do {
+            for try await partial in OnDeviceAI.shared.ask(prompt, summary: summary,
+                                                           dashboard: dashboard, history: [],
+                                                           context: context) {
+                reply = partial
+            }
+        } catch { return }
+        let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        messages.append(ChatMessage(role: .coach, text: text))
+        await Notifications.shared.postProactive(text, title: "Your week")
     }
 
     /// Wraps auth.signOut() so the cached sync token — minted for whoever was signed

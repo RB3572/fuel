@@ -5,7 +5,7 @@ import { handleMealPlan } from './_lib/meal-plan.js'
 import { handleMcpOAuthRoute } from './_lib/mcp-oauth-routes.js'
 import { authorizationServerMetadata, verifyAccessToken } from './_lib/mcp-auth.js'
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
-import { getNeonDashboard } from './_lib/neon-dashboard.js'
+import { getDayDetail, getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
 import { recipesNeedingNutrition, saveEstimatedNutrition, saveRecipe } from './_lib/recipes.js'
@@ -114,6 +114,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'food-history') {
     await handleFoodHistory(req, res)
+    return
+  }
+  if (integrationRoute === 'day-detail') {
+    await handleDayDetail(req, res)
     return
   }
   if (integrationRoute === 'quicklog') {
@@ -730,6 +734,38 @@ async function handleFoodHistory(req, res) {
   } catch (error) {
     console.error('Food history request failed', error)
     sendJson(res, 500, { error: 'Unable to load your food history.' })
+  }
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/// Food, workouts and supplements for one day other than today — what the day-paging
+/// swipe on Today fetches once per day it visits. That day's summary figures are not
+/// here; they're already in the dashboard's `trends`, which this deliberately doesn't
+/// duplicate.
+async function handleDayDetail(req, res) {
+  if (req.method !== 'GET') {
+    methodNotAllowed(res, ['GET'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to see that day.' })
+      return
+    }
+    const url = new URL(req.url, appUrl())
+    const date = url.searchParams.get('date') || ''
+    if (!ISO_DATE_RE.test(date)) {
+      sendJson(res, 422, { error: 'A date in yyyy-mm-dd form is required.' })
+      return
+    }
+    const detail = await getDayDetail(auth.id, date)
+    sendJson(res, 200, detail, auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Day detail request failed', error)
+    sendJson(res, 500, { error: 'Unable to load that day.' })
   }
 }
 

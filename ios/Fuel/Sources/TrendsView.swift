@@ -198,10 +198,16 @@ struct ZoomableDateChart<Content: ChartContent>: View {
         _visibleCount = State(initialValue: Double(min(Self.defaultWindow, max(dates.count, 1))))
     }
 
-    /// Anchors the leading edge so the window *ends* on the most recent day.
-    private var initialScrollDate: String {
-        let start = max(0, dates.count - Self.defaultWindow)
-        return dates.indices.contains(start) ? dates[start] : (dates.last ?? "")
+    /// The trailing slice of `dates` the chart currently shows, sized by pinch and
+    /// always anchored on the most recent day. There is deliberately no drag-to-scroll:
+    /// `chartScrollableAxes` sat inside this chart's outer vertical ScrollView, and on a
+    /// diagonal drag both gesture recognizers could fire together, which read as the
+    /// whole page being freely pannable rather than as a chart with its own scroll.
+    /// Pinch alone can't cause that — it needs a second finger a one-finger page-scroll
+    /// never provides — so it is the only way to change what is visible.
+    private var visibleDates: [String] {
+        let count = min(dates.count, max(3, Int((visibleCount / magnifyBy).rounded())))
+        return Array(dates.suffix(count))
     }
 
     var body: some View {
@@ -243,10 +249,7 @@ struct ZoomableDateChart<Content: ChartContent>: View {
                 // its own categories in its own order, so two metrics with different
                 // gaps produced a different x-ordering each and the lines crossed back
                 // over themselves.
-                .chartXScale(domain: dates)
-                .chartScrollableAxes(.horizontal)
-                .chartXVisibleDomain(length: max(3, Int((visibleCount / magnifyBy).rounded())))
-                .chartScrollPosition(initialX: initialScrollDate)
+                .chartXScale(domain: visibleDates)
                 .simultaneousGesture(
                     MagnificationGesture()
                         .updating($magnifyBy) { value, state, _ in state = value }
@@ -256,7 +259,7 @@ struct ZoomableDateChart<Content: ChartContent>: View {
                 )
                 .frame(height: height)
             if dates.count > Self.defaultWindow {
-                Text("Scroll · pinch to zoom")
+                Text("Pinch to zoom out for more history")
                     .font(.system(size: 10)).foregroundStyle(Palette.muted(scheme))
             }
         }
