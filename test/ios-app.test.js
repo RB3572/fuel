@@ -1327,3 +1327,62 @@ test('a past day\'s entries come back in the order they were eaten', () => {
   assert.match(fn, /FROM supplements[\s\S]*?ORDER BY occurred_at ASC/)
   assert.match(fn, /FROM hk_workouts[\s\S]*?ORDER BY start_at ASC/)
 })
+
+test('swiping a food row opens that row, and never drags the day underneath it', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // Both gestures are live at once — the page swipe is a simultaneousGesture on purpose
+  // so it can coexist with vertical scrolling — so the row has to actively call the
+  // page one off. It wins the race because it engages at 8pt and the page waits for 40.
+  assert.match(today, /@Binding var rowSwiping: Bool/)
+  assert.match(today, /isDragging = true; dragStartOffset = offset; rowSwiping = true/)
+  assert.match(today, /isDragging = false\s*\n\s*rowSwiping = false/)
+  assert.match(today, /rowSwiping: \$rowSwiping\)/)
+  // The page gesture stands down for both phases of a row swipe.
+  const page = today.slice(today.indexOf('DragGesture(minimumDistance: 40)'), today.indexOf('.onChange(of: store.highlightedEntryID)'))
+  assert.match(page, /onChanged[\s\S]*?!pageAnimating, !rowSwiping/)
+  assert.match(page, /onEnded[\s\S]*?!pageAnimating, !rowSwiping/)
+})
+
+test('today refuses to drag toward a day that does not exist', () => {
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // canPage already blocked the commit, but the content still rubber-banded and sprang
+  // back, which reads as the page being loose rather than as a wall. Nothing moves now.
+  const changed = today.slice(today.indexOf('DragGesture(minimumDistance: 40)'), today.indexOf('.onEnded { value in'))
+  assert.match(changed, /guard store\.canPage\(value\.translation\.width > 0 \? 1 : -1\) else \{ return \}/)
+  const guardAt = changed.indexOf('store.canPage')
+  const assignAt = changed.indexOf('pageDragOffset = value.translation.width')
+  assert.ok(guardAt > 0 && guardAt < assignAt, 'the bounds check must come before the offset is applied')
+})
+
+test('long scrolling screens build their cards lazily', () => {
+  // Eagerly, the dashboard constructed all eight section cards — several of them
+  // SwiftUI Charts — on every single render, including once per frame while paging.
+  for (const [file, what] of [
+    ['TodayView', 'the dashboard sections'],
+    ['TrendsView', 'the Compare cards under the chart'],
+    ['ExploreView', 'the metric list'],
+    ['CompareView', 'the four comparison group panels'],
+  ]) {
+    assert.match(read(`../ios/Fuel/Sources/${file}.swift`), /LazyVStack/, `${what} should be lazy`)
+  }
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  // A lazy stack means a row inside a card is not a scroll target until the card
+  // exists, so the jump-to-what-I-just-logged scroll goes via the card first.
+  assert.match(today, /scrollTo\("foodConsumed", anchor: \.top\)/)
+  assert.match(today, /scrollTo\(id, anchor: \.center\)/)
+  assert.match(today, /\.id\(key\)/)
+})
+
+test('widget timelines are only reloaded when the widgets would actually look different', () => {
+  const pub = read('../ios/Fuel/Sources/WidgetPublisher.swift')
+  // publish() runs on every dashboard load — launch, foreground, each refresh, after
+  // every food edit, after every sync, on every day paged to — and reloadAllTimelines
+  // is a cross-process call. Almost all of those produce identical widget content.
+  assert.match(pub, /if var previous = FuelWidgetStore\.load\(\) \{/)
+  assert.match(pub, /previous\.updated = snapshot\.updated/)
+  assert.match(pub, /if previous == snapshot \{ return \}/)
+  const publishFn = pub.slice(pub.indexOf('static func publish'), pub.indexOf('static func republishPalette'))
+  const guardAt = publishFn.indexOf('if previous == snapshot')
+  const reloadAt = publishFn.indexOf('WidgetCenter.shared.reloadAllTimelines()')
+  assert.ok(guardAt > 0 && guardAt < reloadAt, 'the equality check must short-circuit before the reload')
+})

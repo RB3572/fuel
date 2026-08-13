@@ -104,7 +104,7 @@ struct ExploreView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 14) {
+            LazyVStack(spacing: 14) {
                 controls
                 Panel {
                     if withData.isEmpty {

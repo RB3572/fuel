@@ -48,6 +48,8 @@ struct TodayView: View {
     @State private var pageDragOffset: CGFloat = 0
     @State private var pageAnimating = false
     @State private var pageWidth: CGFloat = 0
+    /// True while a food row is being swiped open, which suppresses day-paging.
+    @State private var rowSwiping = false
     private var pagingActive: Bool { pageAnimating || pageDragOffset != 0 }
 
     private var summary: DaySummary? { store.viewingSummary }
@@ -102,7 +104,12 @@ struct TodayView: View {
         NavigationStack {
             ScrollView {
                 ScrollViewReader { scroller in
-                VStack(spacing: 14) {
+                // Lazy, so the cards below the fold are not built until they are
+                // actually scrolled to. Eagerly, this constructed every section on every
+                // render — eight cards, several of them SwiftUI Charts — which is the
+                // bulk of the cost of a single frame here, and it was being paid again
+                // for every offset change while paging and for every store update.
+                LazyVStack(spacing: 14) {
                     if let summary {
                         if !dashboardEditing {
                             VitalsSignalBar(trends: store.dashboard?.trends ?? [], summary: summary)
@@ -110,6 +117,7 @@ struct TodayView: View {
                         energyHero(summary)
                         ForEach(displayedKeys, id: \.self) { key in
                             cardWrapper(key) { section(key, summary) }
+                                .id(key)
                         }
                         if !dashboardEditing { coveragePanel }
                     } else if store.loading {
@@ -160,12 +168,18 @@ struct TodayView: View {
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 40)
                         .onChanged { value in
-                            guard !selecting, !dashboardEditing, !pageAnimating else { return }
+                            guard !selecting, !dashboardEditing, !pageAnimating, !rowSwiping else { return }
                             guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                            // Nothing moves at all in a direction with no day behind it.
+                            // On today that means the whole "forward" half of the gesture
+                            // is inert — there is no tomorrow to page to, and a rubber
+                            // band that always snaps back just reads as the page being
+                            // loose. Older days can be dragged either way.
+                            guard store.canPage(value.translation.width > 0 ? 1 : -1) else { return }
                             pageDragOffset = value.translation.width
                         }
                         .onEnded { value in
-                            guard !selecting, !dashboardEditing, !pageAnimating,
+                            guard !selecting, !dashboardEditing, !pageAnimating, !rowSwiping,
                                   abs(value.translation.width) > abs(value.translation.height) * 1.5 else {
                                 snapBack()
                                 return
@@ -183,8 +197,15 @@ struct TodayView: View {
                 // banner on a screen that never showed the result.
                 .onChange(of: store.highlightedEntryID) { _, id in
                     guard let id else { return }
-                    withAnimation(.easeInOut(duration: 0.5)) { scroller.scrollTo(id, anchor: .center) }
                     Task {
+                        // Two steps, because the stack is lazy: a row inside the food
+                        // card does not exist as a scroll target until that card has
+                        // been built, so jump to the card first (its key is a direct
+                        // child of the lazy stack and always addressable), let it come
+                        // into being, then home in on the row itself.
+                        withAnimation(.easeInOut(duration: 0.35)) { scroller.scrollTo("foodConsumed", anchor: .top) }
+                        try? await Task.sleep(for: .milliseconds(120))
+                        withAnimation(.easeInOut(duration: 0.35)) { scroller.scrollTo(id, anchor: .center) }
                         try? await Task.sleep(for: .seconds(2.6))
                         withAnimation(.easeOut(duration: 0.5)) { store.highlightedEntryID = nil }
                     }
@@ -708,7 +729,8 @@ struct TodayView: View {
                             selected: selectedEntryIDs.contains(entry.id),
                             highlighted: store.highlightedEntryID == entry.id,
                             onToggleSelect: { toggleSelection(entry.id) },
-                            onEdit: { editingFood = entry })
+                            onEdit: { editingFood = entry },
+                            rowSwiping: $rowSwiping)
                     .id(entry.id)
                 Divider().opacity(0.4)
             }
@@ -850,6 +872,13 @@ struct FoodEntryRow: View {
     let highlighted: Bool
     var onToggleSelect: () -> Void
     var onEdit: () -> Void
+    /// Raised the moment this row claims a horizontal drag, so the dashboard's own
+    /// day-paging swipe stands down. Both gestures are live at once (the page one is a
+    /// `simultaneousGesture`, deliberately, so it can coexist with vertical scrolling),
+    /// and without this a swipe to reveal a row's actions dragged the whole day sideways
+    /// underneath it. The row wins because it engages at 8pt and the page waits for 40:
+    /// by the time the page gesture could act, this is already set.
+    @Binding var rowSwiping: Bool
 
     /// The one source of truth for the row's horizontal position — set directly by the
     /// gesture, not summed with a separate `@GestureState`. That combination is why the
@@ -916,7 +945,7 @@ struct FoodEntryRow: View {
                 // Only a mostly-horizontal drag counts, so scrolling the page past this
                 // row does not also nudge it open.
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                if !isDragging { isDragging = true; dragStartOffset = offset }
+                if !isDragging { isDragging = true; dragStartOffset = offset; rowSwiping = true }
                 // The row follows the finger exactly, clamped to the reveal strip —
                 // no animation here, so there is zero lag between touch and motion.
                 offset = max(-revealWidth, min(0, dragStartOffset + value.translation.width))
@@ -924,6 +953,7 @@ struct FoodEntryRow: View {
             .onEnded { value in
                 guard isDragging else { return }
                 isDragging = false
+                rowSwiping = false
                 guard !selecting else { return }
                 // A fast flick opens or closes it even short of the halfway point —
                 // predictedEndTranslation is where the drag would land if it kept

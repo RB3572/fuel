@@ -49,7 +49,11 @@ struct TrendsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
+                // Lazy so the Compare cards below — a dozen rows, each with its own
+                // GeometryReader-backed bar — are not laid out until scrolled to. They
+                // sit under the chart and averages, so on arrival none of that work is
+                // on screen or worth paying for.
+                LazyVStack(spacing: 14) {
                     Panel {
                         pickers
                         chartBody

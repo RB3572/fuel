@@ -64,6 +64,17 @@ enum WidgetPublisher {
             avgActive: dashboard.energyAverages?.activeEnergy,
             avgBalance: dashboard.energyAverages?.energyBalance)
 
+        // Reloading widget timelines is a cross-process call, and `publish` runs on
+        // every dashboard load — app launch, foreground, each pull-to-refresh, after
+        // every food edit, after every sync, and on every day paged to. Almost all of
+        // those produce byte-identical widget content, so the reload was pure overhead
+        // hitching the main actor. Compare against what is already stored (ignoring the
+        // timestamp, which always differs) and skip the write entirely when nothing the
+        // widgets can actually show has changed.
+        if var previous = FuelWidgetStore.load() {
+            previous.updated = snapshot.updated
+            if previous == snapshot { return }
+        }
         FuelWidgetStore.save(snapshot)
         WidgetCenter.shared.reloadAllTimelines()
     }

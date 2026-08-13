@@ -175,7 +175,9 @@ struct CompareSection: View {
     private var userValues: CompareUserValues { CompareUserValues(trends: trends, energyAverages: store.dashboard?.energyAverages) }
 
     var body: some View {
-        VStack(spacing: 14) {
+        // Four group panels, each holding several rows that measure themselves — built
+        // only as they are reached rather than all at once the moment Trends appears.
+        LazyVStack(spacing: 14) {
                 header
                 if profileAge == nil {
                     HStack(spacing: 8) {
