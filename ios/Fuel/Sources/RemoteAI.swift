@@ -105,6 +105,23 @@ enum RemoteAI {
         return try decode(LearnedNotes.self, from: text).bullets
     }
 
+    static func parseBloodPanel(_ report: String, provider: AIProvider, key: String, model: String) async throws -> ParsedBloodPanel {
+        let text = try await complete(
+            provider: provider, key: key, model: model, instructions: OnDeviceAI.bloodInstructions,
+            prompt: """
+            \(report)
+
+            Respond with ONLY a JSON object of this exact shape, no other text:
+            {"collectedOn": "yyyy-MM-dd or null", "lab": "name or null", "markers": [
+              {"name": "...", "value": 0 or null, "valueText": "text or null", "unit": "... or null",
+               "referenceLow": 0 or null, "referenceHigh": 0 or null, "referenceText": "... or null"}
+            ]}
+            """,
+            image: nil, jsonMode: true
+        )
+        return try decode(ParsedBloodPanel.self, from: text)
+    }
+
     static func interpret(_ message: String, instructions: String,
                           provider: AIProvider, key: String, model: String) async throws -> CoachAction {
         let text = try await complete(

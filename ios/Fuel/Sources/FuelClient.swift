@@ -54,6 +54,57 @@ struct DayDetail: Decodable {
     var supplements: [Supplement]?
 }
 
+
+/// One blood draw: a date, a lab, and what it measured. Markers travel with the panel
+/// because a result only means anything next to the reference range printed beside it —
+/// ranges vary between labs and change over time, so the range is stored as reported.
+struct BloodPanel: Decodable, Identifiable {
+    struct Marker: Decodable, Identifiable, Hashable {
+        var name: String
+        var value: Double?
+        /// What the report said when there was no number — "Cancelled", "See note".
+        var valueText: String?
+        var unit: String?
+        var referenceLow: Double?
+        var referenceHigh: Double?
+        /// The range as printed when it is not two numbers, e.g. "Not Estab.".
+        var referenceText: String?
+        /// "high" or "low", derived server-side from the value and the range so a blank
+        /// flag column on the report can never disagree with the numbers beside it.
+        var flag: String?
+
+        var id: String { name }
+        var isHigh: Bool { flag == "high" }
+        var isLow: Bool { flag == "low" }
+        var isOutOfRange: Bool { isHigh || isLow }
+
+        /// "5.5 x10E3/uL", or the reported text when there was no number at all.
+        var displayValue: String {
+            guard let value else { return valueText ?? "—" }
+            let formatted = value == value.rounded() && abs(value) < 1000
+                ? String(format: "%g", value)
+                : String(format: "%.2f", value)
+            return unit.map { "\(formatted) \($0)" } ?? formatted
+        }
+
+        var displayRange: String? {
+            if let low = referenceLow, let high = referenceHigh {
+                return "\(String(format: "%g", low))–\(String(format: "%g", high))" + (unit.map { " \($0)" } ?? "")
+            }
+            return referenceText
+        }
+    }
+
+    var id: String
+    var collectedOn: String?
+    var lab: String?
+    var notes: String?
+    var markers: [Marker]
+    var createdAt: String?
+
+    var outOfRange: [Marker] { markers.filter(\.isOutOfRange) }
+}
+
 /// Raw candidate patterns mined server-side for "Learn from me" — see
 /// api/_lib/learning.js. Every field is a real, computed number; the model only picks
 /// which of these are worth surfacing and phrases them.
@@ -600,6 +651,30 @@ struct FuelClient {
     func dayDetail(date: String) async throws -> DayDetail {
         let data = try await send(try request("/api/mlog?fuel_route=day-detail&date=\(date)"))
         return try JSONDecoder().decode(DayDetail.self, from: data)
+    }
+
+    // MARK: - Blood panels
+
+    func bloodPanels() async throws -> [BloodPanel] {
+        struct Response: Decodable { var panels: [BloodPanel] }
+        let data = try await send(try request("/api/mlog?fuel_route=blood"))
+        return try JSONDecoder().decode(Response.self, from: data).panels
+    }
+
+    @discardableResult
+    func saveBloodPanel(collectedOn: String?, lab: String?, notes: String?,
+                        markers: [[String: Any]]) async throws -> BloodPanel {
+        struct Response: Decodable { var panel: BloodPanel }
+        var body: [String: Any] = ["markers": markers]
+        if let collectedOn, !collectedOn.isEmpty { body["collectedOn"] = collectedOn }
+        if let lab, !lab.isEmpty { body["lab"] = lab }
+        if let notes, !notes.isEmpty { body["notes"] = notes }
+        let data = try await send(try request("/api/mlog?fuel_route=blood", method: "POST", body: body))
+        return try JSONDecoder().decode(Response.self, from: data).panel
+    }
+
+    func deleteBloodPanel(id: String) async throws {
+        _ = try await send(try request("/api/mlog?fuel_route=blood&id=\(id)", method: "DELETE"))
     }
 
     /// Deterministically-mined candidate patterns for "Learn from me" — every number is

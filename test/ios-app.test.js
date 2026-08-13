@@ -1455,3 +1455,69 @@ test('consumed is a themeable colour, not fixed ink', () => {
   assert.match(today, /Rectangle\(\)\.fill\(DashboardTheme\.shared\.consumed\)/)
   assert.match(today, /foregroundStyle\(DashboardTheme\.shared\.consumed\)\.interpolationMethod\(\.stepEnd\)/)
 })
+
+test('blood results are stored exactly as the lab reported them', () => {
+  const blood = read('../api/_lib/blood.js')
+  // Markers live with their panel because a value only means anything beside the range
+  // printed next to it, and lab ranges differ and get revised.
+  assert.match(blood, /markers jsonb NOT NULL DEFAULT '\[\]'::jsonb/)
+  assert.match(blood, /user_id uuid NOT NULL REFERENCES app_users\(id\) ON DELETE CASCADE/)
+  // Every query scoped to one user — bloodwork is the last thing that should leak.
+  for (const [, query] of blood.matchAll(/(FROM blood_panels[\s\S]{0,160}?)(?:`|ORDER)/g)) {
+    assert.match(query, /user_id = \$\{userId\}/, `unscoped blood_panels query: ${query.trim()}`)
+  }
+  assert.match(blood, /DELETE FROM blood_panels WHERE user_id = \$\{userId\} AND id = \$\{id\}/)
+
+  // High/low is arithmetic against the printed range, never the report's own flag
+  // column and never the model's opinion — the two must not be able to disagree.
+  assert.match(blood, /if \(low != null && value < low\) flag = 'low'/)
+  assert.match(blood, /else if \(high != null && value > high\) flag = 'high'/)
+  // A cancelled line is still a line: dropping it would make the panel look like the
+  // test was never ordered.
+  assert.match(blood, /valueText: text\(raw\?\.valueText, 120\)/)
+  // A `date` column comes back as a Date, and String()ing one gives "Thu Jan 02".
+  assert.match(blood, /databaseDateKey\(row\.collected_on\)/)
+  assert.doesNotMatch(blood, /String\(row\.collected_on\)\.slice/)
+
+  const mlog = read('../api/mlog.js')
+  assert.match(mlog, /integrationRoute === 'blood'/)
+  assert.match(mlog, /await listBloodPanels\(auth\.id\)/)
+})
+
+test('the app transcribes a pasted lab report rather than interpreting it', () => {
+  const ai = read('../ios/Fuel/Sources/OnDeviceAI.swift')
+  assert.match(ai, /struct ParsedBloodPanel: Codable/)
+  assert.match(ai, /func parseBloodPanel\(_ report: String\) async throws -> ParsedBloodPanel/)
+  // The one thing a model must not do with bloodwork is improve on it.
+  assert.match(ai, /Never invent, correct, convert or round a value, a unit or a range\./)
+  assert.match(ai, /Never substitute \\\s*\n\s*today's date for a missing one\./)
+  // Both AI paths, like every other capability in this app.
+  assert.match(read('../ios/Fuel/Sources/RemoteAI.swift'), /static func parseBloodPanel/)
+
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /func saveBloodPanel\(fromReport report: String\) async -> Bool/)
+  assert.match(store, /OnDeviceAI\.shared\.parseBloodPanel\(report\)/)
+})
+
+test('every blood marker shown is explained from a cited source, without being judged', () => {
+  const markers = read('../ios/Fuel/Sources/BloodMarkers.swift')
+  const entries = [...markers.matchAll(/BloodMarkerInfo\(\s*\n?\s*name: "([^"]+)"/g)].map((m) => m[1])
+  assert.ok(entries.length >= 30, `expected a real catalogue, found ${entries.length}`)
+  // Every entry carries both an explanation and the reference it came from.
+  const blocks = markers.split('BloodMarkerInfo(').slice(1)
+  for (const block of blocks) {
+    assert.match(block, /meaning: "/, 'every marker needs a meaning')
+    assert.match(block, /source: "/, 'every marker needs a source')
+  }
+  // Names are matched loosely, since labs spell the same test several ways.
+  assert.match(markers, /name\.lowercased\(\)\.filter \{ \$0\.isLetter \|\| \$0\.isNumber \}/)
+  assert.match(markers, /aliases\.contains \{ key\(\$0\) == wanted \}/)
+
+  // The UI states what the marker is and whether it fell outside the lab's range, and
+  // explicitly declines to interpret the result.
+  const view = read('../ios/Fuel/Sources/BloodView.swift')
+  assert.match(view, /It does not interpret your results/)
+  assert.match(view, /Outside a reference range is not the same as a problem/)
+  assert.match(view, /Text\("Source: \\\(info\.source\)"\)/)
+  assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /NavigationLink \{ BloodView\(\) \}/)
+})

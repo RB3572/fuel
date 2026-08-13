@@ -7,6 +7,7 @@ import { authorizationServerMetadata, verifyAccessToken } from './_lib/mcp-auth.
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getDayDetail, getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getLearningSignals } from './_lib/learning.js'
+import { createBloodPanel, deleteBloodPanel, listBloodPanels } from './_lib/blood.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
 import { recipesNeedingNutrition, saveEstimatedNutrition, saveRecipe } from './_lib/recipes.js'
@@ -123,6 +124,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'learning-signals') {
     await handleLearningSignals(req, res)
+    return
+  }
+  if (integrationRoute === 'blood') {
+    await handleBloodPanels(req, res)
     return
   }
   if (integrationRoute === 'quicklog') {
@@ -739,6 +744,47 @@ async function handleFoodHistory(req, res) {
   } catch (error) {
     console.error('Food history request failed', error)
     sendJson(res, 500, { error: 'Unable to load your food history.' })
+  }
+}
+
+/// Blood panels — see api/_lib/blood.js. Results are stored exactly as the lab reported
+/// them, reference range included; nothing here judges a value beyond comparing it to
+/// the range printed beside it.
+async function handleBloodPanels(req, res) {
+  if (!['GET', 'POST', 'DELETE'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'DELETE'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to see your blood results.' })
+      return
+    }
+    const cookies = auth.cookie ? [auth.cookie] : []
+
+    if (req.method === 'GET') {
+      sendJson(res, 200, { panels: await listBloodPanels(auth.id) }, cookies)
+      return
+    }
+
+    if (req.method === 'DELETE') {
+      const id = new URL(req.url, appUrl()).searchParams.get('id')
+      if (!id) {
+        sendJson(res, 422, { error: 'A panel id is required.' })
+        return
+      }
+      const removed = await deleteBloodPanel(auth.id, id)
+      sendJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'That panel was not found.' }, cookies)
+      return
+    }
+
+    const panel = await createBloodPanel(auth.id, unwrap(req.body))
+    sendJson(res, 201, { ok: true, panel }, cookies)
+  } catch (error) {
+    console.error('Blood panel request failed', error)
+    sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to save those results.' })
   }
 }
 

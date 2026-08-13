@@ -36,6 +36,7 @@
 		7DC7F53D08B51AF61925B231 /* CommonFoods.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2F578A82AEFA5F7B226AC2 /* CommonFoods.swift */; };
 		7DE5EFE41422522226BCEFB0 /* LiftingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0ACD7889A0B189EB6BB06B1 /* LiftingView.swift */; };
 		7F8F36885619CD796831614C /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4101886BC814B0DD968C954D /* TrendsView.swift */; };
+		8104F96859CEBE918D511C8D /* BloodView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5CB1CD0EE4AB5B657A032D /* BloodView.swift */; };
 		81F569AEC1DCE3E986A4E795 /* CoachAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4601E7576C6D4E94715ABD65 /* CoachAction.swift */; };
 		8CEECA600976103398056182 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F75273FDA28EE1A341AA5A3 /* TodayView.swift */; };
 		8D40B831CB1C0AED77CFA1FE /* OnDeviceAI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6C2EA6227B2FD6E2349E050 /* OnDeviceAI.swift */; };
@@ -45,6 +46,7 @@
 		B35DE1A8E1AA67AD06DF0D9D /* HealthKitCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4543D27AD1D0A03A8E539621 /* HealthKitCatalog.swift */; };
 		BF2563CA240B3FEC99ABAD69 /* WidgetPieces.swift in Sources */ = {isa = PBXBuildFile; fileRef = A05C90CCD49FC55CDB0417AA /* WidgetPieces.swift */; };
 		C5C06D90BA4AE88A150E4FA1 /* OtherWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82CC9707C602909329392317 /* OtherWidgets.swift */; };
+		D3D12269D02B22A357416433 /* BloodMarkers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CB474BBAB94D90CD56B09FE /* BloodMarkers.swift */; };
 		D85696A847793F17EF29C176 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F20155033B25A23515C87FF /* AppStore.swift */; };
 		DB0AAE00AEDDB0150556642E /* WidgetShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = EED9F948A227FF5B43E2FB84 /* WidgetShared.swift */; };
 		DC204ABEC97758F7C03ED2C7 /* DashboardTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04EC21D9585C66990C142368 /* DashboardTheme.swift */; };
@@ -83,12 +85,14 @@
 /* Begin PBXFileReference section */
 		04EC21D9585C66990C142368 /* DashboardTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardTheme.swift; sourceTree = "<group>"; };
 		07B4E4F9F82543B457C1A074 /* EditSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditSheets.swift; sourceTree = "<group>"; };
+		1CB474BBAB94D90CD56B09FE /* BloodMarkers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodMarkers.swift; sourceTree = "<group>"; };
 		1CEACC5A8135C313037AB184 /* ExploreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreView.swift; sourceTree = "<group>"; };
 		2214194DD516AEE8DA0B1003 /* EnergyWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyWidgets.swift; sourceTree = "<group>"; };
 		4101886BC814B0DD968C954D /* TrendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendsView.swift; sourceTree = "<group>"; };
 		41AAF989E677DB59A259D7D6 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		4543D27AD1D0A03A8E539621 /* HealthKitCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitCatalog.swift; sourceTree = "<group>"; };
 		4601E7576C6D4E94715ABD65 /* CoachAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachAction.swift; sourceTree = "<group>"; };
+		4E5CB1CD0EE4AB5B657A032D /* BloodView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodView.swift; sourceTree = "<group>"; };
 		4F20155033B25A23515C87FF /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		64C7CF13A8704D2FAD979B65 /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
 		74A8D86E91141EA08C9D85FD /* RecipesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipesView.swift; sourceTree = "<group>"; };
@@ -166,6 +170,8 @@
 			children = (
 				CC8DA8BDBC77172F295DFC31 /* APIKeyStore.swift */,
 				4F20155033B25A23515C87FF /* AppStore.swift */,
+				1CB474BBAB94D90CD56B09FE /* BloodMarkers.swift */,
+				4E5CB1CD0EE4AB5B657A032D /* BloodView.swift */,
 				E762C9F186DC68F711045162 /* CameraLogView.swift */,
 				4601E7576C6D4E94715ABD65 /* CoachAction.swift */,
 				7C5B5B04656BF14A3B462B73 /* CoachView.swift */,
@@ -345,6 +351,8 @@
 				8E65EE19890D360A180D0781 /* APIKeyStore.swift in Sources */,
 				D85696A847793F17EF29C176 /* AppStore.swift in Sources */,
 				DC98EADF5AAC4C2C6733E8D0 /* BackgroundSync.swift in Sources */,
+				D3D12269D02B22A357416433 /* BloodMarkers.swift in Sources */,
+				8104F96859CEBE918D511C8D /* BloodView.swift in Sources */,
 				39844E003CBA7FE8A166ED21 /* CameraLogView.swift in Sources */,
 				81F569AEC1DCE3E986A4E795 /* CoachAction.swift in Sources */,
 				38D46A42074556FEC03E0C9B /* CoachView.swift in Sources */,
@@ -469,7 +477,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -557,7 +565,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -580,7 +588,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -605,7 +613,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 28;
+				CURRENT_PROJECT_VERSION = 29;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;

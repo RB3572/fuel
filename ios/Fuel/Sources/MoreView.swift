@@ -161,6 +161,7 @@ struct MoreView: View {
                 Section {
                     NavigationLink { LiftingView() } label: { Label("Lifting", systemImage: "dumbbell.fill") }
                     NavigationLink { ExploreView() } label: { Label("Explore", systemImage: "chart.xyaxis.line") }
+                    NavigationLink { BloodView() } label: { Label("Blood results", systemImage: "drop.fill") }
                     NavigationLink { PlacesView() } label: { Label("Places", systemImage: "mappin.and.ellipse") }
                     NavigationLink { RecipesView() } label: { Label("Recipes", systemImage: "book.closed.fill") }
                 } header: {

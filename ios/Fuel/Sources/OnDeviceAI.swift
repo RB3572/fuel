@@ -60,8 +60,37 @@ struct DailyInsight: Codable {
     var suggestion: String
 }
 
-/// What "Learn from me" produces: durable observations about the person, mined from
-/// what they've actually logged rather than anything they typed themselves.
+/// One line of a lab report, transcribed. Every field is optional except the name
+/// because a report line can be cancelled, unitless, or carry a range that is words
+/// rather than numbers — all of which have to survive the trip intact.
+@Generable
+struct ParsedBloodMarker: Codable {
+    @Guide(description: "The test name exactly as the report wrote it, e.g. \"Hemoglobin\", \"Eos (Absolute)\".")
+    var name: String
+    @Guide(description: "The numeric result, or null when the report gave no number (cancelled, pending, or a comment).")
+    var value: Double?
+    @Guide(description: "What the report printed instead of a number, when there was none. Null when value is set.")
+    var valueText: String?
+    @Guide(description: "The unit as printed, e.g. \"x10E3/uL\", \"g/dL\", \"%\". Null if none was given.")
+    var unit: String?
+    @Guide(description: "Low end of the reference range as a number, when the range is a numeric interval.")
+    var referenceLow: Double?
+    @Guide(description: "High end of the reference range as a number, when the range is a numeric interval.")
+    var referenceHigh: Double?
+    @Guide(description: "The reference range as printed when it is not a numeric interval, e.g. \"Not Estab.\".")
+    var referenceText: String?
+}
+
+@Generable
+struct ParsedBloodPanel: Codable {
+    @Guide(description: "The collection or draw date in yyyy-MM-dd form if the report states one, otherwise null. Never guess today's date.")
+    var collectedOn: String?
+    @Guide(description: "The laboratory or clinic name if stated, otherwise null.")
+    var lab: String?
+    @Guide(description: "Every test line in the report, in the order printed, including lines that were cancelled or produced no number.")
+    var markers: [ParsedBloodMarker]
+}
+
 @Generable
 struct LearnedNotes: Codable {
     @Guide(description: "Up to 6 short, specific associations picked from the candidate patterns given — a food that clusters on one weekday, what a workout does to the next night's sleep or HRV, a habit's usual time of day. Skip a candidate rather than force a weak one; fewer genuinely interesting notes beats a full list of dull ones. Phrase each as the actual finding, e.g. \"Usually gets ice cream on Fridays\" or \"Sleeps about an hour longer after a swim,\" not as a restated statistic. Never repeat anything already covered by their existing stated preferences.")
@@ -401,6 +430,38 @@ final class OnDeviceAI {
         let response = try await session(instructions).respond(to: digest, generating: LearnedNotes.self)
         return response.content.bullets
     }
+
+    /// Turns a pasted lab report into structured results. Deliberately transcription
+    /// only: it is told to copy names, numbers, units and ranges across verbatim and to
+    /// judge nothing, because the one thing a model must not do with someone's bloodwork
+    /// is improve on it. Whether a value sits outside its range is then decided
+    /// arithmetically server-side, not by the model.
+    func parseBloodPanel(_ report: String) async throws -> ParsedBloodPanel {
+        if let remote {
+            return try await RemoteAI.parseBloodPanel(report, provider: remote.provider, key: remote.key, model: remote.model)
+        }
+        let response = try await session(Self.bloodInstructions).respond(to: report, generating: ParsedBloodPanel.self)
+        return response.content
+    }
+
+    static let bloodInstructions = """
+    You transcribe laboratory blood test reports into structured data. The text may be \
+    pasted from a PDF, an email or a portal, so columns may be jumbled, wrapped across \
+    lines, or separated by tabs or runs of spaces.
+
+    Copy what the report says and nothing else:
+    - Never invent, correct, convert or round a value, a unit or a range.
+    - Never add a test the report does not contain, and never drop one it does — a line \
+      that was cancelled or produced no number is still a line, with valueText set and \
+      value null.
+    - A flag column ("H", "L", "*") is the lab's own marking; ignore it. Whether a value \
+      is out of range is worked out from the numbers afterwards.
+    - Ranges like "3.4-10.8" are numeric: referenceLow 3.4, referenceHigh 10.8. Ranges \
+      like "Not Estab." are not: put them in referenceText and leave the numbers null.
+    - A one-sided range ("<150", ">40") sets only the bound it states.
+    - Use the date the sample was collected if the report gives one. Never substitute \
+      today's date for a missing one.
+    """
 
     func interpret(_ message: String, todayFoods: [String], today: String) async throws -> CoachAction {
         let instructions = Self.interpreterInstructions(todayFoods: todayFoods, today: today)

@@ -660,6 +660,69 @@ final class AppStore {
         await load()
     }
 
+    // MARK: - Blood panels
+
+    var bloodPanels: [BloodPanel] = []
+    var bloodLoading = false
+    var bloodError: String?
+
+    func loadBloodPanels() async {
+        guard isSignedIn else { return }
+        bloodLoading = true
+        defer { bloodLoading = false }
+        do {
+            bloodPanels = try await client().bloodPanels()
+            bloodError = nil
+        } catch {
+            bloodError = "Couldn't load your blood results."
+        }
+    }
+
+    /// Reads a pasted report and files it. The model only transcribes — see
+    /// OnDeviceAI.bloodInstructions — and the server decides what counts as out of range
+    /// from the numbers themselves, so nothing here depends on the model having an
+    /// opinion about anyone's results.
+    @discardableResult
+    func saveBloodPanel(fromReport report: String) async -> Bool {
+        guard OnDeviceAI.shared.isUsable else {
+            bloodError = "Fuel AI isn't available right now, so the report can't be read."
+            return false
+        }
+        do {
+            let parsed = try await OnDeviceAI.shared.parseBloodPanel(report)
+            let markers: [[String: Any]] = parsed.markers.compactMap { marker in
+                let name = marker.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty else { return nil }
+                var payload: [String: Any] = ["name": name, "category": BloodMarkers.category(for: name)]
+                if let value = marker.value { payload["value"] = value }
+                if let text = marker.valueText, !text.isEmpty { payload["valueText"] = text }
+                if let unit = marker.unit, !unit.isEmpty { payload["unit"] = unit }
+                if let low = marker.referenceLow { payload["referenceLow"] = low }
+                if let high = marker.referenceHigh { payload["referenceHigh"] = high }
+                if let text = marker.referenceText, !text.isEmpty { payload["referenceText"] = text }
+                return payload
+            }
+            guard !markers.isEmpty else {
+                bloodError = "No test results were found in that text."
+                return false
+            }
+            let panel = try await client().saveBloodPanel(
+                collectedOn: parsed.collectedOn, lab: parsed.lab, notes: nil, markers: markers)
+            bloodPanels.insert(panel, at: 0)
+            bloodPanels.sort { ($0.collectedOn ?? "") > ($1.collectedOn ?? "") }
+            bloodError = nil
+            return true
+        } catch {
+            bloodError = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteBloodPanel(_ panel: BloodPanel) async {
+        bloodPanels.removeAll { $0.id == panel.id }
+        try? await client().deleteBloodPanel(id: panel.id)
+    }
+
     // MARK: - Coach
 
     func askCoach(_ question: String) async {
