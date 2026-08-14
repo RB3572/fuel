@@ -66,7 +66,9 @@ struct TrendsView: View {
             }
             .background(Palette.background(scheme))
             .navigationTitle("Trends")
-            .refreshable { await store.load() }
+            // See AppStore.pullToRefresh: the control must retract before the content
+            // it sits above is replaced, or the scroll view stays pushed down.
+            .refreshable { await store.pullToRefresh(reason: "trends refresh", syncing: false) }
         }
     }
 

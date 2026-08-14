@@ -236,9 +236,13 @@ struct TodayView: View {
                     }
                 }
             }
-            // No load() after this: syncHealth already ends with one, so asking again
-            // fetched the whole dashboard twice for every pull.
-            .refreshable { await store.syncHealth(reason: "pull to refresh") }
+            // The refresh control retracts as soon as this returns, so it deliberately
+            // does not wait for the sync. Holding it open for the several seconds a
+            // HealthKit sync takes meant the cards underneath rebuilt while the scroll
+            // view was still held down, and it never went back up — the page stayed
+            // visibly pushed below the notch after the spinner vanished. The sync still
+            // runs, and the bar across the top of the app is what reports it.
+            .refreshable { await store.pullToRefresh(reason: "pull to refresh") }
             .sheet(item: $editingFood) { EditFoodSheet(entry: $0) }
             .sheet(isPresented: $showGoals) { GoalsSheet() }
             .sheet(isPresented: $showColors) { DashboardColorsSheet() }

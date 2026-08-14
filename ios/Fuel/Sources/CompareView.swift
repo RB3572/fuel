@@ -21,6 +21,10 @@ struct CompareMetric {
     var decimals: Int
     var group: CompareGroup
     var better: CompareBetter
+    /// Whether training is what moves this. Resting heart rate, HRV and VO₂ max respond
+    /// to conditioning, so an outstanding value earns "Highly trained"; blood oxygen does
+    /// not, and calling a good SpO₂ well-trained would be nonsense.
+    var trainable: Bool = false
     var source: String
     var note: String?
     /// Six entries, one per age band (18–29 … 70+). Sex-split metrics vary the answer
@@ -63,10 +67,12 @@ let compareMetrics: [CompareMetric] = [
             : [.init(p25: 1300, p50: 1420, p75: 1550), .init(p25: 1250, p50: 1370, p75: 1500), .init(p25: 1200, p50: 1320, p75: 1450), .init(p25: 1150, p50: 1270, p75: 1400), .init(p25: 1110, p50: 1220, p75: 1340), .init(p25: 1060, p50: 1170, p75: 1290)] }),
     // ---- Cardiovascular ------------------------------------------------------------
     CompareMetric(key: "restingHeartRate", label: "Resting heart rate", unit: "bpm", decimals: 0, group: .cardiovascular, better: .down,
+        trainable: true,
         source: "Population wearable data (Quer et al., Nature Medicine 2020, n≈92,000) and clinical normal 60–100 bpm.",
         note: "Adult resting heart rate is largely age-stable; lower is generally fitter.",
         table: { _ in rep(.init(p25: 57, p50: 63, p75: 70)) }),
     CompareMetric(key: "hrv", label: "Heart rate variability (SDNN)", unit: "ms", decimals: 0, group: .cardiovascular, better: .up,
+        trainable: true,
         source: "Nunan et al. 2010 normative HRV review (SDNN) plus consumer-wearable distributions.",
         note: "Apple Health reports HRV as SDNN. HRV falls with age and varies widely between people and devices.",
         table: { _ in [.init(p25: 45, p50: 62, p75: 82), .init(p25: 38, p50: 52, p75: 68), .init(p25: 32, p50: 44, p75: 58), .init(p25: 27, p50: 38, p75: 50), .init(p25: 23, p50: 32, p75: 43), .init(p25: 20, p50: 28, p75: 38)] }),
@@ -77,16 +83,19 @@ let compareMetrics: [CompareMetric] = [
         source: "Healthy adult SpO₂ 95–100%; a small decline is typical with age.", note: nil,
         table: { _ in [.init(p25: 96.5, p50: 98, p75: 99), .init(p25: 96.5, p50: 98, p75: 99), .init(p25: 96.5, p50: 98, p75: 99), .init(p25: 96, p50: 97.5, p75: 99), .init(p25: 95.5, p50: 97, p75: 98.5), .init(p25: 95.5, p50: 97, p75: 98.5)] }),
     CompareMetric(key: "cardioRecovery", label: "Cardio recovery (1-min HRR)", unit: "bpm", decimals: 0, group: .cardiovascular, better: .up,
+        trainable: true,
         source: "Heart-rate recovery literature (Cole et al. 1999 and later); >12 bpm at 1 min is reassuring, higher is fitter.", note: nil,
         table: { _ in [.init(p25: 24, p50: 32, p75: 42), .init(p25: 22, p50: 30, p75: 40), .init(p25: 20, p50: 28, p75: 37), .init(p25: 18, p50: 25, p75: 34), .init(p25: 16, p50: 23, p75: 31), .init(p25: 14, p50: 20, p75: 28)] }),
     // ---- Fitness ---------------------------------------------------------------
     CompareMetric(key: "vo2Max", label: "VO₂ max", unit: "mL/kg/min", decimals: 1, group: .fitness, better: .up,
+        trainable: true,
         source: "Cooper Institute / ACSM FRIEND registry cardiorespiratory-fitness norms (sex- and age-specific).", note: nil,
         table: { sex in sex == .male
             ? [.init(p25: 42, p50: 48, p75: 55), .init(p25: 37, p50: 43, p75: 50), .init(p25: 34, p50: 40, p75: 46), .init(p25: 30, p50: 36, p75: 42), .init(p25: 26, p50: 32, p75: 38), .init(p25: 22, p50: 27, p75: 33)]
             : [.init(p25: 33, p50: 38, p75: 44), .init(p25: 30, p50: 35, p75: 41), .init(p25: 27, p50: 32, p75: 37), .init(p25: 23, p50: 28, p75: 33), .init(p25: 20, p50: 25, p75: 30), .init(p25: 18, p50: 22, p75: 27)] }),
     // ---- Activity & sleep --------------------------------------------------------
     CompareMetric(key: "stepCount", label: "Steps", unit: "/day", decimals: 0, group: .activity, better: .up,
+        trainable: true,
         source: "NHANES accelerometer data and Tudor-Locke step-count research; daily steps decline with age.", note: nil,
         table: { _ in [.init(p25: 4500, p50: 7000, p75: 10000), .init(p25: 4200, p50: 6500, p75: 9500), .init(p25: 3900, p50: 6000, p75: 8800), .init(p25: 3400, p50: 5300, p75: 7800), .init(p25: 2700, p50: 4300, p75: 6500), .init(p25: 2000, p50: 3200, p75: 5000)] }),
     CompareMetric(key: "sleepHours", label: "Sleep", unit: "h/night", decimals: 1, group: .activity, better: .neutral,
@@ -113,20 +122,35 @@ func comparePercentile(_ value: Double, _ ref: CompareRef) -> Int {
 enum CompareTone { case good, ok, watch }
 struct CompareStanding { var pct: Int; var tone: CompareTone; var label: String }
 
-func compareStanding(_ value: Double, _ ref: CompareRef, _ better: CompareBetter) -> CompareStanding {
+/// How a value reads, in words about the *result* rather than about the direction of
+/// the number.
+///
+/// "Below typical" is the wrong thing to say about a resting heart rate of 48. The number
+/// is low; the finding is that you are extremely well conditioned — and reading "below"
+/// in green, next to a figure the user knows is good, makes the app look like it does not
+/// understand its own data. So the label is chosen from where the value sits on the scale
+/// that runs from bad to good for *that* metric, which for a `.down` metric is the
+/// percentile inverted.
+func compareStanding(_ value: Double, _ ref: CompareRef, _ better: CompareBetter,
+                     trainable: Bool = false) -> CompareStanding {
     let pct = comparePercentile(value, ref)
     switch better {
-    case .up:
-        if pct >= 50 { return CompareStanding(pct: pct, tone: .good, label: "Above typical") }
-        if pct >= 25 { return CompareStanding(pct: pct, tone: .ok, label: "Around typical") }
-        return CompareStanding(pct: pct, tone: .watch, label: "Below typical")
-    case .down:
-        if pct <= 50 { return CompareStanding(pct: pct, tone: .good, label: "Below typical") }
-        if pct <= 75 { return CompareStanding(pct: pct, tone: .ok, label: "Around typical") }
-        return CompareStanding(pct: pct, tone: .watch, label: "Above typical")
+    case .up, .down:
+        // How favourable this is, 0–100, whichever way the metric runs.
+        let standing = better == .up ? pct : 100 - pct
+        if standing >= 90 { return CompareStanding(pct: pct, tone: .good, label: trainable ? "Highly trained" : "Exceptional") }
+        if standing >= 75 { return CompareStanding(pct: pct, tone: .good, label: "Excellent") }
+        if standing >= 60 { return CompareStanding(pct: pct, tone: .good, label: "Very good") }
+        if standing >= 40 { return CompareStanding(pct: pct, tone: .ok, label: "Good") }
+        if standing >= 25 { return CompareStanding(pct: pct, tone: .ok, label: "Around average") }
+        if standing >= 10 { return CompareStanding(pct: pct, tone: .watch, label: "Below average") }
+        return CompareStanding(pct: pct, tone: .watch, label: "Worth a look")
     case .neutral:
+        // Nothing to be better or worse at — eating 2,600 calories is not a grade — so
+        // these keep directional wording, which is the honest description of a number
+        // whose ideal depends entirely on what you are trying to do.
         if pct >= 25 && pct <= 75 { return CompareStanding(pct: pct, tone: .good, label: "Typical range") }
-        return CompareStanding(pct: pct, tone: .ok, label: pct < 25 ? "Below typical" : "Above typical")
+        return CompareStanding(pct: pct, tone: .ok, label: pct < 25 ? "Lower than most" : "Higher than most")
     }
 }
 
@@ -269,7 +293,7 @@ private struct CompareMetricRow: View {
                 }
                 Spacer()
                 if let value, let ref {
-                    let st = compareStanding(value, ref, metric.better)
+                    let st = compareStanding(value, ref, metric.better, trainable: metric.trainable)
                     VStack(alignment: .trailing, spacing: 1) {
                         Text(Format.number(value, decimals: metric.decimals)).font(.system(size: 15, weight: .semibold, design: .rounded))
                             .foregroundStyle(Palette.ink(scheme))
@@ -281,7 +305,7 @@ private struct CompareMetricRow: View {
                 }
             }
             if let value, let ref {
-                CompareBar(value: value, ref: ref, tone: compareStanding(value, ref, metric.better).tone)
+                CompareBar(value: value, ref: ref, tone: compareStanding(value, ref, metric.better, trainable: metric.trainable).tone)
                 HStack {
                     Text("Typical \(Format.number(ref.p50, decimals: metric.decimals)) (\(Format.number(ref.p25, decimals: metric.decimals))–\(Format.number(ref.p75, decimals: metric.decimals)))")
                         .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))

@@ -841,6 +841,25 @@ final class AppStore {
         await loadBodyMeasurements()
     }
 
+    /// What a pull-to-refresh should do: start the work, then return promptly so the
+    /// refresh control can retract cleanly.
+    ///
+    /// A `.refreshable` closure holds the scroll view open until it returns. A full
+    /// health sync takes seconds, and during those seconds the dashboard's cards are
+    /// rebuilt underneath a scroll view that is still being held down — after which it
+    /// never returns to the top, leaving the page sitting visibly below the notch. So
+    /// the long work is detached and this waits only long enough for the control to
+    /// finish its own animation. Nothing is lost: the sync bar across the top of the app
+    /// already reports progress from anywhere.
+    /// `syncing` distinguishes the two kinds of pull this app has: the dashboard pulls
+    /// in fresh Health data, while Trends only needs the server's numbers again.
+    func pullToRefresh(reason: String, syncing: Bool = true) async {
+        Task {
+            if syncing { await syncHealth(reason: reason) } else { await load() }
+        }
+        try? await Task.sleep(for: .milliseconds(450))
+    }
+
     // MARK: - Journeys
 
     var journeyTotals: JourneyTotals?

@@ -1585,9 +1585,10 @@ test('independent reads are issued together rather than one after another', () =
   assert.match(store, /async let historyResult = fetchFoodHistory\(\)/)
   assert.match(store, /private func fetchSavedMeals\(\) async -> Result<\[SavedMeal\], Error>/)
 
-  // syncHealth already ends with load(), so pull-to-refresh was fetching twice.
+  // syncHealth already ends with load(), so pull-to-refresh must not also call it —
+  // it now goes through pullToRefresh, which detaches the sync entirely.
   const today = read('../ios/Fuel/Sources/TodayView.swift')
-  assert.match(today, /\.refreshable \{ await store\.syncHealth\(reason: "pull to refresh"\) \}/)
+  assert.match(today, /\.refreshable \{ await store\.pullToRefresh\(reason: "pull to refresh"\) \}/)
   assert.doesNotMatch(today, /syncHealth\(reason: "pull to refresh"\)\s*\n\s*await store\.load\(\)/)
 })
 
@@ -1920,4 +1921,44 @@ test('the globe cannot zoom, and draws a real lap of the planet', () => {
     assert.match(block, /fame: [123]/)
   }
   assert.match(globe, /Text\("You are \\\(Format\.number\(away\)\) miles from \\\(landmark\.name\)"\)/)
+})
+
+test('a vital reads as how good it is, not which way the number went', () => {
+  const compare = read('../ios/Fuel/Sources/CompareView.swift')
+  // "Below typical" for a resting heart rate of 48 describes the number and misreads
+  // the finding. Both directions now map onto one favourability scale.
+  assert.doesNotMatch(compare, /label: "Below typical"/)
+  assert.doesNotMatch(compare, /label: "Above typical"/)
+  assert.match(compare, /let standing = better == \.up \? pct : 100 - pct/)
+  for (const label of ['Highly trained', 'Excellent', 'Very good', 'Good', 'Around average', 'Below average']) {
+    assert.match(compare, new RegExp(`label: (trainable \\? )?"${label}"`), `${label} should be a rung`)
+  }
+  // "Highly trained" only where training is what moves it — a good SpO₂ is not a sign
+  // of conditioning.
+  assert.match(compare, /trainable \? "Highly trained" : "Exceptional"/)
+  assert.equal((compare.match(/trainable: true/g) || []).length, 5)
+  const oxygen = compare.slice(compare.indexOf('key: "bloodOxygen"'), compare.indexOf('key: "cardioRecovery"'))
+  assert.doesNotMatch(oxygen, /trainable: true/)
+  // Calories eaten has no better direction, so it keeps directional wording.
+  assert.match(compare, /label: pct < 25 \? "Lower than most" : "Higher than most"/)
+})
+
+test('pull-to-refresh lets go before the work finishes', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  // A .refreshable closure holds the scroll view down until it returns. A health sync
+  // takes seconds, during which the cards rebuild underneath a scroll view still being
+  // held — and it never sprang back, leaving the page sitting below the notch.
+  assert.match(store, /func pullToRefresh\(reason: String, syncing: Bool = true\) async/)
+  const fn = store.slice(store.indexOf('func pullToRefresh'))
+  assert.match(fn.slice(0, 400), /Task \{/)
+  assert.match(fn.slice(0, 400), /try\? await Task\.sleep\(for: \.milliseconds\(450\)\)/)
+
+  // Both affected screens go through it, and neither awaits the long work directly.
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /\.refreshable \{ await store\.pullToRefresh\(reason: "pull to refresh"\) \}/)
+  assert.doesNotMatch(today, /\.refreshable \{ await store\.syncHealth/)
+  const trends = read('../ios/Fuel/Sources/TrendsView.swift')
+  // Trends only needs the server's numbers again, not a full Health sync.
+  assert.match(trends, /pullToRefresh\(reason: "trends refresh", syncing: false\)/)
+  assert.doesNotMatch(trends, /\.refreshable \{ await store\.load\(\) \}/)
 })
