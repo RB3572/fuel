@@ -251,8 +251,14 @@ struct GlobeSphere: View {
     @Environment(\.colorScheme) private var scheme
 
     var route: [CLLocationCoordinate2D]
+    /// How far round the lap you have got, 0–1. The whole route is drawn dashed; this
+    /// much of it is drawn again in red on top.
+    var progress: Double = 0
     var origin: CLLocationCoordinate2D?
+    var here: CLLocationCoordinate2D?
     var landmarks: [Landmark]
+    /// The one you reach next, drawn larger and named.
+    var highlight: Landmark?
     /// Where the viewer is over. Owned by the parent so the drag can move it.
     var centreLat: Double
     var centreLon: Double
@@ -297,28 +303,71 @@ struct GlobeSphere: View {
 
             if route.count > 1 {
                 let coordinates = route.map { ($0.latitude, $0.longitude) }
+                // The whole lap, dashed: the route you would take, not the route you have
+                // taken. Black reads against both the lit water and the darkened limb.
                 for run in visibleRuns(coordinates, projection) where run.count > 1 {
-                    var path = Path()
-                    path.move(to: run[0])
-                    for point in run.dropFirst() { path.addLine(to: point) }
-                    context.stroke(path, with: .color(DashboardTheme.shared.accent),
-                                   style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    context.stroke(line(run), with: .color(.black.opacity(0.85)),
+                                   style: StrokeStyle(lineWidth: 2, lineCap: .round,
+                                                      lineJoin: .round, dash: [5, 4]))
+                }
+                // And how far round you have actually got, over the top of it.
+                let travelled = Int((Double(route.count - 1) * max(0, min(1, progress))).rounded()) + 1
+                if travelled > 1 {
+                    for run in visibleRuns(Array(coordinates.prefix(travelled)), projection) where run.count > 1 {
+                        context.stroke(line(run), with: .color(Self.travelled),
+                                       style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                    }
                 }
             }
 
-            for landmark in landmarks {
+            for landmark in landmarks where landmark != highlight {
                 let projected = projection.project(landmark.lat, landmark.lon)
                 guard projected.visible else { continue }
                 context.fill(dot(at: projected.point, radius: 3), with: .color(.white))
-                context.stroke(dot(at: projected.point, radius: 3), with: .color(DashboardTheme.shared.accent), lineWidth: 1.5)
+                context.stroke(dot(at: projected.point, radius: 3), with: .color(.black.opacity(0.55)), lineWidth: 1.2)
             }
 
+            // The one you reach next, named on the sphere so the note underneath has
+            // something to point at.
+            if let highlight {
+                let projected = projection.project(highlight.lat, highlight.lon)
+                if projected.visible {
+                    let accent = DashboardTheme.shared.accent
+                    context.stroke(dot(at: projected.point, radius: 9), with: .color(accent.opacity(0.45)), lineWidth: 2)
+                    context.fill(dot(at: projected.point, radius: 4.5), with: .color(accent))
+                    context.stroke(dot(at: projected.point, radius: 4.5), with: .color(.white), lineWidth: 2)
+
+                    var label = context.resolve(Text(highlight.name)
+                        .font(.system(size: 10, weight: .semibold)))
+                    label.shading = .color(.white)
+                    let size = label.measure(in: CGSize(width: 160, height: 40))
+                    // Flipped to the other side rather than allowed off the edge of the
+                    // disc, which is where the interesting landmarks tend to sit.
+                    let toTheRight = projected.point.x + 14 + size.width < radius * 2
+                    let anchor = CGPoint(x: projected.point.x + (toTheRight ? 13 : -13), y: projected.point.y)
+                    context.draw(context.resolve(Text(highlight.name)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.black.opacity(0.5))),
+                        at: CGPoint(x: anchor.x + 0.7, y: anchor.y + 0.7),
+                        anchor: toTheRight ? .leading : .trailing)
+                    context.draw(label, at: anchor, anchor: toTheRight ? .leading : .trailing)
+                }
+            }
+
+            // Where you have got to.
+            if let here {
+                let projected = projection.project(here.latitude, here.longitude)
+                if projected.visible {
+                    context.fill(dot(at: projected.point, radius: 6), with: .color(Self.youAreHere))
+                    context.stroke(dot(at: projected.point, radius: 6), with: .color(.white), lineWidth: 2.5)
+                }
+            }
+
+            // Start and finish are the same place — it is a loop — so one flag does for
+            // both.
             if let origin {
                 let projected = projection.project(origin.latitude, origin.longitude)
-                if projected.visible {
-                    context.fill(dot(at: projected.point, radius: 5.5), with: .color(DashboardTheme.shared.accent))
-                    context.stroke(dot(at: projected.point, radius: 5.5), with: .color(.white), lineWidth: 2)
-                }
+                if projected.visible { flag(&context, at: projected.point) }
             }
 
             // A hairline of lit atmosphere along the rim, which is what stops the disc
@@ -343,8 +392,44 @@ struct GlobeSphere: View {
     private var ice: Color { scheme == .dark ? Color(hex: 0xE4EDF5) : Color(hex: 0xF7FBFF) }
     private var iceEdge: Color { scheme == .dark ? Color(hex: 0xB9CBDC) : Color(hex: 0xCFE1F0) }
 
+    /// Distance covered, and the dot for where that leaves you. Fixed rather than themed:
+    /// red means the part behind you and blue means you, whatever the dashboard's colour.
+    static let travelled = Color(hex: 0xE2342B)
+    static let youAreHere = Color(hex: 0x6FD0F5)
+
     private func dot(at point: CGPoint, radius: CGFloat) -> Path {
         Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
+    }
+
+    private func line(_ points: [CGPoint]) -> Path {
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        for point in points.dropFirst() { path.addLine(to: point) }
+        return path
+    }
+
+    /// The chequered flag, drawn rather than borrowed from a symbol: at fourteen points
+    /// tall the squares have to land on whole pixels to read as a chequerboard at all.
+    private func flag(_ context: inout GraphicsContext, at point: CGPoint) {
+        let cell: CGFloat = 4, columns = 4, rows = 2, height: CGFloat = 16
+        var pole = Path()
+        pole.move(to: point)
+        pole.addLine(to: CGPoint(x: point.x, y: point.y - height))
+        context.stroke(pole, with: .color(.black), lineWidth: 1.5)
+        context.fill(dot(at: point, radius: 2), with: .color(.black))
+
+        let corner = CGPoint(x: point.x + 0.75, y: point.y - height)
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let square = CGRect(x: corner.x + CGFloat(column) * cell, y: corner.y + CGFloat(row) * cell,
+                                    width: cell, height: cell)
+                context.fill(Path(square), with: .color((row + column).isMultiple(of: 2) ? .white : .black))
+            }
+        }
+        context.stroke(Path(CGRect(x: corner.x, y: corner.y,
+                                   width: CGFloat(columns) * cell, height: CGFloat(rows) * cell)),
+                       with: .color(.black), lineWidth: 0.75)
     }
 
     /// A closed coastline, with whatever has gone round the back pinned to the rim, or

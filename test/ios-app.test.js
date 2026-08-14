@@ -1949,10 +1949,10 @@ test('the globe is drawn, not mapped — so it spins, and cannot zoom', () => {
   const globe = read('../ios/Fuel/Sources/GlobeView.swift')
   assert.doesNotMatch(globe, /Map\(position:/)
   assert.doesNotMatch(globe, /MapPolyline/)
-  assert.match(globe, /GlobeSphere\(route: route, origin: origin/)
+  assert.match(globe, /GlobeSphere\(route: route, progress: progress, origin: origin, here: here,/)
   // There is no distance to change, so zoom is not a thing that can be expressed.
   assert.doesNotMatch(globe, /distance:/)
-  assert.match(globe, /@State private var centreLat = 20\.0/)
+  assert.match(globe, /@State private var baseLat = 20\.0/)
   assert.match(globe, /min\(80, max\(-80, anchor\.lat \+ Double\(value\.translation\.height\) \* 0\.3\)\)/)
 
   const sphere = read('../ios/Fuel/Sources/GlobeSphere.swift')
@@ -1995,6 +1995,37 @@ test('the globe is drawn, not mapped — so it spins, and cannot zoom', () => {
   // The flat map sits beside real Apple Maps cards and carries a green line across its
   // middle, so it is pale where the globe is vibrant, and the line is cased in white.
   assert.match(sphere, /line\.stroke\(\.white\.opacity\(0\.9\), style: StrokeStyle\(lineWidth: 5\.5/)
+
+  // The lap you would take is dashed; the part of it you have taken is red on top.
+  assert.match(sphere, /style: StrokeStyle\(lineWidth: 2, lineCap: \.round,\s*\n\s*lineJoin: \.round, dash: \[5, 4\]\)/)
+  assert.match(sphere, /static let travelled = Color\(hex: 0xE2342B\)/)
+  assert.match(sphere, /static let youAreHere = Color\(hex: 0x6FD0F5\)/)
+  // Start and finish are the same place, so one chequered flag does for both.
+  assert.match(sphere, /private func flag\(_ context: inout GraphicsContext, at point: CGPoint\)/)
+  assert.match(sphere, /\(row \+ column\)\.isMultiple\(of: 2\) \? \.white : \.black/)
+  // Where you have got to, and the one you reach next.
+  assert.match(sphere, /context\.stroke\(dot\(at: projected\.point, radius: 6\), with: \.color\(\.white\), lineWidth: 2\.5\)/)
+  assert.match(sphere, /for landmark in landmarks where landmark != highlight/)
+  assert.match(sphere, /let toTheRight = projected\.point\.x \+ 14 \+ size\.width < radius \* 2/)
+
+  // Spinning: a throw glides down into a slow drift, both in closed form, so a frame
+  // asks where the globe is rather than a timer writing state sixty times a second.
+  assert.match(globe, /private static let idleSpin = 3\.0/)
+  assert.match(globe, /TimelineView\(\.animation\(minimumInterval: 1\.0 \/ 60, paused: anchor != nil\)\)/)
+  assert.match(globe, /let spent = 1 - exp\(-elapsed \/ Self\.friction\)/)
+  assert.match(globe, /\+ \(spinLon - Self\.idleSpin\) \* Self\.friction \* spent/)
+  assert.match(globe, /spinLon = max\(-400, min\(400, -Double\(value\.velocity\.width\) \* 0\.35\)\)/)
+  // Grabbing a drifting globe must catch it where it is, not where it was let go of.
+  assert.match(globe, /let centre = centre\(at: Date\(\)\)\s*\n\s*baseLat = centre\.lat/)
+  // "Next" means next along the route, not nearest — the nearest may be a thousand
+  // miles behind you. Worked out once, since the globe redraws sixty times a second.
+  assert.match(globe, /@State private var passPositions: \[\(landmark: Landmark, along: Double\)\]/)
+  assert.match(globe, /\(along - progress \+ 1\)\.truncatingRemainder\(dividingBy: 1\)/)
+  // The list is bare distances now; the aside belongs to the one place you are about to
+  // reach, under the map.
+  assert.doesNotMatch(globe.match(/private var landmarkList: some View \{[\s\S]*?\n    \}/)[0], /landmark\.quip/)
+  assert.match(globe, /Text\("Coming up: \\\(next\.name\)"\)/)
+  assert.match(globe, /Text\(next\.quip\)/)
 
   const geo = read('../ios/Fuel/Sources/GlobeLandmarks.swift')
   // The lap is still chosen rather than arbitrary.
