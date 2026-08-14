@@ -245,10 +245,9 @@ struct TodayView: View {
                     }
                 }
             }
-            .refreshable {
-                await store.syncHealth(reason: "pull to refresh")
-                await store.load()
-            }
+            // No load() after this: syncHealth already ends with one, so asking again
+            // fetched the whole dashboard twice for every pull.
+            .refreshable { await store.syncHealth(reason: "pull to refresh") }
             .sheet(item: $editingFood) { EditFoodSheet(entry: $0) }
             .sheet(isPresented: $showGoals) { GoalsSheet() }
             .sheet(isPresented: $showColors) { DashboardColorsSheet() }

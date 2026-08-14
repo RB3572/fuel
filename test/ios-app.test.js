@@ -999,7 +999,7 @@ test('the Today dashboard pages between days by swiping, without fighting the pa
   assert.match(store, /func loadViewingDay\(\) async/)
   // Today's own entries never trigger a fetch — they're already on the dashboard
   // payload — only a day actually being paged back to does.
-  assert.match(store, /guard !isViewingToday, let date = viewingDate, dayDetailCache\[date\] == nil else \{ return \}/)
+  assert.match(store, /guard !isViewingToday, let date = viewingDate, dayDetailCache\[date\] == nil else \{\s*\n\s*prefetchNextDay\(\)/)
 
   // Server side: a day's detail is fetched separately from its summary, which trends
   // already carries — no duplicated per-day dashboard computation.
@@ -1260,8 +1260,8 @@ test('a failed library load says so instead of rendering as an empty list', () =
   // unnoticed for so long.
   const fn = store.slice(store.indexOf('func loadLibrary() async'), store.indexOf('func logSavedMeal'))
   assert.doesNotMatch(fn, /try\? client\(\)/)
-  assert.match(fn, /catch \{ failed\.append\("saved meals"\) \}/)
-  assert.match(fn, /catch \{ failed\.append\("history"\) \}/)
+  assert.match(fn, /case \.failure: failed\.append\("saved meals"\)/)
+  assert.match(fn, /case \.failure: failed\.append\("history"\)/)
   assert.match(store, /var libraryError: String\?/)
 
   const lib = read('../ios/Fuel/Sources/FoodLibraryView.swift')
@@ -1408,7 +1408,7 @@ test('a food already saved as a meal shows a filled bookmark that removes it aga
 
   // The library has to be loaded before the sheet is ever opened, or every row would
   // show as unsaved on a fresh launch.
-  assert.match(read('../ios/Fuel/Sources/FuelApp.swift'), /await store\.loadLibrary\(\)/)
+  assert.match(read('../ios/Fuel/Sources/FuelApp.swift'), /async let library: Void = store\.loadLibrary\(\)/)
 })
 
 test('a finger landing on a food row can still scroll the page', () => {
@@ -1511,7 +1511,8 @@ test('every blood marker shown is explained from a cited source, without being j
   }
   // Names are matched loosely, since labs spell the same test several ways.
   assert.match(markers, /name\.lowercased\(\)\.filter \{ \$0\.isLetter \|\| \$0\.isNumber \}/)
-  assert.match(markers, /aliases\.contains \{ key\(\$0\) == wanted \}/)
+  // Aliases are folded into the lookup table rather than rescanned on every call.
+  assert.match(markers, /for name in \[entry\.name\] \+ entry\.aliases/)
 
   // The UI states what the marker is and whether it fell outside the lab's range, and
   // explicitly declines to interpret the result.
@@ -1574,4 +1575,57 @@ test('each blood value is plotted against the range its own lab printed', () => 
   assert.match(bar, /marker\.isOutOfRange \? Color\.orange/)
   // Readable without seeing it.
   assert.match(bar, /accessibilityValue\(marker\.isOutOfRange/)
+})
+
+test('independent reads are issued together rather than one after another', () => {
+  // The database work itself is trivial here (the dashboard's food query plans to a
+  // 0.15ms scan of a few hundred rows); what costs is the number of sequential round
+  // trips. Verified against production: 1046ms sequential -> 327ms parallel, same bytes.
+  const mlog = read('../api/mlog.js')
+  assert.match(mlog, /const \[dashboard, intraday, rolling24h\] = await Promise\.all\(\[\s*\n\s*getNeonDashboard\(auth\.id\), getIntradayEnergy\(auth\.id\), getRolling24h\(auth\.id\),\s*\n\s*\]\)/)
+
+  // The launch path waited on four independent reads in turn.
+  const app = read('../ios/Fuel/Sources/FuelApp.swift')
+  assert.match(app, /async let dashboard: Void = store\.load\(\)/)
+  assert.match(app, /async let editable: Void = store\.loadEditableState\(\)/)
+  assert.match(app, /async let library: Void = store\.loadLibrary\(\)/)
+  assert.match(app, /_ = await \(dashboard, editable, context, library\)/)
+
+  // The library's two shelves go out together again, without going back to the `try?`
+  // that hid a dead route for weeks — a Result keeps the failures separable.
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /async let mealsResult = fetchSavedMeals\(\)/)
+  assert.match(store, /async let historyResult = fetchFoodHistory\(\)/)
+  assert.match(store, /private func fetchSavedMeals\(\) async -> Result<\[SavedMeal\], Error>/)
+
+  // syncHealth already ends with load(), so pull-to-refresh was fetching twice.
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /\.refreshable \{ await store\.syncHealth\(reason: "pull to refresh"\) \}/)
+  assert.doesNotMatch(today, /syncHealth\(reason: "pull to refresh"\)\s*\n\s*await store\.load\(\)/)
+})
+
+test('paging back a day lands on data that is already there', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /private func prefetchNextDay\(\)/)
+  // Runs after both the cache-hit and the fetch paths, so a run of swipes stays ahead.
+  const fn = store.slice(store.indexOf('func loadViewingDay() async'), store.indexOf('private func prefetchNextDay'))
+  assert.equal((fn.match(/prefetchNextDay\(\)/g) || []).length, 2,
+    'prefetch must follow both the cached and the fetched path')
+  // Never shows a spinner for a day nobody is looking at.
+  const pf = store.slice(store.indexOf('private func prefetchNextDay'))
+  assert.doesNotMatch(pf.slice(0, 900), /dayDetailLoading/)
+  // A fast series of swipes must not queue the same request repeatedly.
+  assert.match(pf, /!prefetching\.contains\(date\) else \{ return \}/)
+  assert.match(pf, /prefetching\.insert\(date\)/)
+  assert.match(pf, /self\.prefetching\.remove\(date\)/)
+})
+
+test('blood marker lookups are a table, not a scan that rebuilds its keys', () => {
+  const markers = read('../ios/Fuel/Sources/BloodMarkers.swift')
+  // A panel asks twice per result — once to group it, once to explain it — and the old
+  // scan re-derived every catalogue entry's key on each call.
+  assert.match(markers, /private static let index: \[String: BloodMarkerInfo\]/)
+  assert.match(markers, /static func info\(for name: String\) -> BloodMarkerInfo\? \{ index\[key\(name\)\] \}/)
+  // A canonical name must not be displaced by another marker's alias for it.
+  assert.match(markers, /if table\[key\(name\)\] == nil \{ table\[key\(name\)\] = entry \}/)
 })

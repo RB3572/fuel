@@ -30,12 +30,23 @@ enum BloodMarkers {
         name.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    static func info(for name: String) -> BloodMarkerInfo? {
-        let wanted = key(name)
-        return catalogue.first { entry in
-            key(entry.name) == wanted || entry.aliases.contains { key($0) == wanted }
+    /// Every name and alias, resolved once. The scan it replaces re-derived the key of
+    /// every catalogue entry on every lookup, and a panel asks twice per result — once
+    /// to group it, once to explain it — so a thirty-marker report was doing thousands
+    /// of string transformations to render one screen.
+    private static let index: [String: BloodMarkerInfo] = {
+        var table: [String: BloodMarkerInfo] = [:]
+        for entry in catalogue {
+            for name in [entry.name] + entry.aliases {
+                // First writer wins, so a canonical name is never displaced by another
+                // marker's alias for it.
+                if table[key(name)] == nil { table[key(name)] = entry }
+            }
         }
-    }
+        return table
+    }()
+
+    static func info(for name: String) -> BloodMarkerInfo? { index[key(name)] }
 
     /// Which panel a marker belongs to, for grouping a report that mixes several.
     static func category(for name: String) -> String {

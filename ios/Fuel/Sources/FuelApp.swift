@@ -26,13 +26,17 @@ struct FuelApp: App {
                 .tint(theme.accent)
                 .preferredColorScheme(darkMode ? .dark : .light)
                 .task {
-                    await store.load()
-                    await store.loadEditableState()
-                    await store.loadContext()
+                    // Four independent reads that used to run one after another, so the
+                    // first screen waited on the sum of four network round trips instead
+                    // of the slowest one. None of them needs any of the others.
+                    async let dashboard: Void = store.load()
+                    async let editable: Void = store.loadEditableState()
+                    async let context: Void = store.loadContext()
                     // The dashboard marks which logged foods are already saved meals, so
                     // the library has to be known before the food rows are first swiped
                     // — not only once the library sheet has been opened.
-                    await store.loadLibrary()
+                    async let library: Void = store.loadLibrary()
+                    _ = await (dashboard, editable, context, library)
                     if store.healthAuthorized { await BackgroundSync.enableHealthKitDelivery() }
                     await store.syncHealth(reason: "app open")
                     await LocationSampler.shared.captureIfDue()

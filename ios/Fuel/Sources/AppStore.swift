@@ -437,7 +437,10 @@ final class AppStore {
     }
 
     func loadViewingDay() async {
-        guard !isViewingToday, let date = viewingDate, dayDetailCache[date] == nil else { return }
+        guard !isViewingToday, let date = viewingDate, dayDetailCache[date] == nil else {
+            prefetchNextDay()
+            return
+        }
         dayDetailLoading = true
         defer { dayDetailLoading = false }
         do {
@@ -446,7 +449,34 @@ final class AppStore {
             // Left uncached on failure so the next visit to this day retries the fetch
             // instead of silently showing an empty day forever.
         }
+        prefetchNextDay()
     }
+
+    /// Quietly fetches the day one further back, so continuing to swipe lands on data
+    /// that is already there. Paging is overwhelmingly one-directional — you go back
+    /// through days, not randomly — so the next one back is a good guess and a wasted
+    /// prefetch costs one small request that would very likely have been made anyway.
+    /// Never touches `dayDetailLoading`: this must not put a spinner on screen for a day
+    /// nobody is looking at yet.
+    private func prefetchNextDay() {
+        let ahead = dayOffset + 1
+        let dates = pageableDates
+        let index = dates.count - 1 - ahead
+        guard index >= 0, index < dates.count else { return }
+        let date = dates[index]
+        guard dayDetailCache[date] == nil, !prefetching.contains(date) else { return }
+        prefetching.insert(date)
+        Task { [weak self] in
+            guard let self else { return }
+            let detail = try? await self.client().dayDetail(date: date)
+            self.prefetching.remove(date)
+            if let detail, self.dayDetailCache[date] == nil { self.dayDetailCache[date] = detail }
+        }
+    }
+
+    /// Days with a prefetch already in flight, so a fast series of swipes cannot queue
+    /// the same request several times over.
+    private var prefetching: Set<String> = []
 
     /// The entry the app just created, so Today can scroll to it and flash it. Logging
     /// used to end with the camera still on screen and a one-line "Logged X" — which
@@ -497,10 +527,30 @@ final class AppStore {
         guard isSignedIn else { return }
         libraryLoading = true
         defer { libraryLoading = false }
+        // Both at once — they are independent, and awaiting them in turn made opening
+        // the library wait on two round trips. Each still reports its own outcome, which
+        // is the point of not using `try?`: a Result keeps the failures separable
+        // without giving up the concurrency.
+        async let mealsResult = fetchSavedMeals()
+        async let historyResult = fetchFoodHistory()
         var failed: [String] = []
-        do { savedMeals = try await client().savedMeals() } catch { failed.append("saved meals") }
-        do { foodHistory = try await client().foodHistory() } catch { failed.append("history") }
+        switch await mealsResult {
+        case .success(let value): savedMeals = value
+        case .failure: failed.append("saved meals")
+        }
+        switch await historyResult {
+        case .success(let value): foodHistory = value
+        case .failure: failed.append("history")
+        }
         libraryError = failed.isEmpty ? nil : "Couldn't load your \(failed.joined(separator: " or "))."
+    }
+
+    private func fetchSavedMeals() async -> Result<[SavedMeal], Error> {
+        do { return .success(try await client().savedMeals()) } catch { return .failure(error) }
+    }
+
+    private func fetchFoodHistory() async -> Result<[FoodHistoryItem], Error> {
+        do { return .success(try await client().foodHistory()) } catch { return .failure(error) }
     }
 
     /// The saved meal a logged food already exists as, matched the same way the food
