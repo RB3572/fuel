@@ -1170,20 +1170,6 @@ test('the compare bar\'s dot and tick sit centered on the bar line, not above it
   assert.match(bar, /\.offset\(x: pos\(value\) - 5\.5\)/)
 })
 
-test('the day-paging transition rasterizes into one layer while it animates, and only then', () => {
-  const today = read('../ios/Fuel/Sources/TodayView.swift')
-  // Sliding the full card stack (charts included) with a live per-frame offset re-runs
-  // layout across every descendant on each touch delta unless it's composited into a
-  // single bitmap first — that per-frame cost was the actual jank, not the animation
-  // curve. drawingGroup() is applied only while a transition is actually in flight so
-  // idle scrolling and interaction keep native, non-rasterized rendering.
-  assert.match(today, /struct RasterizeWhilePaging: ViewModifier/)
-  const modifier = today.slice(today.indexOf('private struct RasterizeWhilePaging'))
-  assert.match(modifier.slice(0, 400), /content\.compositingGroup\(\)\.drawingGroup\(\)/)
-  assert.match(today, /\.modifier\(RasterizeWhilePaging\(active: pagingActive\)\)/)
-  assert.match(today, /private var pagingActive: Bool \{ pageAnimating \|\| pageDragOffset != 0 \}/)
-})
-
 test('the "return to Today" button is a plain titled button, so it lays out as a full pill', () => {
   const today = read('../ios/Fuel/Sources/TodayView.swift')
   // Two earlier attempts — .buttonStyle(.bordered), then a custom Text+Capsule label —
@@ -1317,7 +1303,8 @@ test('a past day\'s blank entries can be filled, and the day refreshes to show i
   // A past day is served from dayDetailCache, which a dashboard reload never touches —
   // so an edit, a delete or a fill would appear to do nothing until you paged away.
   assert.match(store, /func refreshViewingDay\(\) async \{/)
-  assert.match(store, /dayDetailCache\[date\] = nil/)
+  // It refetches into place rather than clearing first — see the delete test for why.
+  assert.match(store, /if let detail = try\? await client\(\)\.dayDetail\(date: date\) \{ dayDetailCache\[date\] = detail \}/)
   const load = store.slice(store.indexOf('func load() async'), store.indexOf('func loadEditableState'))
   assert.match(load, /await refreshViewingDay\(\)/)
 })
@@ -1628,4 +1615,82 @@ test('blood marker lookups are a table, not a scan that rebuilds its keys', () =
   assert.match(markers, /static func info\(for name: String\) -> BloodMarkerInfo\? \{ index\[key\(name\)\] \}/)
   // A canonical name must not be displaced by another marker's alias for it.
   assert.match(markers, /if table\[key\(name\)\] == nil \{ table\[key\(name\)\] = entry \}/)
+})
+
+test('lifetime distance is put next to real journeys, with the equator as the ring', () => {
+  const server = read('../api/_lib/journeys.js')
+  // Every day on record, not the dashboard's 30-day window — the number is only
+  // interesting after years of it.
+  assert.match(server, /FROM health_daily\s*\n\s*WHERE user_id = \$\{userId\}/)
+  assert.doesNotMatch(server, /interval '30 days'/)
+  assert.match(server, /swimmingMiles: \(row\?\.swimming_yards \?\? 0\) \/ 1760/)
+  assert.match(read('../api/mlog.js'), /integrationRoute === 'journeys'/)
+
+  const journeys = read('../ios/Fuel/Sources/Journeys.swift')
+  assert.match(journeys, /static let earthCircumferenceMiles = 24_901\.0/)
+  // Real routes at published lengths, each citing where the length comes from.
+  const entries = [...journeys.matchAll(/Journey\(name: "([^"]+)"/g)].map((m) => m[1])
+  assert.ok(entries.length >= 20, `expected a real catalogue, found ${entries.length}`)
+  for (const block of journeys.split('Journey(name:').slice(1)) {
+    assert.match(block, /source: "/, 'every journey needs its length sourced')
+    assert.match(block, /modes: \[/, 'every journey needs the modes it suits')
+  }
+  assert.match(journeys, /"Alcatraz to shore"[\s\S]{0,120}miles: 1\.25/)
+  assert.match(journeys, /"The English Channel"[\s\S]{0,120}miles: 21/)
+  // The list always ends on something still ahead rather than trailing off.
+  assert.match(journeys, /let next = pool\.first \{ \$0\.miles > miles \}/)
+
+  const view = read('../ios/Fuel/Sources/JourneysView.swift')
+  assert.match(view, /struct GlobeProgressRing: View/)
+  // Past one lap the ring stays full and a brighter arc tracks the lap in progress,
+  // so a bar that filled long ago keeps meaning something.
+  assert.match(view, /private var completedLaps: Int \{ Int\(fraction\) \}/)
+  assert.match(view, /completedLaps > 0 \? currentLap : fraction/)
+  // Deselecting everything would leave nothing to draw.
+  assert.match(view, /if selected\.count > 1 \{ selected\.remove\(mode\) \}/)
+  // Honest about walking and running arriving as one figure.
+  assert.match(view, /counted together rather than split on a guess/)
+  assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /NavigationLink \{ JourneysView\(\) \}/)
+})
+
+test('the segmented control is never rasterized into a coloured block', () => {
+  // drawingGroup() renders through Metal, which does not reproduce system-drawn
+  // controls: the Day/Week/Month picker came out as a solid yellow rectangle for the
+  // length of every page transition. The LazyVStack is what actually made paging
+  // cheap, so the rasterization was removed rather than worked around.
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.doesNotMatch(today, /drawingGroup\(\)/)
+  assert.doesNotMatch(today, /RasterizeWhilePaging/)
+  assert.match(today, /LazyVStack/)
+})
+
+test('deleting an entry leaves you where you were', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  // Clearing the cache first left the day with nothing in it until the reply came
+  // back; the page collapsed and took the scroll position to the top with it.
+  const refresh = store.slice(store.indexOf('func refreshViewingDay() async'), store.indexOf('func loadViewingDay() async'))
+  assert.doesNotMatch(refresh, /dayDetailCache\[date\] = nil/)
+  assert.match(refresh, /if let detail = try\? await client\(\)\.dayDetail\(date: date\) \{ dayDetailCache\[date\] = detail \}/)
+  // The row goes as soon as it is tapped, rather than after a round trip.
+  assert.match(store, /private func removeLocally\(_ ids: \[String\]\)/)
+  assert.match(store, /dashboard\?\.today\.foodEntries\.removeAll \{ doomed\.contains\(\$0\.id\) \}/)
+  const single = store.slice(store.indexOf('func deleteFood(_ entry: FoodEntry) async'), store.indexOf('private func removeLocally'))
+  assert.match(single, /removeLocally\(\[entry\.id\]\)/)
+  assert.match(store.slice(store.indexOf('func deleteFoods')), /removeLocally\(ids\)/)
+})
+
+test('a photo can come from the camera roll, with the same chance to add context', () => {
+  const camera = read('../ios/Fuel/Sources/CameraLogView.swift')
+  assert.match(camera, /import PhotosUI/)
+  assert.match(camera, /PhotosPicker\(selection: \$pickedPhoto, matching: \.images, photoLibrary: \.shared\(\)\)/)
+  assert.match(camera, /Image\(systemName: "photo\.on\.rectangle"\)\.foregroundStyle\(\.white\)/)
+  // Lands in the same context sheet the blue shutter uses.
+  assert.match(camera, /askingForContext = true\s*\n\s*\}\s*\n\s*\/\/ Cleared so picking the same photo twice/)
+  // Picking the same photo twice in a row must still register.
+  assert.match(camera, /pickedPhoto = nil/)
+  // A twelve-megapixel library photo is not what the camera path produces.
+  assert.match(camera, /static func downscaled\(_ data: Data, maxDimension: CGFloat = 1280\)/)
+  assert.match(camera, /jpegData\(compressionQuality: 0\.8\)/)
+  // The shutter stays centred with both accessory buttons on its right.
+  assert.match(camera, /Color\.clear\.frame\(width: 52 \* 2 \+ 34, height: 52\)/)
 })

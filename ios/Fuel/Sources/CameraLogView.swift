@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 import AVFoundation
 import UIKit
 
@@ -99,6 +100,8 @@ struct CameraLogView: View {
     @State private var pendingPhoto: Data?
     @State private var contextNote = ""
     @State private var askingForContext = false
+    /// The library photo being picked, cleared as soon as it is read.
+    @State private var pickedPhoto: PhotosPickerItem?
     /// The frame that was actually captured, held on screen from the moment the shutter
     /// fires until the log lands. Without it the preview keeps showing live video while
     /// the model reads a photo you can no longer see — so you cannot tell what was sent,
@@ -184,8 +187,9 @@ struct CameraLogView: View {
 
     private var shutterRow: some View {
         HStack(spacing: 34) {
-            // Symmetry placeholder so the shutter stays centred.
-            Circle().fill(.clear).frame(width: 52, height: 52)
+            // Symmetry placeholder so the shutter stays centred: as wide as the two
+            // accessory buttons and the gap between them, since both sit on the right.
+            Color.clear.frame(width: 52 * 2 + 34, height: 52)
 
             Button {
                 camera.capture { data in
@@ -217,7 +221,44 @@ struct CameraLogView: View {
                 }
             }
             .disabled(camera.unavailable != nil || store.logging)
+
+            // A photo you already have. Lands in the same context sheet as the blue
+            // shutter, so a picked plate can carry the same note a captured one can.
+            PhotosPicker(selection: $pickedPhoto, matching: .images, photoLibrary: .shared()) {
+                ZStack {
+                    Circle().fill(Color.accentColorBlue).frame(width: 52, height: 52)
+                    Image(systemName: "photo.on.rectangle").foregroundStyle(.white)
+                }
+            }
+            .disabled(store.logging)
         }
+        .onChange(of: pickedPhoto) { _, item in
+            guard let item else { return }
+            Task {
+                if let raw = try? await item.loadTransferable(type: Data.self),
+                   let prepared = Self.downscaled(raw) {
+                    pendingPhoto = prepared
+                    frozen = prepared
+                    askingForContext = true
+                }
+                // Cleared so picking the same photo twice in a row still registers.
+                pickedPhoto = nil
+            }
+        }
+    }
+
+    /// A library photo can be twelve megapixels and several megabytes; the camera path
+    /// never produces anything like that. Shrunk to the same order of size before it is
+    /// uploaded or shown to a model, which is all the detail either one can use.
+    static func downscaled(_ data: Data, maxDimension: CGFloat = 1280) -> Data? {
+        guard let image = UIImage(data: data) else { return nil }
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxDimension else { return image.jpegData(compressionQuality: 0.8) ?? data }
+        let scale = maxDimension / longest
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let shrunk = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        return shrunk.jpegData(compressionQuality: 0.8)
     }
 
     private var contextSheet: some View {

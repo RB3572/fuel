@@ -432,8 +432,12 @@ final class AppStore {
     /// an older day would appear to do nothing at all until you paged away and back.
     func refreshViewingDay() async {
         guard !isViewingToday, let date = viewingDate else { return }
-        dayDetailCache[date] = nil
-        await loadViewingDay()
+        // Fetched into place rather than cleared first. Emptying the cache left the day
+        // with no food, no workouts and no supplements until the reply came back — the
+        // page collapsed to a fraction of its height for that beat, and the scroll
+        // position went to the top with it. Deleting one entry looked like being thrown
+        // back to the start of the day.
+        if let detail = try? await client().dayDetail(date: date) { dayDetailCache[date] = detail }
     }
 
     func loadViewingDay() async {
@@ -661,11 +665,26 @@ final class AppStore {
     }
 
     func deleteFood(_ entry: FoodEntry) async {
+        removeLocally([entry.id])
         do {
             try await client().deleteFood(id: entry.id)
             await load()
         } catch {
             self.error = error.localizedDescription
+            await load()
+        }
+    }
+
+    /// Drops entries from what is on screen before the network is involved, so the row
+    /// you deleted disappears where it was instead of after a round trip. The reload
+    /// that follows reconciles totals; if the delete actually failed, it puts the entry
+    /// back.
+    private func removeLocally(_ ids: [String]) {
+        let doomed = Set(ids)
+        dashboard?.today.foodEntries.removeAll { doomed.contains($0.id) }
+        if let date = viewingDate, var cached = dayDetailCache[date] {
+            cached.foodEntries.removeAll { doomed.contains($0.id) }
+            dayDetailCache[date] = cached
         }
     }
 
@@ -673,6 +692,7 @@ final class AppStore {
     /// rather than one per entry, which would otherwise flicker the whole card once per
     /// selected row.
     func deleteFoods(_ ids: [String]) async {
+        removeLocally(ids)
         for id in ids {
             do { try await client().deleteFood(id: id) }
             catch { self.error = error.localizedDescription }
@@ -708,6 +728,21 @@ final class AppStore {
             progress(done, entries.count)
         }
         await load()
+    }
+
+    // MARK: - Journeys
+
+    var journeyTotals: JourneyTotals?
+    var journeysLoading = false
+
+    /// Cached for the session: it aggregates years of history and does not change from
+    /// one visit to the next in any way the eye would catch, so re-fetching on every
+    /// appearance would be a round trip for nothing.
+    func loadJourneyTotals() async {
+        guard isSignedIn, journeyTotals == nil else { return }
+        journeysLoading = true
+        defer { journeysLoading = false }
+        journeyTotals = try? await client().journeyTotals()
     }
 
     // MARK: - Blood panels

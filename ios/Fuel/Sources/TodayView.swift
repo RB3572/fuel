@@ -50,7 +50,6 @@ struct TodayView: View {
     @State private var pageWidth: CGFloat = 0
     /// True while a food row is being swiped open, which suppresses day-paging.
     @State private var rowSwiping = false
-    private var pagingActive: Bool { pageAnimating || pageDragOffset != 0 }
 
     private var summary: DaySummary? { store.viewingSummary }
 
@@ -143,14 +142,6 @@ struct TodayView: View {
                             .onChange(of: geo.size.width) { _, width in pageWidth = width }
                     }
                 )
-                // Rasterizing the whole card stack into one Metal-backed layer only while
-                // a page transition is live turns the per-frame cost of the offset
-                // animation from "re-layout every card, including every chart" into "move
-                // one bitmap" — without it, dragging this much content (energy charts,
-                // vitals bar, every section) redraws the full tree on every touch delta
-                // and the transition visibly drops frames. Left off the rest of the time
-                // so idle scrolling and interaction keep native, non-rasterized rendering.
-                .modifier(RasterizeWhilePaging(active: pagingActive))
                 .offset(x: pageDragOffset)
                 // Tapping anywhere outside the food card exits selection mode. The food
                 // card itself absorbs its own taps (see foodSection's contentShape), so
@@ -1199,22 +1190,6 @@ private extension View {
     /// from its key) so a whole screen of cards doesn't move in lockstep.
     func jiggling(_ active: Bool, seed: String) -> some View {
         modifier(JiggleModifier(active: active, seed: seed))
-    }
-}
-
-/// Composites the wrapped content into one Metal-backed layer while `active`, so an
-/// offset animation over it moves a bitmap instead of re-running layout across every
-/// descendant (charts included) on each frame. Off outside that window — rasterizing
-/// content that never stops changing (the dashboard while idle) would cost more than it
-/// saves and can dull interactive elements, so this only ever applies mid-transition.
-private struct RasterizeWhilePaging: ViewModifier {
-    let active: Bool
-    func body(content: Content) -> some View {
-        if active {
-            content.compositingGroup().drawingGroup()
-        } else {
-            content
-        }
     }
 }
 

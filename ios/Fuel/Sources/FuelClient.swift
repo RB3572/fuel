@@ -109,6 +109,20 @@ struct BloodPanel: Decodable, Identifiable {
     var outOfRange: [Marker] { markers.filter(\.isOutOfRange) }
 }
 
+/// Lifetime distance, in miles, across every day Fuel has on record.
+struct JourneyTotals: Decodable {
+    var walkRunMiles: Double
+    var cyclingMiles: Double
+    var swimmingMiles: Double
+    var steps: Double
+    var flights: Double
+    var firstDay: String?
+    var days: Int
+
+    var totalMiles: Double { walkRunMiles + cyclingMiles + swimmingMiles }
+    var hasAnyDistance: Bool { totalMiles > 0 }
+}
+
 /// Raw candidate patterns mined server-side for "Learn from me" — see
 /// api/_lib/learning.js. Every field is a real, computed number; the model only picks
 /// which of these are worth surfacing and phrases them.
@@ -655,6 +669,10 @@ struct FuelClient {
     func dayDetail(date: String) async throws -> DayDetail {
         let data = try await send(try request("/api/mlog?fuel_route=day-detail&date=\(date)"))
         return try JSONDecoder().decode(DayDetail.self, from: data)
+    }
+
+    func journeyTotals() async throws -> JourneyTotals {
+        try JSONDecoder().decode(JourneyTotals.self, from: try await send(try request("/api/mlog?fuel_route=journeys")))
     }
 
     // MARK: - Blood panels

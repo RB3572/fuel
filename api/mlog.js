@@ -7,6 +7,7 @@ import { authorizationServerMetadata, verifyAccessToken } from './_lib/mcp-auth.
 import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.js'
 import { getDayDetail, getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getLearningSignals } from './_lib/learning.js'
+import { getJourneyTotals } from './_lib/journeys.js'
 import { createBloodPanel, deleteBloodPanel, listBloodPanels, updateBloodPanel } from './_lib/blood.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
@@ -128,6 +129,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'blood') {
     await handleBloodPanels(req, res)
+    return
+  }
+  if (integrationRoute === 'journeys') {
+    await handleJourneys(req, res)
     return
   }
   if (integrationRoute === 'quicklog') {
@@ -805,6 +810,28 @@ async function handleBloodPanels(req, res) {
   } catch (error) {
     console.error('Blood panel request failed', error)
     sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to save those results.' })
+  }
+}
+
+/// Lifetime distance for the Journeys screen — see api/_lib/journeys.js. One aggregate
+/// over every day on record, which is the point: the number only means anything after
+/// years of it.
+async function handleJourneys(req, res) {
+  if (req.method !== 'GET') {
+    methodNotAllowed(res, ['GET'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to see how far you have gone.' })
+      return
+    }
+    sendJson(res, 200, await getJourneyTotals(auth.id), auth.cookie ? [auth.cookie] : [])
+  } catch (error) {
+    console.error('Journey totals request failed', error)
+    sendJson(res, 500, { error: 'Unable to add up your distance.' })
   }
 }
 
