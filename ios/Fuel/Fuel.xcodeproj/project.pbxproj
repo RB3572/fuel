@@ -14,6 +14,7 @@
 		0D267EEA17260A133DE4FC84 /* JourneyMapCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9ABF1AD8907B6A046FD071E /* JourneyMapCard.swift */; };
 		0D6A4D54AC334FEC91E29321 /* FuelControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8AA4D96DE999C1F0E132F7A /* FuelControls.swift */; };
 		0E78A7674807633A3EBAE513 /* Journeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = D697A06D95F0EDFE0C6EBEBE /* Journeys.swift */; };
+		0FFF99B185BE024E8191ECA8 /* GlobeSphere.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67FBCC1BE8838F9D4C518C42 /* GlobeSphere.swift */; };
 		12239BAF7F793D39DE03D1CC /* SyncSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1833EA7687ECA1C1CF14B0 /* SyncSink.swift */; };
 		148B0A560C2A61F40D1CF042 /* FuelControlIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = C76C5CAE8ABFC0A234260524 /* FuelControlIntents.swift */; };
 		17095686D41CDFCF7CB90DC2 /* ExploreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CEACC5A8135C313037AB184 /* ExploreView.swift */; };
@@ -111,6 +112,7 @@
 		4E5CB1CD0EE4AB5B657A032D /* BloodView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodView.swift; sourceTree = "<group>"; };
 		4F20155033B25A23515C87FF /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		64C7CF13A8704D2FAD979B65 /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
+		67FBCC1BE8838F9D4C518C42 /* GlobeSphere.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobeSphere.swift; sourceTree = "<group>"; };
 		74A8D86E91141EA08C9D85FD /* RecipesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecipesView.swift; sourceTree = "<group>"; };
 		77029BA31AAB7674948F17F5 /* WidgetPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPublisher.swift; sourceTree = "<group>"; };
 		7AD1C0EAF43B21F21654B0AB /* SyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStore.swift; sourceTree = "<group>"; };
@@ -207,6 +209,7 @@
 				F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */,
 				E97BDA97A18630C812B6EE9A /* FuelClient.swift */,
 				18DF00D79B37484CC87D6393 /* GlobeLandmarks.swift */,
+				67FBCC1BE8838F9D4C518C42 /* GlobeSphere.swift */,
 				AF99ACD80078A760548894DD /* GlobeView.swift */,
 				10D2E139DFF93E43EC5B6FC7 /* HealthBody.swift */,
 				301F16C9F607FE5663CD1203 /* HealthExtras.swift */,
@@ -401,6 +404,7 @@
 				F948E38B03D9AC4378588BE2 /* FuelClient.swift in Sources */,
 				655E648EBCC9741577616E96 /* FuelControlIntents.swift in Sources */,
 				54048B78A1EBD810DE339253 /* GlobeLandmarks.swift in Sources */,
+				0FFF99B185BE024E8191ECA8 /* GlobeSphere.swift in Sources */,
 				1ECE5854844A81E8D69D4B8A /* GlobeView.swift in Sources */,
 				4E36B7835763184D6B819C04 /* HealthBody.swift in Sources */,
 				432AEB404735B12154B7D72F /* HealthExtras.swift in Sources */,
@@ -521,7 +525,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -609,7 +613,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -632,7 +636,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -657,7 +661,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 37;
+				CURRENT_PROJECT_VERSION = 38;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;

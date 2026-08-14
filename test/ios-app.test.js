@@ -1898,34 +1898,42 @@ test('each journey is its own card, on a static map of where it really is', () =
   assert.doesNotMatch(view, /struct JourneyDoneRow/)
 })
 
-test('the globe cannot zoom, and draws a real lap of the planet', () => {
+test('the globe is drawn, not mapped — so it spins, and cannot zoom', () => {
+  // MapKit at 22,000 km renders the whole planet, and driving its camera from a drag
+  // re-rendered all of it every frame: about two a second. The cost was the tile
+  // pipeline, not the way it was asked, so the sphere is drawn directly instead.
   const globe = read('../ios/Fuel/Sources/GlobeView.swift')
-  // Zoom is not disallowed, it is inexpressible: the map has no interaction of its own
-  // and the only writer of the camera never changes distance.
-  assert.match(globe, /Map\(position: \$camera, interactionModes: \[\]\)/)
-  assert.match(globe, /private static let cameraDistance: CLLocationDistance = 22_000_000/)
-  const setter = globe.slice(globe.indexOf('private func lookAt'))
-  assert.match(setter.slice(0, 500), /distance: Self\.cameraDistance/)
-  assert.equal((globe.match(/MapCamera\(/g) || []).length, 2,
-    'the camera is constructed in exactly two places: the initial value and lookAt')
-  // Rotation is clamped short of the poles, where a map has nothing left to orient with.
-  assert.match(globe, /private static let maxLatitude = 72\.0/)
-  // A real great circle, drawn on the surface.
-  assert.match(globe, /MapPolyline\(coordinates: route\)/)
-  assert.match(globe, /Geo\.greatCircle\(from: coordinate, bearing: scenic\.bearing, steps: 96\)/)
+  assert.doesNotMatch(globe, /Map\(position:/)
+  assert.doesNotMatch(globe, /MapPolyline/)
+  assert.match(globe, /GlobeSphere\(route: route, origin: origin/)
+  // There is no distance to change, so zoom is not a thing that can be expressed.
+  assert.doesNotMatch(globe, /distance:/)
+  assert.match(globe, /@State private var centreLat = 20\.0/)
+  assert.match(globe, /min\(80, max\(-80, anchor\.lat \+ Double\(value\.translation\.height\) \* 0\.3\)\)/)
+
+  const sphere = read('../ios/Fuel/Sources/GlobeSphere.swift')
+  // Orthographic projection: verified against known answers — the centre lands at the
+  // middle, the antipode is hidden, and no visible point ever falls outside the disc.
+  assert.match(sphere, /struct Orthographic/)
+  assert.match(sphere, /let cosC = sin\(φ0\) \* sin\(φ\) \+ cos\(φ0\) \* cos\(φ\) \* cos\(λ - λ0\)/)
+  assert.match(sphere, /return \(CGPoint\(x: centre\.x \+ radius \* x, y: centre\.y - radius \* y\), cosC >= 0\)/)
+  // The far side of a line disappears behind the sphere rather than cutting across it.
+  assert.match(sphere, /private func visibleRuns/)
+  assert.match(sphere, /\} else if !current\.isEmpty \{/)
+  assert.match(sphere, /context\.clip\(to: globe\)/)
+  // Enough world to recognise, little enough to redraw for free.
+  assert.match(sphere, /static let all: \[Outline\]/)
+  for (const land of ['northAmerica', 'southAmerica', 'africa', 'eurasia', 'australia', 'antarctica']) {
+    assert.match(sphere, new RegExp(`static let ${land}`), `${land} should be on the globe`)
+  }
 
   const geo = read('../ios/Fuel/Sources/GlobeLandmarks.swift')
-  // The lap is chosen, not arbitrary: of every circle through your location, the one
-  // passing nearest the most famous places. Verified from St. Paul it runs 9 miles from
-  // Big Ben and 87 from the Great Pyramid.
+  // The lap is still chosen rather than arbitrary.
   assert.match(geo, /static func mostScenicBearing/)
   assert.match(geo, /score \+= Double\(landmark\.fame\) \* \(1 - off \/ corridorMiles\)/)
-  assert.match(geo, /static func crossTrackDistance/)
   assert.match(geo, /let lap = 2 \* \.pi \* earthRadiusMiles/)
-  // And every landmark has something to say when you turn out to be near it.
   for (const block of geo.split('Landmark(name:').slice(1)) {
     assert.match(block, /quip: "/, 'every landmark needs its aside')
-    assert.match(block, /fame: [123]/)
   }
   assert.match(globe, /Text\("You are \\\(Format\.number\(away\)\) miles from \\\(landmark\.name\)"\)/)
 })

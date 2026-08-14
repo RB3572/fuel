@@ -26,21 +26,15 @@ struct GlobeView: View {
     static let fallback = CLLocationCoordinate2D(latitude: 44.9537, longitude: -93.0900)
     static let fallbackName = "St. Paul, Minnesota"
 
-    /// Far enough out to see the curve of the planet, and never changed again.
-    private static let cameraDistance: CLLocationDistance = 22_000_000
-    /// Beyond this the view is looking straight down at a pole, where a map has nothing
-    /// left to orient you with.
-    private static let maxLatitude = 72.0
-
     @State private var origin: CLLocationCoordinate2D?
     @State private var originName: String?
     @State private var route: [CLLocationCoordinate2D] = []
     @State private var passes: [Landmark] = []
-    @State private var look = CLLocationCoordinate2D(latitude: 20, longitude: 0)
-    @State private var camera: MapCameraPosition = .camera(
-        MapCamera(centerCoordinate: CLLocationCoordinate2D(latitude: 20, longitude: 0),
-                  distance: 22_000_000, heading: 0, pitch: 0))
-    @State private var dragAnchor: CLLocationCoordinate2D?
+    /// Where the viewer is over. There is no distance to change, so there is nothing to
+    /// zoom — the sphere is always drawn to the width of its frame.
+    @State private var centreLat = 20.0
+    @State private var centreLon = 0.0
+    @State private var anchor: (lat: Double, lon: Double)?
     @State private var started = false
 
     var body: some View {
@@ -53,51 +47,24 @@ struct GlobeView: View {
     }
 
     private var globe: some View {
-        Map(position: $camera, interactionModes: []) {
-            if route.count > 1 {
-                MapPolyline(coordinates: route)
-                    .stroke(DashboardTheme.shared.accent, lineWidth: 3)
-            }
-            if let origin {
-                Annotation("", coordinate: origin) {
-                    Circle().fill(DashboardTheme.shared.accent)
-                        .frame(width: 13, height: 13)
-                        .overlay(Circle().stroke(.white, lineWidth: 2.5))
-                }
-            }
-            ForEach(passes.prefix(8)) { landmark in
-                Annotation("", coordinate: landmark.coordinate) {
-                    Circle().fill(.white)
-                        .frame(width: 7, height: 7)
-                        .overlay(Circle().stroke(DashboardTheme.shared.accent, lineWidth: 2))
-                }
-            }
-        }
-        // Standard, not satellite. Imagery at this distance is a lot of tiles to
-        // resample on every frame of a drag, and the drag re-renders the whole map — it
-        // was the difference between a globe that spins and one that steps.
-        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
-        .mapControlVisibility(.hidden)
-        .clipShape(Circle())
-        .overlay(Circle().stroke(Palette.border(scheme), lineWidth: 1))
-        .frame(height: 300)
-        .padding(.horizontal, 10)
-        // The only way the camera ever moves. Degrees per point are tuned so a drag
-        // across the globe turns it about that far, which is what makes it feel like a
-        // ball rather than a slider.
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    let anchor = dragAnchor ?? look
-                    if dragAnchor == nil { dragAnchor = anchor }
-                    let longitude = anchor.longitude - Double(value.translation.width) * 0.32
-                    let latitude = anchor.latitude + Double(value.translation.height) * 0.28
-                    lookAt(CLLocationCoordinate2D(
-                        latitude: min(Self.maxLatitude, max(-Self.maxLatitude, latitude)),
-                        longitude: (longitude + 540).truncatingRemainder(dividingBy: 360) - 180))
-                }
-                .onEnded { _ in dragAnchor = nil }
-        )
+        GlobeSphere(route: route, origin: origin, landmarks: Array(passes.prefix(10)),
+                    centreLat: centreLat, centreLon: centreLon)
+            .frame(height: 300)
+            .padding(.horizontal, 10)
+            // The whole interaction. Two numbers change and the next frame is a Canvas
+            // pass over a few hundred points, so this keeps up with a finger.
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if anchor == nil { anchor = (centreLat, centreLon) }
+                        guard let anchor else { return }
+                        centreLon = wrapped(anchor.lon - Double(value.translation.width) * 0.35)
+                        // Clamped short of the poles: past about 80° the grid converges
+                        // to a point and turning stops reading as turning.
+                        centreLat = min(80, max(-80, anchor.lat + Double(value.translation.height) * 0.3))
+                    }
+                    .onEnded { _ in anchor = nil }
+            )
     }
 
     private var summary: some View {
@@ -143,13 +110,8 @@ struct GlobeView: View {
         }
     }
 
-    /// The only writer of the camera, and it only ever changes where it points —
-    /// `distance` is the same constant every time, which is what makes zoom impossible
-    /// rather than merely disallowed.
-    private func lookAt(_ coordinate: CLLocationCoordinate2D) {
-        look = coordinate
-        camera = .camera(MapCamera(centerCoordinate: coordinate,
-                                   distance: Self.cameraDistance, heading: 0, pitch: 0))
+    private func wrapped(_ longitude: Double) -> Double {
+        (longitude + 540).truncatingRemainder(dividingBy: 360) - 180
     }
 
     private func start() async {
@@ -163,8 +125,8 @@ struct GlobeView: View {
         // the polyline is re-projected on every frame the globe turns.
         route = Geo.greatCircle(from: coordinate, bearing: scenic.bearing, steps: 96)
         passes = scenic.passes
-        lookAt(CLLocationCoordinate2D(latitude: min(Self.maxLatitude, max(-Self.maxLatitude, coordinate.latitude)),
-                                      longitude: coordinate.longitude))
+        centreLat = min(80, max(-80, coordinate.latitude))
+        centreLon = coordinate.longitude
         if name == nil { originName = await reverseGeocode(coordinate) }
     }
 
