@@ -1795,3 +1795,102 @@ test('the globe is the real Earth, starting where the person actually is', () =>
   assert.match(globe, /MKReverseGeocodingRequest\(location: location\)/)
   assert.doesNotMatch(globe, /CLGeocoder\(\)/)
 })
+
+test('the new Health metrics are summarised to one value a day, in one jsonb column', () => {
+  const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
+  // Cardiac, fitness, respiratory, body, environmental and mobility — all through the
+  // same statistics machinery, all one number per day. Nothing per-sample.
+  for (const key of ['atrialFibrillationBurden', 'cyclingPower', 'runningGroundContactTime',
+                     'peakExpiratoryFlowRate', 'waistCircumference', 'timeInDaylight',
+                     'walkingSteadiness', 'numberOfTimesFallen']) {
+    assert.match(engine, new RegExp(`"${key}"`), `${key} should be synced`)
+  }
+  assert.match(engine, /var extras: \[String: Double\]\?/.source ? /extrasFor\(dateText, key, series: series/ : /extras/)
+
+  // One column, not thirty-five. These are summaries and the set keeps growing.
+  const sync = read('../api/_lib/health-sync.js')
+  assert.match(sync, /ALTER TABLE health_daily ADD COLUMN IF NOT EXISTS extras jsonb/)
+  // Merged on conflict: a sync carrying only some of them must not wipe the rest.
+  assert.match(sync, /extras = COALESCE\(health_daily\.extras, '\{\}'::jsonb\) \|\| COALESCE\(EXCLUDED\.extras, '\{\}'::jsonb\)/)
+  assert.match(sync, /function normalizeExtras/)
+  assert.match(read('../api/_lib/neon-dashboard.js'), /extras: health\?\.extras \|\| null/)
+
+  // Every key the app displays is described somewhere, or it renders as a bare number.
+  const extras = read('../ios/Fuel/Sources/HealthExtras.swift')
+  for (const key of ['heartRateAverage', 'cyclingCadence', 'forcedVitalCapacity',
+                     'headphoneAudioExposure', 'walkingAsymmetry', 'wristTemperature']) {
+    assert.match(extras, new RegExp(`key: "${key}"`), `${key} needs a label and unit`)
+  }
+  // A card with no readings today is not drawn at all.
+  assert.match(read('../ios/Fuel/Sources/TodayView.swift'), /if !present\.isEmpty \{/)
+})
+
+test('sleep replaces the recovery card and shows the shape of the night', () => {
+  const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
+  assert.match(engine, /private func sleepByDay/)
+  // Stages, timing and quality — not a per-minute trace.
+  for (const key of ['sleepREMMinutes', 'sleepCoreMinutes', 'sleepDeepMinutes',
+                     'sleepEfficiency', 'sleepLatencyMinutes', 'sleepAwakenings']) {
+    assert.match(engine, new RegExp(key), `${key} should be summarised`)
+  }
+  // A bedtime before midnight must read as before midnight, not as a lie-in.
+  assert.match(engine, /date\.timeIntervalSince\(midnight\) \/ 60/)
+
+  const card = read('../ios/Fuel/Sources/SleepCard.swift')
+  assert.match(card, /struct SleepCard: View/)
+  assert.match(card, /private func stageBar/)
+  assert.match(card, /Stage\(name: "Deep"/)
+  assert.match(card, /Stage\(name: "REM"/)
+  const today = read('../ios/Fuel/Sources/TodayView.swift')
+  assert.match(today, /case "sleep":\s*\n\s*SleepCard\(summary: s, trend:/)
+  // A saved layout that still lists the old key must not leave a gap.
+  assert.match(today, /case "recovery":\s*\n\s*SleepCard/)
+
+  // Order: the first five are fixed, sleep leads the rest.
+  const layout = read('../ios/Fuel/Sources/FuelClient.swift')
+  const order = layout.match(/static let allSections = \[([\s\S]*?)\]/)[1]
+    .split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)
+  assert.deepEqual(order.slice(0, 6),
+    ['nutrition', 'detailedNutrition', 'foodConsumed', 'fitness', 'workouts', 'sleep'])
+  for (const key of ['heart', 'body', 'fitnessDetail', 'breathing', 'mobility', 'environment']) {
+    assert.ok(order.includes(key), `${key} must be in the layout`)
+  }
+})
+
+test('writing food back to Health is opt-in, one-way, and never invents a zero', () => {
+  const writer = read('../ios/Fuel/Sources/HealthWriter.swift')
+  assert.match(writer, /toShare: Self\.shareTypes, read: \[\]/)
+  assert.match(writer, /UserDefaults\.standard\.bool\(forKey: Self\.enabledKey\)/)
+  // Calories and macros, plus every micronutrient Health has a place for.
+  for (const id of ['dietaryEnergyConsumed', 'dietaryProtein', 'dietaryCarbohydrates',
+                    'dietaryFatTotal', 'dietaryFiber', 'dietarySugar', 'dietarySodium',
+                    'dietaryVitaminB12', 'dietaryCaffeine']) {
+    assert.match(writer, new RegExp(`\\.${id}\\b`), `${id} should be written`)
+  }
+  // Never write back what was read — that is the loop that inflates a number forever.
+  assert.match(writer, /entry\.source\?\.lowercased\(\)\.contains\("health"\) != true/)
+  // A missing macro is a missing sample, not a zero.
+  assert.match(writer, /guard let value = core\.path\(entry\), value > 0/)
+  // Only remembered once Health has accepted them, so a failed write retries.
+  const save = writer.slice(writer.indexOf('try await store.save(samples)'))
+  assert.match(save.slice(0, 400), /UserDefaults\.standard\.set\(Array\(written/)
+  // And the Info.plist string must describe writing, since the app now writes.
+  assert.doesNotMatch(read('../ios/Fuel/project.yml'), /Fuel only reads Health data; it never writes any/)
+})
+
+test('sync timing is controllable, and manual syncs ignore the schedule', () => {
+  const store = read('../ios/HealthLogger/Sources/SyncStore.swift')
+  assert.match(store, /var minimumSyncInterval: Int/)
+  assert.match(store, /var syncOnHealthUpdate: Bool/)
+  assert.match(store, /var syncAfterWorkout: Bool/)
+  assert.match(store, /var dailySyncEnabled: Bool/)
+  assert.match(store, /func maySyncInBackground/)
+  // A finished workout is the one case worth syncing immediately.
+  assert.match(store, /if reason\.contains\("workout"\) \{ return syncAfterWorkout \}/)
+
+  const app = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(app, /let automatic = \["background", "health update", "workout", "scheduled"\]/)
+  assert.match(app, /if automatic, !SyncStore\.shared\.maySyncInBackground\(reason: reason\) \{ return \}/)
+  assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /struct SyncSettingsView: View/)
+  assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /Toggle\("Write my food to Apple Health", isOn: \$writeBack\)/)
+})

@@ -120,6 +120,11 @@ struct DailyTotal: Encodable {
     var swimmingStrokes: Double?
     var runningStrideLength: Double?
     var cardioRecovery: Double?
+    /// Everything added after the first eighteen metrics, one value per day, keyed by
+    /// name. A dictionary rather than twenty more properties and twenty more columns:
+    /// these are summaries, the set will keep growing, and a day with none of them
+    /// should cost nothing. See SyncEngine.extraMetrics and the `extras` jsonb column.
+    var extras: [String: Double]?
 }
 
 struct SyncResponse: Decodable {

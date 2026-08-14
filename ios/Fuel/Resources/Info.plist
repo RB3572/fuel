@@ -53,7 +53,7 @@
 	<key>NSHealthShareUsageDescription</key>
 	<string>Fuel reads your Apple Health data — activity, heart, sleep, body, vitals and workouts — so your dashboard reflects what you actually did today.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Fuel only reads Health data; it never writes any. iOS requires this text to be present.</string>
+	<string>Fuel can write the food you log here — calories, protein, carbs, fat, fibre and micronutrients — back to Health, so other apps can read it. Off unless you turn it on in Sync settings, and only food you logged in Fuel is ever written.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Fuel records where you eat so it can show your places heatmap. Location never leaves your Fuel account.</string>
 	<key>UIBackgroundModes</key>

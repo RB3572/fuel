@@ -132,6 +132,7 @@ export async function getNeonDashboard(userId) {
       flightsClimbed: number(health?.flights_climbed),
       exerciseMinutes: number(health?.exercise_minutes),
       vo2Max: number(health?.vo2_max),
+      extras: health?.extras || null,
       workoutCount: health ? Number(Boolean(number(health.exercise_minutes) || number(health.swimming_distance_yd) || number(health.cycling_distance_mi))) : 0,
       fuelScore: null,
     })
@@ -184,6 +185,7 @@ export async function getNeonDashboard(userId) {
     flightsClimbed: number(todayHealth?.flights_climbed),
     exerciseMinutes: number(todayHealth?.exercise_minutes),
     vo2Max: number(todayHealth?.vo2_max),
+    extras: todayHealth?.extras || null,
   }
 
   return {

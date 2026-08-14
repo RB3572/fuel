@@ -35,6 +35,40 @@ final class SyncStore: ObservableObject {
     /// the app is open (a manual pull-to-refresh, or on launch/foreground).
     @Published var backgroundSyncEnabled: Bool { didSet { defaults.set(backgroundSyncEnabled, forKey: "backgroundSyncEnabled") } }
 
+    // MARK: When a sync is allowed to run
+    //
+    // Background sync used to be one switch: on meant "whenever iOS offers", off meant
+    // "only while I am looking at it". These break that into the three things that
+    // actually differ — how often at most, whether Health waking the app counts, and
+    // whether a finished workout counts — because they have genuinely different costs.
+    // A workout ending is worth an immediate sync; an idle Tuesday afternoon is not.
+
+    /// The shortest gap between background syncs, in minutes. A sync asked for sooner
+    /// than this is skipped rather than queued: the next opportunity will cover the same
+    /// ground, since every sync re-reads the last three days regardless.
+    @Published var minimumSyncInterval: Int { didSet { defaults.set(minimumSyncInterval, forKey: "minimumSyncInterval") } }
+    /// Let Health wake the app when it records something new.
+    @Published var syncOnHealthUpdate: Bool { didSet { defaults.set(syncOnHealthUpdate, forKey: "syncOnHealthUpdate") } }
+    /// Sync as soon as a workout finishes, ignoring the interval above — this is the one
+    /// moment where waiting means looking at a dashboard that is visibly wrong.
+    @Published var syncAfterWorkout: Bool { didSet { defaults.set(syncAfterWorkout, forKey: "syncAfterWorkout") } }
+    /// A daily catch-up at a time of your choosing, stored as minutes from midnight.
+    @Published var dailySyncEnabled: Bool { didSet { defaults.set(dailySyncEnabled, forKey: "dailySyncEnabled") } }
+    @Published var dailySyncMinute: Int { didSet { defaults.set(dailySyncMinute, forKey: "dailySyncMinute") } }
+    /// When the last background sync actually ran, for the interval check.
+    @Published var lastBackgroundSyncAt: Date? { didSet { defaults.set(lastBackgroundSyncAt, forKey: "lastBackgroundSyncAt") } }
+
+    /// Whether a background sync may run now. Anything the person did by hand — opening
+    /// the app, pulling to refresh — bypasses this entirely; it only governs the
+    /// automatic ones.
+    func maySyncInBackground(reason: String, now: Date = Date()) -> Bool {
+        guard backgroundSyncEnabled else { return false }
+        if reason.contains("workout") { return syncAfterWorkout }
+        if reason.contains("health update") && !syncOnHealthUpdate { return false }
+        guard let last = lastBackgroundSyncAt else { return true }
+        return now.timeIntervalSince(last) >= Double(minimumSyncInterval) * 60
+    }
+
     enum SyncStatus: Equatable {
         case idle
         case running(String)          // human-readable stage, e.g. "Uploading heart rate (12,400)…"
@@ -70,6 +104,12 @@ final class SyncStore: ObservableObject {
         syncWorkouts = defaults.object(forKey: "syncWorkouts") as? Bool ?? true
         syncWorkoutRoutes = defaults.object(forKey: "syncWorkoutRoutes") as? Bool ?? true
         backgroundSyncEnabled = defaults.object(forKey: "backgroundSyncEnabled") as? Bool ?? true
+        minimumSyncInterval = defaults.object(forKey: "minimumSyncInterval") as? Int ?? 30
+        syncOnHealthUpdate = defaults.object(forKey: "syncOnHealthUpdate") as? Bool ?? true
+        syncAfterWorkout = defaults.object(forKey: "syncAfterWorkout") as? Bool ?? true
+        dailySyncEnabled = defaults.object(forKey: "dailySyncEnabled") as? Bool ?? false
+        dailySyncMinute = defaults.object(forKey: "dailySyncMinute") as? Int ?? 7 * 60
+        lastBackgroundSyncAt = defaults.object(forKey: "lastBackgroundSyncAt") as? Date
     }
 
     /// Fuel needs a token; a self-hosted destination only needs somewhere to send to.

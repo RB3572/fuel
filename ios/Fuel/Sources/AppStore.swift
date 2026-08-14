@@ -1057,12 +1057,20 @@ final class AppStore {
         // Counted rather than a bare bool: a pull-to-refresh landing on top of the
         // app-foreground sync would otherwise have the first one to finish clear the
         // bar while the second is still running.
+        // Automatic syncs answer to the schedule in Sync settings; anything the person
+        // asked for by hand runs regardless.
+        let automatic = ["background", "health update", "workout", "scheduled"].contains { reason.contains($0) }
+        if automatic, !SyncStore.shared.maySyncInBackground(reason: reason) { return }
         syncsInFlight += 1
         defer { syncsInFlight = max(0, syncsInFlight - 1) }
+        if automatic { SyncStore.shared.lastBackgroundSyncAt = Date() }
         guard let token = await ensureHealthSyncToken() else { return }
         SyncStore.shared.token = token
         _ = await SyncEngine.shared.sync(reason: reason)
         await load()
+        // Health gets what was logged here, if that was asked for — after the reload, so
+        // it is working from the entries the server just confirmed.
+        await HealthWriter.shared.exportIfEnabled(entries: dashboard?.today.foodEntries ?? [])
         await reactToNewWorkouts()
         await sendWeeklyRundownIfDue()
     }

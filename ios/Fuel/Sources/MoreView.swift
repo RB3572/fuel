@@ -71,11 +71,11 @@ struct MoreView: View {
                 // controlled. Leaving switches that no longer change what is sent would
                 // be worse than not having them.
                 Section {
-                    Toggle("Sync in the background", isOn: $syncStore.backgroundSyncEnabled)
-                } header: {
-                    Text("Sync settings")
+                    NavigationLink { SyncSettingsView() } label: {
+                        Label("Sync settings", systemImage: "arrow.triangle.2.circlepath")
+                    }
                 } footer: {
-                    Text("Fuel sends one row per day — your totals, like steps walked and calories burned — not the thousands of individual readings behind them. Everything stays on this iPhone in Health. \"Sync in the background\" off means Fuel only syncs while it's open, on launch, on foreground, or pull-to-refresh.")
+                    Text("Fuel sends one row per day — your totals, like steps walked and calories burned — not the thousands of individual readings behind them. Everything stays on this iPhone in Health.")
                 }
 
                 Section {
@@ -198,6 +198,83 @@ struct MoreView: View {
                 if !on { keyStore.setKey("", for: keyStore.selectedProvider) }
             }
         }
+    }
+}
+
+/// When Fuel syncs, and whether what you log here goes back to Apple Health.
+struct SyncSettingsView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.colorScheme) private var scheme
+    @ObservedObject private var syncStore = SyncStore.shared
+    @State private var writeBack = HealthWriter.shared.enabled
+
+    private static let intervals = [15, 30, 60, 120, 240]
+
+    private var dailyTime: Binding<Date> {
+        Binding(
+            get: {
+                var components = DateComponents()
+                components.hour = syncStore.dailySyncMinute / 60
+                components.minute = syncStore.dailySyncMinute % 60
+                return Calendar.current.date(from: components) ?? Date()
+            },
+            set: { date in
+                let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                syncStore.dailySyncMinute = (parts.hour ?? 7) * 60 + (parts.minute ?? 0)
+            })
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("Sync in the background", isOn: $syncStore.backgroundSyncEnabled)
+            } footer: {
+                Text("Off means Fuel only syncs while it is open — on launch, coming back to it, or pulling to refresh. Everything below applies to the automatic ones; anything you ask for by hand always runs.")
+            }
+
+            if syncStore.backgroundSyncEnabled {
+                Section {
+                    Picker("At most every", selection: $syncStore.minimumSyncInterval) {
+                        ForEach(Self.intervals, id: \.self) { minutes in
+                            Text(minutes < 60 ? "\(minutes) minutes" : "\(minutes / 60) hour\(minutes == 60 ? "" : "s")").tag(minutes)
+                        }
+                    }
+                } header: {
+                    Text("How often")
+                } footer: {
+                    Text("A sync asked for sooner than this is skipped rather than queued: every sync re-reads the last three days, so the next one covers the same ground.")
+                }
+
+                Section {
+                    Toggle("When Health records something", isOn: $syncStore.syncOnHealthUpdate)
+                    Toggle("As soon as a workout ends", isOn: $syncStore.syncAfterWorkout)
+                    Toggle("Once a day", isOn: $syncStore.dailySyncEnabled.animation())
+                    if syncStore.dailySyncEnabled {
+                        DatePicker("At", selection: dailyTime, displayedComponents: .hourAndMinute)
+                    }
+                } header: {
+                    Text("What starts one")
+                } footer: {
+                    Text("A finished workout ignores the interval above — it is the one moment where waiting means looking at a dashboard you can see is wrong. iOS decides the exact timing of background work, so a daily sync happens near that time rather than on the dot.")
+                }
+            }
+
+            Section {
+                Toggle("Write my food to Apple Health", isOn: $writeBack)
+                    .onChange(of: writeBack) { _, on in HealthWriter.shared.enabled = on }
+            } header: {
+                Text("Back to Health")
+            } footer: {
+                Text("Sends what you log in Fuel — calories, protein, carbs, fat, fibre and the micronutrients Health has a place for — to the Health app, so other apps can read it. Only food you logged here is ever written, never anything Fuel read from Health, and a blank field is left blank rather than written as zero. Turning it on asks for permission separately; turning it off stops immediately and leaves what was already written where it is, for you to keep or delete in Health.")
+            }
+
+            Section {
+                LabeledContent("Last sync", value: syncStore.lastSyncSummary.isEmpty ? "—" : syncStore.lastSyncSummary)
+                    .font(.footnote)
+            }
+        }
+        .navigationTitle("Sync settings")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

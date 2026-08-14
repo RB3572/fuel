@@ -23,6 +23,9 @@
 		38D46A42074556FEC03E0C9B /* CoachView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B5B04656BF14A3B462B73 /* CoachView.swift */; };
 		3969C073CBD7719404553DAC /* FuelWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CC32DEDC7B326E986F87EE1 /* FuelWidgetBundle.swift */; };
 		39844E003CBA7FE8A166ED21 /* CameraLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E762C9F186DC68F711045162 /* CameraLogView.swift */; };
+		3F3FB7F963994AE69FF9E05E /* SleepCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99ED25C1FB37624B4690FEE2 /* SleepCard.swift */; };
+		403D075F8DFE6FA5428CB175 /* HealthWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78E7EFDE445E271AF985D94 /* HealthWriter.swift */; };
+		432AEB404735B12154B7D72F /* HealthExtras.swift in Sources */ = {isa = PBXBuildFile; fileRef = 301F16C9F607FE5663CD1203 /* HealthExtras.swift */; };
 		436864E08EC6C8A211EB8CCA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 994F8C24D9312F72DAFA2A12 /* Assets.xcassets */; };
 		4E36B7835763184D6B819C04 /* HealthBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D2E139DFF93E43EC5B6FC7 /* HealthBody.swift */; };
 		51C02DF9C6A6E478C8A5274C /* RecipesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74A8D86E91141EA08C9D85FD /* RecipesView.swift */; };
@@ -96,6 +99,7 @@
 		1CB474BBAB94D90CD56B09FE /* BloodMarkers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodMarkers.swift; sourceTree = "<group>"; };
 		1CEACC5A8135C313037AB184 /* ExploreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreView.swift; sourceTree = "<group>"; };
 		2214194DD516AEE8DA0B1003 /* EnergyWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyWidgets.swift; sourceTree = "<group>"; };
+		301F16C9F607FE5663CD1203 /* HealthExtras.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthExtras.swift; sourceTree = "<group>"; };
 		3B2317CC200928A65F5D1466 /* JourneysView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneysView.swift; sourceTree = "<group>"; };
 		4101886BC814B0DD968C954D /* TrendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendsView.swift; sourceTree = "<group>"; };
 		41AAF989E677DB59A259D7D6 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -114,6 +118,7 @@
 		8FC3C7B7D4B5951095EF487C /* SignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignIn.swift; sourceTree = "<group>"; };
 		93C6546C861D9789FFD709B0 /* SyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngine.swift; sourceTree = "<group>"; };
 		994F8C24D9312F72DAFA2A12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		99ED25C1FB37624B4690FEE2 /* SleepCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepCard.swift; sourceTree = "<group>"; };
 		9BD75E91607669954578FEB5 /* VitalsSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalsSignal.swift; sourceTree = "<group>"; };
 		A05C90CCD49FC55CDB0417AA /* WidgetPieces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPieces.swift; sourceTree = "<group>"; };
 		A404F3D7B76E95E6D46A27FA /* FoodLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodLibraryView.swift; sourceTree = "<group>"; };
@@ -141,6 +146,7 @@
 		F0ACD7889A0B189EB6BB06B1 /* LiftingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiftingView.swift; sourceTree = "<group>"; };
 		F28885825E18C8C99FB8B952 /* MarkdownText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownText.swift; sourceTree = "<group>"; };
 		F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuelApp.swift; sourceTree = "<group>"; };
+		F78E7EFDE445E271AF985D94 /* HealthWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthWriter.swift; sourceTree = "<group>"; };
 		F826CB7F5C5FF43B0F03E3AB /* Fuel.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Fuel.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FB2F578A82AEFA5F7B226AC2 /* CommonFoods.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonFoods.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -198,6 +204,8 @@
 				E97BDA97A18630C812B6EE9A /* FuelClient.swift */,
 				AF99ACD80078A760548894DD /* GlobeView.swift */,
 				10D2E139DFF93E43EC5B6FC7 /* HealthBody.swift */,
+				301F16C9F607FE5663CD1203 /* HealthExtras.swift */,
+				F78E7EFDE445E271AF985D94 /* HealthWriter.swift */,
 				D342D2499D35901C835BC5C7 /* HorizontalPan.swift */,
 				E0D4A448804A711EDAC2ACEA /* JourneyArt.swift */,
 				D697A06D95F0EDFE0C6EBEBE /* Journeys.swift */,
@@ -212,6 +220,7 @@
 				74A8D86E91141EA08C9D85FD /* RecipesView.swift */,
 				C3603D8F4D4375B05FDCAD92 /* RemoteAI.swift */,
 				8FC3C7B7D4B5951095EF487C /* SignIn.swift */,
+				99ED25C1FB37624B4690FEE2 /* SleepCard.swift */,
 				41AAF989E677DB59A259D7D6 /* Theme.swift */,
 				8F75273FDA28EE1A341AA5A3 /* TodayView.swift */,
 				4101886BC814B0DD968C954D /* TrendsView.swift */,
@@ -387,7 +396,9 @@
 				655E648EBCC9741577616E96 /* FuelControlIntents.swift in Sources */,
 				1ECE5854844A81E8D69D4B8A /* GlobeView.swift in Sources */,
 				4E36B7835763184D6B819C04 /* HealthBody.swift in Sources */,
+				432AEB404735B12154B7D72F /* HealthExtras.swift in Sources */,
 				B35DE1A8E1AA67AD06DF0D9D /* HealthKitCatalog.swift in Sources */,
+				403D075F8DFE6FA5428CB175 /* HealthWriter.swift in Sources */,
 				72DB991792B8E0387A08A247 /* HorizontalPan.swift in Sources */,
 				5F552BA1607FF2EBC63F92BD /* JourneyArt.swift in Sources */,
 				0E78A7674807633A3EBAE513 /* Journeys.swift in Sources */,
@@ -402,6 +413,7 @@
 				51C02DF9C6A6E478C8A5274C /* RecipesView.swift in Sources */,
 				1DD752F57B36749B817016E9 /* RemoteAI.swift in Sources */,
 				55A5DC93B5930CFD60DC26F0 /* SignIn.swift in Sources */,
+				3F3FB7F963994AE69FF9E05E /* SleepCard.swift in Sources */,
 				FB049B1CEED760BC8BEF28D1 /* SyncEngine.swift in Sources */,
 				12239BAF7F793D39DE03D1CC /* SyncSink.swift in Sources */,
 				E186007FB9202A6046BEB343 /* SyncStore.swift in Sources */,
@@ -501,7 +513,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -589,7 +601,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -612,7 +624,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -637,7 +649,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;

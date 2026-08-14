@@ -232,6 +232,11 @@ struct DaySummary: Decodable, Identifiable {
     var runningStrideLength: Double?
     var swimmingDistanceYards: Double?
     var swimmingStrokes: Double?
+    /// Everything synced after the original eighteen metrics, one number per day each —
+    /// cardiac, fitness, respiratory, environmental, mobility, and the night's sleep
+    /// breakdown. A dictionary because the set keeps growing and most days carry only
+    /// some of it. See HealthExtras for the keys.
+    var extras: [String: Double]?
 
     var id: String { date }
 }
@@ -481,8 +486,14 @@ struct DashboardLayout: Codable {
     var energyBoxes: [String]
     var charts: [String]
 
+    /// The order the dashboard reads in. The first five are fixed by what a day is
+    /// actually about — what you ate, then what you did — and everything after workouts
+    /// is arranged from the most-looked-at to the most occasional: sleep, then the body
+    /// itself, then the finer readings, then the world around you.
     static let allSections = ["nutrition", "detailedNutrition", "foodConsumed",
-                              "fitness", "workouts", "steps", "vitals", "recovery"]
+                              "fitness", "workouts", "sleep", "steps", "vitals",
+                              "heart", "body", "fitnessDetail", "breathing",
+                              "mobility", "environment"]
     static let allEnergyBoxes = ["totalBurned", "consumed", "active", "resting", "deficit", "rolling24"]
     static let allCharts = ["intraday", "components"]
     static let `default` = DashboardLayout(order: allSections, hidden: [], energyBoxes: allEnergyBoxes, charts: allCharts)

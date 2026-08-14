@@ -426,6 +426,7 @@ async function ingest(userId, body) {
   // ---- Daily aggregates -> health_daily (the derived cache) -----------------------
   // Same columns the Shortcut wrote, so the dashboard, trends, vitals and MCP all work
   // unchanged, and both pipelines can coexist during migration.
+  if (dailyTotals.length) await ensureExtrasColumn()
   for (const raw of dailyTotals) {
     const day = normalizeDailyTotal(raw)
     if (!day) { report.skipped.push({ table: 'dailyTotals', reason: 'invalid date', row: String(raw?.date ?? '') }); continue }
@@ -436,14 +437,15 @@ async function ingest(userId, body) {
         resting_heart_rate_bpm, hrv_ms, vo2_max, sleep_hours, respiratory_rate,
         blood_oxygen_percent, stand_minutes, walking_heart_rate_avg_bpm,
         cycling_distance_mi, flights_climbed, swimming_strokes,
-        running_stride_length_m, cardio_recovery_bpm, partial_day, source, raw_payload, updated_at
+        running_stride_length_m, cardio_recovery_bpm, extras, partial_day, source, raw_payload, updated_at
       ) VALUES (
         ${userId}, ${day.date}::date, ${day.activeEnergy}, ${day.restingEnergy}, ${day.totalExpenditure},
         ${day.exerciseMinutes}, ${day.steps}, ${day.walkingRunningDistance}, ${day.swimmingDistance},
         ${day.restingHeartRate}, ${day.hrv}, ${day.vo2Max}, ${day.sleepHours}, ${day.respiratoryRate},
         ${day.bloodOxygen}, ${day.standMinutes}, ${day.walkingHeartRateAverage},
         ${day.cyclingDistance}, ${day.flightsClimbed}, ${day.swimmingStrokes},
-        ${day.runningStrideLength}, ${day.cardioRecovery}, ${day.partialDay}, 'Health Logger', ${JSON.stringify(raw)}, now()
+        ${day.runningStrideLength}, ${day.cardioRecovery}, ${JSON.stringify(day.extras)}::jsonb,
+        ${day.partialDay}, 'Health Logger', ${JSON.stringify(raw)}, now()
       )
       ON CONFLICT (user_id, date) DO UPDATE SET
         active_energy_kcal = COALESCE(EXCLUDED.active_energy_kcal, health_daily.active_energy_kcal),
@@ -466,6 +468,9 @@ async function ingest(userId, body) {
         swimming_strokes = COALESCE(EXCLUDED.swimming_strokes, health_daily.swimming_strokes),
         running_stride_length_m = COALESCE(EXCLUDED.running_stride_length_m, health_daily.running_stride_length_m),
         cardio_recovery_bpm = COALESCE(EXCLUDED.cardio_recovery_bpm, health_daily.cardio_recovery_bpm),
+        -- Merged, not replaced: a sync that only had a couple of these must not wipe
+        -- what an earlier one already recorded for the same day.
+        extras = COALESCE(health_daily.extras, '{}'::jsonb) || COALESCE(EXCLUDED.extras, '{}'::jsonb),
         partial_day = EXCLUDED.partial_day,
         source = EXCLUDED.source,
         raw_payload = EXCLUDED.raw_payload,
@@ -596,6 +601,29 @@ function normalizeClinical(record) {
   return { uuid, type, fhir: plainObject(record?.fhir) }
 }
 
+/// Numbers only, and only ones that are actually finite — a NaN from a device with a
+/// flat battery must not become a stored reading.
+let extrasColumnReady = null
+/// Added after health_daily shipped, so existing databases need it in place before the
+/// first write that mentions it. Memoized: one ALTER per process, not per sync.
+function ensureExtrasColumn() {
+  if (!extrasColumnReady) {
+    extrasColumnReady = sql()`ALTER TABLE health_daily ADD COLUMN IF NOT EXISTS extras jsonb`
+      .catch((error) => { extrasColumnReady = null; throw error })
+  }
+  return extrasColumnReady
+}
+
+function normalizeExtras(raw) {
+  if (!raw || typeof raw !== 'object') return {}
+  const out = {}
+  for (const [key, value] of Object.entries(raw)) {
+    const number = finite(value)
+    if (number != null && /^[A-Za-z0-9]+$/.test(key)) out[key] = number
+  }
+  return out
+}
+
 function normalizeDailyTotal(raw) {
   const date = normalizeDate(raw?.date)
   if (!date) return null
@@ -623,6 +651,10 @@ function normalizeDailyTotal(raw) {
     swimmingStrokes: finite(raw?.swimmingStrokes),
     runningStrideLength: finite(raw?.runningStrideLength),
     cardioRecovery: finite(raw?.cardioRecovery),
+    // Everything added after the original eighteen, one number per day each. Kept as
+    // one jsonb value rather than a column apiece: they are summaries, the set keeps
+    // growing, and a day with none of them costs nothing.
+    extras: normalizeExtras(raw?.extras),
     partialDay: raw?.partialDay === true,
   }
 }

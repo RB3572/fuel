@@ -587,13 +587,51 @@ struct TodayView: View {
                 metricSection("Vitals", vitalsMetrics(s))
                 vitalsOverTimePanel
             }
+        case "sleep":
+            SleepCard(summary: s, trend: trendPoints { $0.sleepHours })
+        case "heart": extrasCard(.cardiac, s)
+        case "body": extrasCard(.body, s)
+        case "fitnessDetail": extrasCard(.fitness, s)
+        case "breathing": extrasCard(.respiratory, s)
+        case "mobility": extrasCard(.mobility, s)
+        case "environment": extrasCard(.environment, s)
+        // "recovery" was replaced by the fuller sleep card. Anyone whose saved layout
+        // still lists it keeps a working dashboard rather than a gap.
         case "recovery":
-            Panel(title: "Recovery") {
-                Stat(label: "Sleep", value: s.sleepHours == nil ? "—" : "\(Format.number(s.sleepHours, decimals: 1)) h")
-                TrendLineChart(title: "Sleep duration", unit: "h", decimals: 1,
-                               points: trendPoints { $0.sleepHours })
-            }
+            SleepCard(summary: s, trend: trendPoints { $0.sleepHours })
         default: EmptyView()
+        }
+    }
+
+    /// One card per group of the newer Health metrics — see HealthExtras. Nothing is
+    /// drawn for a group with no readings today, which is what keeps a dashboard from
+    /// filling up with dashes for hardware nobody owns.
+    @ViewBuilder
+    private func extrasCard(_ group: HealthExtra.Group, _ s: DaySummary) -> some View {
+        let present = HealthExtras.present(group, in: s)
+        if !present.isEmpty {
+            Panel(title: group.rawValue) {
+                VStack(spacing: 0) {
+                    ForEach(Array(present.enumerated()), id: \.element.0.id) { index, item in
+                        let (definition, value) = item
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(definition.label).font(.system(size: 14)).foregroundStyle(Palette.ink(scheme))
+                                if let note = definition.note {
+                                    Text(note).font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
+                                }
+                            }
+                            Spacer()
+                            Text(Format.number(value, decimals: definition.decimals)
+                                 + (definition.unit.isEmpty ? "" : " " + definition.unit))
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Palette.ink(scheme))
+                        }
+                        .padding(.vertical, 7)
+                        if index < present.count - 1 { Divider().opacity(0.4) }
+                    }
+                }
+            }
         }
     }
 

@@ -221,18 +221,69 @@ final class SyncEngine {
             ("recovery", .heartRateRecoveryOneMinute, .discreteAverage, perMinute),
             ("stride", .runningStrideLength, .discreteAverage, .meter()),
         ]
+        // Everything else, summarised the same way: one number per day. Sums where a
+        // day's worth accumulates (daylight, falls), averages where it does not (power,
+        // cadence, glucose). Nothing here is stored per-sample — a heart rate every
+        // minute of the night answers no question this app asks.
+        let extraMetrics: [(key: String, id: HKQuantityTypeIdentifier, options: HKStatisticsOptions, unit: HKUnit)] = [
+            // Cardiac
+            ("atrialFibrillationBurden", .atrialFibrillationBurden, .discreteAverage, .percent()),
+            ("peripheralPerfusionIndex", .peripheralPerfusionIndex, .discreteAverage, .percent()),
+            ("heartRateAverage", .heartRate, .discreteAverage, perMinute),
+            ("heartRateMin", .heartRate, .discreteMin, perMinute),
+            ("heartRateMax", .heartRate, .discreteMax, perMinute),
+            ("bloodPressureSystolic", .bloodPressureSystolic, .discreteAverage, .millimeterOfMercury()),
+            ("bloodPressureDiastolic", .bloodPressureDiastolic, .discreteAverage, .millimeterOfMercury()),
+            ("bloodGlucose", .bloodGlucose, .discreteAverage, HKUnit(from: "mg/dL")),
+            // Fitness
+            ("cyclingPower", .cyclingPower, .discreteAverage, .watt()),
+            ("cyclingCadence", .cyclingCadence, .discreteAverage, perMinute),
+            ("cyclingFunctionalThresholdPower", .cyclingFunctionalThresholdPower, .discreteAverage, .watt()),
+            ("runningPower", .runningPower, .discreteAverage, .watt()),
+            ("runningSpeed", .runningSpeed, .discreteAverage, HKUnit.meter().unitDivided(by: .second())),
+            ("runningGroundContactTime", .runningGroundContactTime, .discreteAverage, .secondUnit(with: .milli)),
+            ("runningVerticalOscillation", .runningVerticalOscillation, .discreteAverage, .meterUnit(with: .centi)),
+            ("stairAscentSpeed", .stairAscentSpeed, .discreteAverage, HKUnit.meter().unitDivided(by: .second())),
+            ("stairDescentSpeed", .stairDescentSpeed, .discreteAverage, HKUnit.meter().unitDivided(by: .second())),
+            ("sixMinuteWalkTestDistance", .sixMinuteWalkTestDistance, .discreteAverage, .meter()),
+            ("physicalEffort", .physicalEffort, .discreteAverage, HKUnit(from: "kcal/(kg*hr)")),
+            // Respiratory
+            ("peakExpiratoryFlowRate", .peakExpiratoryFlowRate, .discreteAverage, HKUnit(from: "L/min")),
+            ("forcedVitalCapacity", .forcedVitalCapacity, .discreteAverage, .liter()),
+            ("forcedExpiratoryVolume1", .forcedExpiratoryVolume1, .discreteAverage, .liter()),
+            ("inhalerUsage", .inhalerUsage, .cumulativeSum, .count()),
+            // Body
+            ("waistCircumference", .waistCircumference, .discreteAverage, .inch()),
+            ("basalBodyTemperature", .basalBodyTemperature, .discreteAverage, .degreeCelsius()),
+            ("bodyTemperature", .bodyTemperature, .discreteAverage, .degreeCelsius()),
+            ("wristTemperature", .appleSleepingWristTemperature, .discreteAverage, .degreeCelsius()),
+            // Environmental
+            ("headphoneAudioExposure", .headphoneAudioExposure, .discreteAverage, .decibelAWeightedSoundPressureLevel()),
+            ("environmentalSoundLevel", .environmentalAudioExposure, .discreteAverage, .decibelAWeightedSoundPressureLevel()),
+            ("uvExposure", .uvExposure, .discreteMax, .count()),
+            ("timeInDaylight", .timeInDaylight, .cumulativeSum, .minute()),
+            // Mobility
+            ("walkingSpeed", .walkingSpeed, .discreteAverage, HKUnit.meter().unitDivided(by: .second())),
+            ("walkingAsymmetry", .walkingAsymmetryPercentage, .discreteAverage, .percent()),
+            ("walkingStepLength", .walkingStepLength, .discreteAverage, .meterUnit(with: .centi)),
+            ("walkingDoubleSupport", .walkingDoubleSupportPercentage, .discreteAverage, .percent()),
+            ("walkingSteadiness", .appleWalkingSteadiness, .discreteAverage, .percent()),
+            ("numberOfTimesFallen", .numberOfTimesFallen, .cumulativeSum, .count()),
+        ]
+
         // +1 for sleep, which is a separate category query.
-        let totalUnits = metrics.count + 1
+        let totalUnits = metrics.count + extraMetrics.count + 1
 
         // Sleep is a category query returning a different shape, so the group carries a
         // small enum rather than forcing both into one tuple type.
         enum MetricResult {
             case series(key: String, values: [Date: Double])
-            case sleep([String: Double])
+            case sleep([String: [String: Double]])
         }
 
         var series: [String: [Date: Double]] = [:]
         var sleep: [String: Double] = [:]
+        var sleepDetail: [String: [String: Double]] = [:]
         var finished = 0
         try await withThrowingTaskGroup(of: MetricResult.self) { group in
             for metric in metrics {
@@ -241,13 +292,22 @@ final class SyncEngine {
                             values: try await self.statistics(metric.id, metric.options, metric.unit, from: start))
                 }
             }
+            for metric in extraMetrics {
+                group.addTask {
+                    .series(key: metric.key,
+                            values: try await self.statistics(metric.id, metric.options, metric.unit, from: start))
+                }
+            }
             group.addTask {
-                .sleep(try await self.sleepHoursByDay(lastDays: min(days, 14)))
+                let nights = try await self.sleepByDay(lastDays: min(days, 30))
+                return .sleep(nights)
             }
             for try await result in group {
                 switch result {
                 case .series(let key, let values): series[key] = values
-                case .sleep(let byDate): sleep = byDate
+                case .sleep(let byDate):
+                    sleep = byDate.mapValues { $0["sleepHours"] ?? 0 }
+                    sleepDetail = byDate
                 }
                 finished += 1
                 await onProgress(finished, totalUnits)
@@ -285,7 +345,9 @@ final class SyncEngine {
                 flightsClimbed: series["flights"]?[key],
                 swimmingStrokes: series["strokes"]?[key],
                 runningStrideLength: series["stride"]?[key],
-                cardioRecovery: series["recovery"]?[key]
+                cardioRecovery: series["recovery"]?[key],
+                extras: extrasFor(dateText, key, series: series, extraKeys: extraMetrics.map(\.key),
+                                  sleepDetail: sleepDetail[dateText])
             )
             // Days with no data at all are skipped rather than uploaded as empty rows.
             if hasAnyValue(total) { totals.append(total) }
@@ -295,13 +357,31 @@ final class SyncEngine {
         return totals
     }
 
+    /// The day's extra metrics, plus the night's sleep breakdown, as one flat dictionary
+    /// of numbers. Percent-unit readings are scaled to whole percents here so a value is
+    /// the number a person would say out loud.
+    private func extrasFor(_ dateText: String, _ key: Date, series: [String: [Date: Double]],
+                           extraKeys: [String], sleepDetail: [String: Double]?) -> [String: Double]? {
+        var extras: [String: Double] = [:]
+        let percentKeys: Set<String> = ["atrialFibrillationBurden", "peripheralPerfusionIndex",
+                                        "walkingAsymmetry", "walkingDoubleSupport", "walkingSteadiness"]
+        for name in extraKeys {
+            guard let value = series[name]?[key] else { continue }
+            extras[name] = percentKeys.contains(name) ? value * 100 : value
+        }
+        if let sleepDetail {
+            for (name, value) in sleepDetail where name != "sleepHours" { extras[name] = value }
+        }
+        return extras.isEmpty ? nil : extras
+    }
+
     private func hasAnyValue(_ total: DailyTotal) -> Bool {
         [total.activeEnergy, total.restingEnergy, total.exerciseMinutes, total.steps,
          total.walkingRunningDistanceMi, total.restingHeartRate, total.hrv, total.vo2Max,
          total.sleepHours, total.respiratoryRate, total.bloodOxygen, total.standMinutes,
          total.walkingHeartRateAverage, total.cyclingDistanceMi, total.flightsClimbed,
          total.swimmingStrokes, total.runningStrideLength, total.cardioRecovery,
-         total.swimmingDistanceYd].contains { $0 != nil }
+         total.swimmingDistanceYd].contains { $0 != nil } || total.extras?.isEmpty == false
     }
 
     /// One HKStatisticsCollectionQuery per metric: HealthKit merges overlapping
@@ -337,7 +417,15 @@ final class SyncEngine {
     }
 
     /// Sleep is a category type, so daily hours are summed from the asleep stages.
-    private func sleepHoursByDay(lastDays: Int) async throws -> [String: Double] {
+    /// A night's sleep, summarised: how long in each stage, when it started and ended,
+    /// how long it took to fall asleep, and how broken it was. Not a per-minute trace —
+    /// the stages over the night and a handful of totals are what a person can actually
+    /// read, and it is one small row rather than several hundred samples.
+    ///
+    /// Times of day are stored as minutes from midnight so the whole thing stays a
+    /// dictionary of numbers. Bedtimes before midnight go negative (23:30 is -30), which
+    /// keeps the arithmetic honest instead of wrapping to 1410 and reading as a lie-in.
+    private func sleepByDay(lastDays: Int) async throws -> [String: [String: Double]] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
         let calendar = Calendar.current
         guard let start = calendar.date(byAdding: .day, value: -lastDays, to: Date()) else { return [:] }
@@ -350,19 +438,89 @@ final class SyncEngine {
             }
             healthStore.execute(query)
         }
-        let asleepValues: Set<Int> = Set([
-            HKCategoryValueSleepAnalysis.asleepUnspecified, .asleepCore, .asleepDeep, .asleepREM,
-        ].map(\.rawValue))
+
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        var hours: [String: Double] = [:]
-        for sample in samples {
-            guard let category = sample as? HKCategorySample, asleepValues.contains(category.value) else { continue }
-            // A night is attributed to the day you wake up on.
-            let day = formatter.string(from: category.endDate)
-            hours[day, default: 0] += category.endDate.timeIntervalSince(category.startDate) / 3600
+
+        // Everything about one night, gathered before it is reduced to numbers.
+        struct Night {
+            var stageMinutes: [String: Double] = [:]
+            var asleepMinutes: Double = 0
+            var inBedMinutes: Double = 0
+            var awakeMinutes: Double = 0
+            var awakenings: Double = 0
+            var firstInBed: Date?
+            var firstAsleep: Date?
+            var lastAsleep: Date?
         }
-        return hours.mapValues { (($0 * 100).rounded()) / 100 }
+        var nights: [String: Night] = [:]
+
+        for sample in samples.compactMap({ $0 as? HKCategorySample }).sorted(by: { $0.startDate < $1.startDate }) {
+            // A night belongs to the morning you wake up on.
+            let day = formatter.string(from: sample.endDate)
+            var night = nights[day] ?? Night()
+            let minutes = sample.endDate.timeIntervalSince(sample.startDate) / 60
+            switch HKCategoryValueSleepAnalysis(rawValue: sample.value) {
+            case .asleepREM:
+                night.stageMinutes["sleepREMMinutes", default: 0] += minutes
+                night.asleepMinutes += minutes
+            case .asleepCore:
+                night.stageMinutes["sleepCoreMinutes", default: 0] += minutes
+                night.asleepMinutes += minutes
+            case .asleepDeep:
+                night.stageMinutes["sleepDeepMinutes", default: 0] += minutes
+                night.asleepMinutes += minutes
+            case .asleepUnspecified:
+                night.stageMinutes["sleepUnspecifiedMinutes", default: 0] += minutes
+                night.asleepMinutes += minutes
+            case .awake:
+                // Only the wakings inside the night count as interruptions; the final
+                // one is getting up.
+                night.awakeMinutes += minutes
+                night.awakenings += 1
+            case .inBed:
+                night.inBedMinutes += minutes
+                if night.firstInBed == nil || sample.startDate < night.firstInBed! { night.firstInBed = sample.startDate }
+            default:
+                break
+            }
+            if HKCategoryValueSleepAnalysis(rawValue: sample.value) != .awake,
+               HKCategoryValueSleepAnalysis(rawValue: sample.value) != .inBed {
+                if night.firstAsleep == nil || sample.startDate < night.firstAsleep! { night.firstAsleep = sample.startDate }
+                if night.lastAsleep == nil || sample.endDate > night.lastAsleep! { night.lastAsleep = sample.endDate }
+            }
+            nights[day] = night
+        }
+
+        /// Minutes from the midnight that ends the night, so an 11:30pm bedtime is -30.
+        func minutesFromMidnight(_ date: Date, night day: String) -> Double? {
+            guard let midnight = formatter.date(from: day) else { return nil }
+            return date.timeIntervalSince(midnight) / 60
+        }
+
+        var result: [String: [String: Double]] = [:]
+        for (day, night) in nights {
+            guard night.asleepMinutes > 0 else { continue }
+            var values = night.stageMinutes
+            values["sleepHours"] = ((night.asleepMinutes / 60) * 100).rounded() / 100
+            values["sleepAwakeMinutes"] = night.awakeMinutes.rounded()
+            values["sleepAwakenings"] = max(0, night.awakenings - 1)
+            let inBed = max(night.inBedMinutes, night.asleepMinutes + night.awakeMinutes)
+            values["sleepInBedMinutes"] = inBed.rounded()
+            // Time asleep as a share of time in bed — the standard definition.
+            if inBed > 0 { values["sleepEfficiency"] = ((night.asleepMinutes / inBed) * 1000).rounded() / 10 }
+            if let asleep = night.firstAsleep, let minutes = minutesFromMidnight(asleep, night: day) {
+                values["sleepStartMinutes"] = minutes.rounded()
+                if let inBedAt = night.firstInBed {
+                    values["sleepLatencyMinutes"] = max(0, asleep.timeIntervalSince(inBedAt) / 60).rounded()
+                }
+            }
+            if let woke = night.lastAsleep, let minutes = minutesFromMidnight(woke, night: day) {
+                values["sleepEndMinutes"] = minutes.rounded()
+            }
+            result[day] = values
+        }
+        return result
     }
 
     /// Today's running totals, midnight to now — the intraday snapshot series.
