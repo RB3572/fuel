@@ -28,8 +28,17 @@ struct JourneyMapCard: View {
         Panel {
             VStack(alignment: .leading, spacing: 10) {
                 header
-                JourneyRouteMap(journey: journey, laps: laps, animate: shown)
-                    .frame(height: 168)
+                Group {
+                    // A route spanning most of the planet cannot be drawn on a MapKit
+                    // view at this size — it will not zoom out that far — so the world
+                    // gets drawn flat instead.
+                    if journey.spansTheWorld {
+                        FlatWorldMap(route: journey.coordinates, laps: laps, animate: shown)
+                    } else {
+                        JourneyRouteMap(journey: journey, laps: laps, animate: shown)
+                    }
+                }
+                .frame(height: 168)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Palette.border(scheme), lineWidth: 1))

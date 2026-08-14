@@ -1922,10 +1922,15 @@ test('the globe is drawn, not mapped — so it spins, and cannot zoom', () => {
   assert.match(sphere, /\} else if !current\.isEmpty \{/)
   assert.match(sphere, /context\.clip\(to: globe\)/)
   // Enough world to recognise, little enough to redraw for free.
-  assert.match(sphere, /static let all: \[Outline\]/)
-  for (const land of ['northAmerica', 'southAmerica', 'africa', 'eurasia', 'australia', 'antarctica']) {
+  assert.match(sphere, /static let land: \[Outline\]/)
+  for (const land of ['northAmerica', 'southAmerica', 'africa', 'eurasia', 'australia']) {
     assert.match(sphere, new RegExp(`static let ${land}`), `${land} should be on the globe`)
   }
+  // The poles are ice, drawn white over the land layer rather than as green continents.
+  assert.match(sphere, /static let ice: \[Outline\] = \[antarctica, arctic\]/)
+  assert.match(sphere, /private var ice: Color/)
+  // No grid: it was noise on a globe this size.
+  assert.doesNotMatch(sphere, /graticule/)
 
   const geo = read('../ios/Fuel/Sources/GlobeLandmarks.swift')
   // The lap is still chosen rather than arbitrary.
@@ -1976,4 +1981,30 @@ test('pull-to-refresh lets go before the work finishes', () => {
   // Trends only needs the server's numbers again, not a full Health sync.
   assert.match(trends, /pullToRefresh\(reason: "trends refresh", syncing: false\)/)
   assert.doesNotMatch(trends, /\.refreshable \{ await store\.load\(\) \}/)
+})
+
+test('a route that wraps the planet is drawn on a flat world, not a map view', () => {
+  // MapKit will not zoom out far enough to show the whole globe in a card two inches
+  // tall, so the equator — every degree of longitude there is — came out as a close-up
+  // of the South Atlantic with both ends off screen.
+  const journeys = read('../ios/Fuel/Sources/Journeys.swift')
+  assert.match(journeys, /var spansTheWorld: Bool/)
+  assert.match(journeys, /return high - low > 180/)
+  // Measured, not hard-coded to the equator, so any future round-the-world route gets
+  // the same treatment.
+  assert.doesNotMatch(journeys, /name == "Around the equator"/)
+
+  const card = read('../ios/Fuel/Sources/JourneyMapCard.swift')
+  assert.match(card, /if journey\.spansTheWorld \{\s*\n\s*FlatWorldMap\(route: journey\.coordinates, laps: laps, animate: shown\)/)
+
+  const sphere = read('../ios/Fuel/Sources/GlobeSphere.swift')
+  assert.match(sphere, /struct FlatWorldMap: View/)
+  // Equirectangular, reusing the globe's own outlines rather than a second world.
+  assert.match(sphere, /CGPoint\(x: \(lon \+ 180\) \/ 360 \* size\.width, y: \(90 - lat\) \/ 180 \* size\.height\)/)
+  assert.match(sphere, /GlobeAtlas\.land/)
+  // The line is a Shape so it can still be traced out once per lap.
+  assert.match(sphere, /struct FlatRoute: Shape/)
+  assert.match(sphere, /\.trim\(from: 0, to: animate \? portion\(index\) : 0\)/)
+  // And it must not draw a stripe back across the map when it crosses the date line.
+  assert.match(sphere, /abs\(coordinate\.longitude - previousLon\) > 180/)
 })

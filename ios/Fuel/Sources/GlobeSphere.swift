@@ -94,17 +94,20 @@ enum GlobeAtlas {
         (-34,173),(-37,176),(-39,177),(-41,175),(-41,172),(-45,167),(-47,168),(-44,171),(-41,174),(-37,174),
     ]
 
-    /// Antarctica as a cap: a ring at 70° south, which is what it looks like from
-    /// anywhere that is not directly above it.
-    static let antarctica: Outline = stride(from: -180.0, through: 180.0, by: 15.0).map { (-70.0, $0) }
+    /// The ice, drawn white rather than green: Antarctica, and the Arctic cap that sits
+    /// over the pole rather than on any land.
+    static let antarctica: Outline = stride(from: -180.0, through: 180.0, by: 10.0).map { (-70.0, $0) }
+    static let arctic: Outline = stride(from: -180.0, through: 180.0, by: 10.0).map { (75.0, $0) }
 
-    static let all: [Outline] = [
+    static let land: [Outline] = [
         northAmerica, southAmerica, africa, eurasia, australia,
-        greenland, madagascar, japan, britishIsles, newZealand, antarctica,
+        greenland, madagascar, japan, britishIsles, newZealand,
     ]
+
+    static let ice: [Outline] = [antarctica, arctic]
 }
 
-/// The sphere itself: land, grid, your lap around it, and the places it passes.
+/// The sphere itself: land, ice, your lap around it, and the places it passes.
 struct GlobeSphere: View {
     @Environment(\.colorScheme) private var scheme
 
@@ -129,17 +132,17 @@ struct GlobeSphere: View {
             // horizon cannot spill into the space around the planet.
             context.clip(to: globe)
 
-            for outline in GlobeAtlas.all {
-                for run in visibleRuns(outline, projection, closed: true) where run.count > 2 {
-                    var path = Path()
-                    path.move(to: run[0])
-                    for point in run.dropFirst() { path.addLine(to: point) }
-                    path.closeSubpath()
-                    context.fill(path, with: .color(land))
+            for (outlines, colour) in [(GlobeAtlas.land, land), (GlobeAtlas.ice, ice)] {
+                for outline in outlines {
+                    for run in visibleRuns(outline, projection, closed: true) where run.count > 2 {
+                        var path = Path()
+                        path.move(to: run[0])
+                        for point in run.dropFirst() { path.addLine(to: point) }
+                        path.closeSubpath()
+                        context.fill(path, with: .color(colour))
+                    }
                 }
             }
-
-            context.stroke(graticule(projection), with: .color(grid), lineWidth: 0.5)
 
             if route.count > 1 {
                 let coordinates = route.map { ($0.latitude, $0.longitude) }
@@ -172,9 +175,9 @@ struct GlobeSphere: View {
         .overlay(Circle().stroke(Palette.border(scheme), lineWidth: 1))
     }
 
-    private var ocean: Color { scheme == .dark ? Color(hex: 0x14202E) : Color(hex: 0xCFE3F2) }
-    private var land: Color { scheme == .dark ? Color(hex: 0x2C3A2E) : Color(hex: 0xDCE8D5) }
-    private var grid: Color { (scheme == .dark ? Color.white : Color.black).opacity(0.12) }
+    private var ocean: Color { scheme == .dark ? Color(hex: 0x0B3B6F) : Color(hex: 0x2E7FC4) }
+    private var land: Color { scheme == .dark ? Color(hex: 0x2E7D4F) : Color(hex: 0x4CAF6A) }
+    private var ice: Color { scheme == .dark ? Color(hex: 0xE8EEF4) : Color(hex: 0xFFFFFF) }
 
     private func dot(at point: CGPoint, radius: CGFloat) -> Path {
         Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
@@ -200,24 +203,99 @@ struct GlobeSphere: View {
         if !current.isEmpty { runs.append(current) }
         return runs
     }
+}
 
-    /// Meridians and parallels every thirty degrees, so the sphere reads as turning
-    /// rather than as a shape changing size.
-    private func graticule(_ projection: Orthographic) -> Path {
-        var path = Path()
-        for lon in stride(from: -180.0, to: 180.0, by: 30.0) {
-            let line = stride(from: -90.0, through: 90.0, by: 5.0).map { ($0, lon) }
-            for run in visibleRuns(line, projection, closed: false) where run.count > 1 {
-                path.move(to: run[0])
-                for point in run.dropFirst() { path.addLine(to: point) }
+
+/// A flat world, for a route that goes round the whole planet.
+///
+/// MapKit cannot help here: it will not zoom out far enough to show the entire globe in
+/// a card two inches tall, so the equator's route — which spans every degree of longitude
+/// there is — came out as a close-up of the South Atlantic with both ends off-screen. An
+/// equirectangular projection of the same outlines the globe uses has no such limit, and
+/// puts the line exactly where it belongs: straight across the middle.
+struct FlatWorldMap: View {
+    @Environment(\.colorScheme) private var scheme
+
+    /// The route, in (latitude, longitude).
+    var route: [CLLocationCoordinate2D]
+    /// How many times over, which decides how many lines are traced and in what colours.
+    var laps: Double
+    var animate: Bool
+
+    private static let maxDrawnLaps = 6
+    private var drawn: Int { min(Self.maxDrawnLaps, max(1, Int(laps.rounded(.up)))) }
+
+    private func colour(_ index: Int) -> Color {
+        guard drawn > 1 else { return Color(hue: 0.33, saturation: 0.75, brightness: 0.72) }
+        let t = Double(index) / Double(drawn - 1)
+        return Color(hue: 0.33 * (1 - t), saturation: 0.82, brightness: 0.80)
+    }
+
+    private func portion(_ index: Int) -> Double { max(0, min(1, laps - Double(index))) }
+
+    var body: some View {
+        // No GeometryReader needed: the Canvas is handed its size and the route Shape is
+        // handed its rect, and both project from what they are given.
+        ZStack {
+            Canvas(rendersAsynchronously: false) { context, size in
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(ocean))
+                for (outlines, colour) in [(GlobeAtlas.land, land), (GlobeAtlas.ice, ice)] {
+                    for outline in outlines {
+                        var path = Path()
+                        let points = outline.map { project($0.0, $0.1, size) }
+                        guard let first = points.first else { continue }
+                        path.move(to: first)
+                        for point in points.dropFirst() { path.addLine(to: point) }
+                        path.closeSubpath()
+                        context.fill(path, with: .color(colour))
+                    }
+                }
+            }
+            // The line itself is a Shape rather than Canvas drawing, because only a
+            // Shape can be trimmed — and the tracing is the point.
+            ForEach(0..<drawn, id: \.self) { index in
+                FlatRoute(route: route)
+                    .trim(from: 0, to: animate ? portion(index) : 0)
+                    .stroke(colour(index), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .animation(.easeInOut(duration: 0.9).delay(Double(index) * 0.18), value: animate)
             }
         }
-        for lat in stride(from: -60.0, through: 60.0, by: 30.0) {
-            let line = stride(from: -180.0, through: 180.0, by: 5.0).map { (lat, $0) }
-            for run in visibleRuns(line, projection, closed: false) where run.count > 1 {
-                path.move(to: run[0])
-                for point in run.dropFirst() { path.addLine(to: point) }
+    }
+
+    /// Equirectangular: longitude straight onto x, latitude straight onto y. The
+    /// distortion at the poles does not matter for a picture whose subject is a line
+    /// around the equator.
+    private func project(_ lat: Double, _ lon: Double, _ size: CGSize) -> CGPoint {
+        CGPoint(x: (lon + 180) / 360 * size.width, y: (90 - lat) / 180 * size.height)
+    }
+
+    private var ocean: Color { scheme == .dark ? Color(hex: 0x0B3B6F) : Color(hex: 0x2E7FC4) }
+    private var land: Color { scheme == .dark ? Color(hex: 0x2E7D4F) : Color(hex: 0x4CAF6A) }
+    private var ice: Color { scheme == .dark ? Color(hex: 0xE8EEF4) : Color(hex: 0xFFFFFF) }
+}
+
+/// The route as a trimmable Shape. Split where the line crosses the date line, so it
+/// does not draw a stripe back across the whole map.
+private struct FlatRoute: Shape {
+    var route: [CLLocationCoordinate2D]
+
+    func path(in rect: CGRect) -> Path {
+        // Projected from the rect the shape is handed, rather than from a closure passed
+        // in: a Shape must be Sendable, and a captured function is not.
+        func project(_ lat: Double, _ lon: Double) -> CGPoint {
+            CGPoint(x: rect.minX + (lon + 180) / 360 * rect.width,
+                    y: rect.minY + (90 - lat) / 180 * rect.height)
+        }
+        var path = Path()
+        var started = false
+        var previousLon: Double?
+        for coordinate in route {
+            let point = project(coordinate.latitude, coordinate.longitude)
+            if let previousLon, abs(coordinate.longitude - previousLon) > 180 {
+                started = false   // wrapped the date line; start a new stretch
             }
+            if started { path.addLine(to: point) } else { path.move(to: point); started = true }
+            previousLon = coordinate.longitude
         }
         return path
     }

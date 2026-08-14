@@ -73,6 +73,15 @@ struct Journey: Identifiable, Hashable {
 
     var coordinates: [CLLocationCoordinate2D] { waypoints.map(\.coordinate) }
 
+    /// Whether this route wraps enough of the planet that no map view can frame it.
+    /// Measured rather than hard-coded to the equator, so any future round-the-world
+    /// route gets the flat map too.
+    var spansTheWorld: Bool {
+        let longitudes = waypoints.map(\.lon)
+        guard let low = longitudes.min(), let high = longitudes.max() else { return false }
+        return high - low > 180
+    }
+
     var id: String { name }
 }
 
