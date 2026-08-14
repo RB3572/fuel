@@ -236,9 +236,63 @@ struct DaySummary: Decodable, Identifiable {
     /// cardiac, fitness, respiratory, environmental, mobility, and the night's sleep
     /// breakdown. A dictionary because the set keeps growing and most days carry only
     /// some of it. See HealthExtras for the keys.
-    var extras: [String: Double]?
+    var extras: ExtraValues?
 
     var id: String { date }
+}
+
+/// The `extras` column. Almost all numbers, but not quite: the night's hypnogram rides
+/// along in it as a string, because it is a run of stages and stops meaning anything the
+/// moment it is reduced to a number.
+///
+/// Decoding straight into `[String: Double]` would throw on that one value and take the
+/// whole day's extras down with it — every vital, every mobility reading — so each value
+/// is decoded as whatever it turns out to be and the two kinds are kept apart. Subscript
+/// still reads the numbers, which is what nearly every caller wants.
+struct ExtraValues: Codable, Equatable, ExpressibleByDictionaryLiteral {
+    var numbers: [String: Double]
+    var text: [String: String]
+
+    init(numbers: [String: Double] = [:], text: [String: String] = [:]) {
+        self.numbers = numbers
+        self.text = text
+    }
+
+    init(dictionaryLiteral elements: (String, Double)...) {
+        self.init(numbers: Dictionary(elements, uniquingKeysWith: { _, last in last }))
+    }
+
+    subscript(key: String) -> Double? { numbers[key] }
+
+    var isEmpty: Bool { numbers.isEmpty && text.isEmpty }
+
+    private struct Name: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Name.self)
+        var numbers: [String: Double] = [:]
+        var text: [String: String] = [:]
+        for key in container.allKeys {
+            if let value = try? container.decode(Double.self, forKey: key) {
+                numbers[key.stringValue] = value
+            } else if let value = try? container.decode(String.self, forKey: key) {
+                text[key.stringValue] = value
+            }
+            // Anything else — a null, a nested object — is simply not for us.
+        }
+        self.init(numbers: numbers, text: text)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Name.self)
+        for (name, value) in numbers { try container.encode(value, forKey: Name(stringValue: name)!) }
+        for (name, value) in text { try container.encode(value, forKey: Name(stringValue: name)!) }
+    }
 }
 
 struct FoodEntry: Decodable, Identifiable {

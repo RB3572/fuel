@@ -278,12 +278,12 @@ final class SyncEngine {
         // small enum rather than forcing both into one tuple type.
         enum MetricResult {
             case series(key: String, values: [Date: Double])
-            case sleep([String: [String: Double]])
+            case sleep([String: NightSummary])
         }
 
         var series: [String: [Date: Double]] = [:]
         var sleep: [String: Double] = [:]
-        var sleepDetail: [String: [String: Double]] = [:]
+        var sleepDetail: [String: NightSummary] = [:]
         var finished = 0
         try await withThrowingTaskGroup(of: MetricResult.self) { group in
             for metric in metrics {
@@ -306,7 +306,7 @@ final class SyncEngine {
                 switch result {
                 case .series(let key, let values): series[key] = values
                 case .sleep(let byDate):
-                    sleep = byDate.mapValues { $0["sleepHours"] ?? 0 }
+                    sleep = byDate.mapValues { $0.values["sleepHours"] ?? 0 }
                     sleepDetail = byDate
                 }
                 finished += 1
@@ -347,7 +347,8 @@ final class SyncEngine {
                 runningStrideLength: series["stride"]?[key],
                 cardioRecovery: series["recovery"]?[key],
                 extras: extrasFor(dateText, key, series: series, extraKeys: extraMetrics.map(\.key),
-                                  sleepDetail: sleepDetail[dateText])
+                                  sleepDetail: sleepDetail[dateText]),
+                extraText: sleepDetail[dateText]?.hypnogram.map { ["sleepStages": $0] }
             )
             // Days with no data at all are skipped rather than uploaded as empty rows.
             if hasAnyValue(total) { totals.append(total) }
@@ -361,7 +362,7 @@ final class SyncEngine {
     /// of numbers. Percent-unit readings are scaled to whole percents here so a value is
     /// the number a person would say out loud.
     private func extrasFor(_ dateText: String, _ key: Date, series: [String: [Date: Double]],
-                           extraKeys: [String], sleepDetail: [String: Double]?) -> [String: Double]? {
+                           extraKeys: [String], sleepDetail: NightSummary?) -> [String: Double]? {
         var extras: [String: Double] = [:]
         let percentKeys: Set<String> = ["atrialFibrillationBurden", "peripheralPerfusionIndex",
                                         "walkingAsymmetry", "walkingDoubleSupport", "walkingSteadiness"]
@@ -370,7 +371,7 @@ final class SyncEngine {
             extras[name] = percentKeys.contains(name) ? value * 100 : value
         }
         if let sleepDetail {
-            for (name, value) in sleepDetail where name != "sleepHours" { extras[name] = value }
+            for (name, value) in sleepDetail.values where name != "sleepHours" { extras[name] = value }
         }
         return extras.isEmpty ? nil : extras
     }
@@ -432,7 +433,19 @@ final class SyncEngine {
     /// Times of day are stored as minutes from midnight so the whole thing stays a
     /// dictionary of numbers. Bedtimes before midnight go negative (23:30 is -30), which
     /// keeps the arithmetic honest instead of wrapping to 1410 and reading as a lie-in.
-    private func sleepByDay(lastDays: Int) async throws -> [String: [String: Double]] {
+    /// One night, reduced: the totals that go in `extras`, plus the run of stages that
+    /// cannot be reduced to totals without losing the thing that makes it interesting.
+    struct NightSummary {
+        var values: [String: Double] = [:]
+        /// `"D,-45,-20;C,-20,15;R,15,38"` — stage letter, start, end, in minutes around
+        /// the midnight the night ended on, so a stage before midnight is negative. Kept
+        /// as one short string rather than a table of its own: a night is forty segments
+        /// at most, it is only ever read whole, and it rides along in the same jsonb
+        /// column as everything else about the day.
+        var hypnogram: String?
+    }
+
+    private func sleepByDay(lastDays: Int) async throws -> [String: NightSummary] {
         guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
         let calendar = Calendar.current
         guard let start = calendar.date(byAdding: .day, value: -lastDays, to: Date()) else { return [:] }
@@ -459,6 +472,9 @@ final class SyncEngine {
             var firstInBed: Date?
             var firstAsleep: Date?
             var lastAsleep: Date?
+            /// Every stage sample of the night in the order it happened, for the
+            /// hypnogram. `inBed` is not a stage and is left out.
+            var segments: [(stage: String, start: Date, end: Date)] = []
         }
         var nights: [String: Night] = [:]
 
@@ -471,20 +487,25 @@ final class SyncEngine {
             case .asleepREM:
                 night.stageMinutes["sleepREMMinutes", default: 0] += minutes
                 night.asleepMinutes += minutes
+                night.segments.append(("R", sample.startDate, sample.endDate))
             case .asleepCore:
                 night.stageMinutes["sleepCoreMinutes", default: 0] += minutes
                 night.asleepMinutes += minutes
+                night.segments.append(("C", sample.startDate, sample.endDate))
             case .asleepDeep:
                 night.stageMinutes["sleepDeepMinutes", default: 0] += minutes
                 night.asleepMinutes += minutes
+                night.segments.append(("D", sample.startDate, sample.endDate))
             case .asleepUnspecified:
                 night.stageMinutes["sleepUnspecifiedMinutes", default: 0] += minutes
                 night.asleepMinutes += minutes
+                night.segments.append(("U", sample.startDate, sample.endDate))
             case .awake:
                 // Only the wakings inside the night count as interruptions; the final
                 // one is getting up.
                 night.awakeMinutes += minutes
                 night.awakenings += 1
+                night.segments.append(("A", sample.startDate, sample.endDate))
             case .inBed:
                 night.inBedMinutes += minutes
                 if night.firstInBed == nil || sample.startDate < night.firstInBed! { night.firstInBed = sample.startDate }
@@ -505,7 +526,7 @@ final class SyncEngine {
             return date.timeIntervalSince(midnight) / 60
         }
 
-        var result: [String: [String: Double]] = [:]
+        var result: [String: NightSummary] = [:]
         for (day, night) in nights {
             guard night.asleepMinutes > 0 else { continue }
             var values = night.stageMinutes
@@ -525,7 +546,21 @@ final class SyncEngine {
             if let woke = night.lastAsleep, let minutes = minutesFromMidnight(woke, night: day) {
                 values["sleepEndMinutes"] = minutes.rounded()
             }
-            result[day] = values
+
+            // Segments shorter than half a minute are dropped: Apple emits a scattering
+            // of them at stage boundaries, they cannot be drawn at this width, and thirty
+            // of them would double the size of the string for nothing.
+            let hypnogram = night.segments
+                .sorted { $0.start < $1.start }
+                .compactMap { segment -> String? in
+                    guard let from = minutesFromMidnight(segment.start, night: day),
+                          let to = minutesFromMidnight(segment.end, night: day),
+                          to - from >= 0.5 else { return nil }
+                    return "\(segment.stage),\(Int(from.rounded())),\(Int(to.rounded()))"
+                }
+                .joined(separator: ";")
+
+            result[day] = NightSummary(values: values, hypnogram: hypnogram.isEmpty ? nil : hypnogram)
         }
         return result
     }

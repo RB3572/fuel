@@ -614,12 +614,25 @@ function ensureExtrasColumn() {
   return extrasColumnReady
 }
 
-function normalizeExtras(raw) {
-  if (!raw || typeof raw !== 'object') return {}
+function normalizeExtras(raw, text) {
   const out = {}
-  for (const [key, value] of Object.entries(raw)) {
-    const number = finite(value)
-    if (number != null && /^[A-Za-z0-9]+$/.test(key)) out[key] = number
+  if (raw && typeof raw === 'object') {
+    for (const [key, value] of Object.entries(raw)) {
+      const number = finite(value)
+      if (number != null && /^[A-Za-z0-9]+$/.test(key)) out[key] = number
+    }
+  }
+  // The same column also carries a couple of values that are not numbers — so far only
+  // the night's hypnogram, a run of stages that has to keep its order. Bounded in length
+  // and restricted to the characters that encoding uses, so a bad client cannot turn the
+  // day's extras into a place to put arbitrary text.
+  if (text && typeof text === 'object') {
+    for (const [key, value] of Object.entries(text)) {
+      if (typeof value !== 'string' || !/^[A-Za-z0-9]+$/.test(key)) continue
+      if (value.length === 0 || value.length > 4000) continue
+      if (!/^[A-Za-z0-9,;:.\-]+$/.test(value)) continue
+      out[key] = value
+    }
   }
   return out
 }
@@ -654,7 +667,7 @@ function normalizeDailyTotal(raw) {
     // Everything added after the original eighteen, one number per day each. Kept as
     // one jsonb value rather than a column apiece: they are summaries, the set keeps
     // growing, and a day with none of them costs nothing.
-    extras: normalizeExtras(raw?.extras),
+    extras: normalizeExtras(raw?.extras, raw?.extraText),
     partialDay: raw?.partialDay === true,
   }
 }

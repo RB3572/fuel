@@ -1807,6 +1807,50 @@ test('sleep replaces the recovery card and shows the shape of the night', () => 
   assert.match(card, /private func stageBar/)
   assert.match(card, /Stage\(name: "Deep"/)
   assert.match(card, /Stage\(name: "REM"/)
+
+  // Totals cannot say when, so the night's stages ride along in order as one short
+  // string. Everything else in `extras` is a number.
+  assert.match(engine, /struct NightSummary/)
+  assert.match(engine, /return "\\\(segment\.stage\),\\\(Int\(from\.rounded\(\)\)\),\\\(Int\(to\.rounded\(\)\)\)"/)
+  assert.match(engine, /extraText: sleepDetail\[dateText\]\?\.hypnogram\.map \{ \["sleepStages": \$0\] \}/)
+  // Sub-half-minute slivers at stage boundaries are not drawable and would double the
+  // size of the string.
+  assert.match(engine, /to - from >= 0\.5 else \{ return nil \}/)
+
+  const sync = read('../api/_lib/health-sync.js')
+  assert.match(sync, /extras: normalizeExtras\(raw\?\.extras, raw\?\.extraText\)/)
+  assert.match(sync, /if \(value\.length === 0 \|\| value\.length > 4000\) continue/)
+  assert.match(sync, /!\/\^\[A-Za-z0-9,;:\.\\-\]\+\$\/\.test\(value\)/)
+
+  // One string in the column would throw a strict [String: Double] decode and take the
+  // whole day's extras with it — every vital, every mobility reading.
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  assert.match(client, /struct ExtraValues: Codable, Equatable, ExpressibleByDictionaryLiteral/)
+  assert.match(client, /var extras: ExtraValues\?/)
+  assert.match(client, /} else if let value = try\? container\.decode\(String\.self, forKey: key\) \{/)
+
+  const extras = read('../ios/Fuel/Sources/HealthExtras.swift')
+  assert.match(extras, /static func spans\(_ packed: String\?\) -> \[SleepSpan\]/)
+  assert.match(extras, /spans = SleepNight\.spans\(summary\.extras\?\.text\["sleepStages"\]\)/)
+  for (const stage of ['awake = "A"', 'rem = "R"', 'core = "C"', 'deep = "D"']) {
+    assert.ok(extras.includes(stage), `${stage} should be a hypnogram stage`)
+  }
+
+  // Lanes are placed by row, not by the stage's own depth: a night with no unrecognised
+  // sleep has no "Asleep" lane, and plotting against depth left a gap where it would be.
+  assert.match(card, /lanes\.enumerated\(\)\.map \{ \(\$0\.element, Double\(lanes\.count - 1 - \$0\.offset\)\) \}/)
+  assert.match(card, /y: \.value\("Stage", rows\[span\.stage\] \?\? 0\)/)
+  // Charts rounds the domain out to midnight otherwise, spending the first third of the
+  // card on hours nobody was asleep for.
+  assert.match(card, /\.chartXScale\(domain: \(night\.spans\.map\(\\\.start\)\.min\(\) \?\? 0\)/)
+  // Every legend entry on one line — "Awake" was breaking over two.
+  assert.match(card, /ViewThatFits\(in: \.horizontal\)/)
+  assert.match(card, /row\(stages, size: 10, spacing: 7, tight: true\)/)
+  assert.match(card, /\.lineLimit\(1\)\s*\n\s*\.fixedSize\(\)/)
+  // And the explanation under it says what the shape of the night means.
+  assert.match(card, /private static func remNote/)
+  assert.match(card, /% of your REM came in the second half of the night/)
+  assert.match(card, /N1 and N2 together/)
   const today = read('../ios/Fuel/Sources/TodayView.swift')
   assert.match(today, /case "sleep":\s*\n\s*SleepCard\(summary: s, trend:/)
   // A saved layout that still lists the old key must not leave a gap.
@@ -1927,10 +1971,30 @@ test('the globe is drawn, not mapped — so it spins, and cannot zoom', () => {
     assert.match(sphere, new RegExp(`static let ${land}`), `${land} should be on the globe`)
   }
   // The poles are ice, drawn white over the land layer rather than as green continents.
-  assert.match(sphere, /static let ice: \[Outline\] = \[antarctica, arctic\]/)
+  assert.match(sphere, /static let ice: \[Outline\] = \[antarctica, greenland, arcticIce\]/)
   assert.match(sphere, /private var ice: Color/)
+  // Antarctica is a coastline with a peninsula on it, not a ring at a fixed latitude —
+  // a ring projected to a white circle stuck on the bottom of the planet.
+  assert.doesNotMatch(sphere, /stride\(from: -180\.0, through: 180\.0/)
+  assert.ok(sphere.match(/static let antarctica: Outline = \[([\s\S]*?)\]/)[1].includes('(-63,-57)'),
+    'Antarctica needs its peninsula')
   // No grid: it was noise on a globe this size.
   assert.doesNotMatch(sphere, /graticule/)
+  // An outline wholly round the back draws nothing. Pinning its points to the rim
+  // instead closes a path all the way round the disc, which fills the whole planet —
+  // which is what turned the polar views solid white.
+  assert.match(sphere, /guard anyVisible else \{ return nil \}/)
+  // Coarse outlines chord across the face at the horizon, so they are resampled once.
+  assert.match(sphere, /static let landDetailed: \[Outline\] = land\.map\(resampled\)/)
+  assert.match(sphere, /if dLon > 180 \{ dLon -= 360 \} else if dLon < -180 \{ dLon \+= 360 \}/)
+  // A pole's ice on the flat map is an outer edge per strip of longitude. Traced point
+  // by point it seams at the date line and the peninsula's doubling back reverses the
+  // winding, slotting open water through the ice.
+  assert.match(sphere, /private func cap\(_ outline: GlobeAtlas\.Outline/)
+  assert.match(sphere, /reach\[index\] = reach\[index\]\.map \{ southern \? max\(\$0, lat\) : min\(\$0, lat\) \} \?\? lat/)
+  // The flat map sits beside real Apple Maps cards and carries a green line across its
+  // middle, so it is pale where the globe is vibrant, and the line is cased in white.
+  assert.match(sphere, /line\.stroke\(\.white\.opacity\(0\.9\), style: StrokeStyle\(lineWidth: 5\.5/)
 
   const geo = read('../ios/Fuel/Sources/GlobeLandmarks.swift')
   // The lap is still chosen rather than arbitrary.

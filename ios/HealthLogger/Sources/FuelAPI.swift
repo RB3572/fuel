@@ -125,6 +125,9 @@ struct DailyTotal: Encodable {
     /// these are summaries, the set will keep growing, and a day with none of them
     /// should cost nothing. See SyncEngine.extraMetrics and the `extras` jsonb column.
     var extras: [String: Double]?
+    /// The same column, for the few things about a day that are not a number — so far
+    /// just the night's hypnogram, which is a run of stages and has to stay in order.
+    var extraText: [String: String]?
 }
 
 struct SyncResponse: Decodable {

@@ -122,10 +122,14 @@ struct SleepNight {
     /// negative — 23:30 is -30, not 1410.
     var startMinutes: Double?
     var endMinutes: Double?
+    /// The night stage by stage, in order — empty for a device that only reports how
+    /// long you slept.
+    var spans: [SleepSpan] = []
 
     init?(_ summary: DaySummary?) {
         guard let summary else { return nil }
         let extras = summary.extras ?? [:]
+        spans = SleepNight.spans(summary.extras?.text["sleepStages"])
         hours = summary.sleepHours
         remMinutes = extras["sleepREMMinutes"]
         coreMinutes = extras["sleepCoreMinutes"]
@@ -141,6 +145,20 @@ struct SleepNight {
         // Nothing to show unless the night produced at least one of these.
         let anything: [Double?] = [hours, remMinutes, coreMinutes, deepMinutes]
         if anything.allSatisfy({ $0 == nil }) { return nil }
+    }
+
+    /// `"D,-45,-20;C,-20,15"` back into stretches. Anything malformed is dropped rather
+    /// than failing the night: a partly readable hypnogram still draws.
+    static func spans(_ packed: String?) -> [SleepSpan] {
+        guard let packed else { return [] }
+        return packed.split(separator: ";").enumerated().compactMap { index, chunk in
+            let parts = chunk.split(separator: ",")
+            guard parts.count == 3,
+                  let stage = SleepSpan.Stage(rawValue: String(parts[0])),
+                  let start = Double(parts[1]), let end = Double(parts[2]), end > start
+            else { return nil }
+            return SleepSpan(id: index, stage: stage, start: start, end: end)
+        }
     }
 
     var hasStages: Bool {
@@ -168,4 +186,54 @@ struct SleepNight {
         let whole = Int(minutes.rounded())
         return whole >= 60 ? "\(whole / 60)h \(whole % 60)m" : "\(whole)m"
     }
+}
+
+/// One unbroken stretch of one sleep stage, in minutes around the midnight the night
+/// ended on — so a stage that ran before midnight is negative.
+///
+/// Apple reports four: awake, REM, core and deep. Core is N1 and N2 together — the two
+/// lightest stages of non-REM sleep, which Apple does not separate — and deep is N3.
+struct SleepSpan: Identifiable {
+    enum Stage: String, CaseIterable {
+        case awake = "A", rem = "R", core = "C", unspecified = "U", deep = "D"
+
+        var label: String {
+            switch self {
+            case .awake: "Awake"
+            case .rem: "REM"
+            case .core: "Core"
+            case .unspecified: "Asleep"
+            case .deep: "Deep"
+            }
+        }
+
+        /// How far down the night goes, awake at the top. A number rather than an index
+        /// into a list so the chart's lanes cannot silently reorder themselves.
+        var depth: Int {
+            switch self {
+            case .awake: 4
+            case .rem: 3
+            case .core: 2
+            case .unspecified: 1
+            case .deep: 0
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .awake: Color(hex: 0xE8A33D)
+            case .rem: Color(hex: 0x8ED1E6)
+            case .core: Color(hex: 0x5B8DEF)
+            case .unspecified: Color(hex: 0x9AA7C7)
+            case .deep: Color(hex: 0x3B4CC0)
+            }
+        }
+    }
+
+    var id: Int
+    var stage: Stage
+    var start: Double
+    var end: Double
+
+    var minutes: Double { end - start }
 }
