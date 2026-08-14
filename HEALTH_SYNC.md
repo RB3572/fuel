@@ -1,151 +1,178 @@
-# Fuel health sync — Health Logger & /api/health/sync/v1
+# Fuel health sync — `/api/health/sync/v1`
 
-Fuel gets its Apple Health data from **Health Logger**, a SwiftUI iOS app that lives in
-[`ios/HealthLogger`](ios/HealthLogger). The app is a HealthKit bridge and nothing else:
-Fuel on the web keeps analytics, charts, AI, calorie math, goals and the UI.
-
-Fuel is the one-tap default, not a hard wiring. The same app will sync to **any server
-implementing the protocol below**, or skip servers entirely and **export** your whole
-Health history to a file — see [Other destinations](#other-destinations).
+Fuel reads Apple Health **itself**. There is no Shortcut and no companion app in the
+path any more: the iOS app owns HealthKit access, computes a summary per day on device,
+and posts it.
 
 ```
-HealthKit ──▶ Health Logger ──▶ POST /api/health/sync/v1 ──▶ normalized tables ──▶ health_daily (derived) ──▶ Fuel web
+HealthKit ──▶ Fuel (on-device summarising) ──▶ POST /api/health/sync/v1 ──▶ health_daily ──▶ dashboard
 ```
 
-The legacy Apple Shortcut (`POST /api/health/import`) keeps working during migration.
+## One row per day, not a copy of the store
 
-## Philosophy
+This is the single most important thing to understand, and it is a reversal of the
+original design.
 
-The Shortcut uploaded *today's summary*; the app replicates *the HealthKit store*. The
-first sync uploads all history (like the first Dropbox sync); every later sync uploads
-only what changed, via `HKAnchoredObjectQuery` — one anchor per data type, stored on
-device and mirrored server-side so a reinstall resumes instead of restarting. Raw
-samples become the source of truth; `health_daily` becomes a derived cache.
+An earlier version replicated the entire HealthKit store — every heart-rate sample,
+every sleep segment — into `hk_quantity_samples` and `hk_category_samples`, using
+`HKAnchoredObjectQuery` with per-type anchors. It worked, and it filled the database
+with 482 MB of rows that answered no question the app ever asks. A heart rate every
+minute of the night is not something this dashboard plots.
+
+**The sync now sends daily summaries and workouts only.** `payload.tables` carries
+`dailyTotals` and `workoutSamples`; the raw-sample tables exist in the protocol but are
+sent empty. Daily aggregates are computed **on device** with
+`HKStatisticsCollectionQuery`, because only HealthKit deduplicates a watch and a phone
+counting the same steps.
+
+Consequences:
+
+- **`health_daily` is the source of truth**, not a derived cache.
+- **`fullSync` means "how far back to recompute", not "replicate history"** — five years
+  on the first sync, then a rolling three days. See the comment in `SyncEngine.run`.
+- **The anchors are vestigial.** They are still in the protocol and still mirrored
+  server-side, and `SyncSink.advancesAnchors` still exists for the export path, but
+  nothing depends on them for correctness now.
 
 ## The protocol (`syncVersion: 1`)
 
-`POST /api/health/sync/v1` — `Authorization: Bearer fuel_…` (the same token Sync setup
-already mints; no Google login, no OAuth, no sessions).
+`POST /api/health/sync/v1` — `Authorization: Bearer fuel_…`, the token minted in
+More → Apple Health. No Google login, no OAuth, no session.
 
 ```jsonc
 {
   "syncVersion": 1,
   "fullSync": false,
-  "batch": { "index": 0, "count": 4 },
   "device": { "model": "iPhone17,3", "iosVersion": "26.2", "timezone": "America/Los_Angeles", "lastSync": null },
-  "anchors": { "stepCount": "<base64 HKQueryAnchor>" },
   "tables": {
-    "dailyTotals":      [{ "date": "2026-08-06", "partialDay": true, "activeEnergy": 412, "steps": 6100, "...": "..." }],
-    "quantitySamples":  [{ "uuid": "…", "type": "heartRate", "value": 62, "unit": "count/min", "start": "…", "end": "…", "source": "Apple Watch" }],
-    "categorySamples":  [{ "uuid": "…", "type": "sleepAnalysis", "value": 4, "valueName": "asleepREM", "start": "…", "end": "…" }],
-    "heartRateSamples": [],   // convenience aliases, normalized into the two above
-    "sleepSamples":     [],
-    "workoutSamples":   [{ "uuid": "…", "activityType": "running", "start": "…", "end": "…", "duration": 2400, "activeEnergy": 410, "distance": 6800, "route": [[34.14, -118.12, 1700000000, 220]] }],
-    "clinicalRecords":  []
+    "dailyTotals": [{
+      "date": "2026-08-14",
+      "partialDay": true,
+      "activeEnergy": 412, "restingEnergy": 1180, "steps": 6100,
+      "restingHeartRate": 48, "hrv": 92, "sleepHours": 7.98,
+      "extras":    { "sleepREMMinutes": 134, "sleepDeepMinutes": 89, "walkingSpeed": 1.42 },
+      "extraText": { "sleepStages": "D,-45,-20;C,-20,15;R,15,38" }
+    }],
+    "workoutSamples": [{ "uuid": "…", "activityType": "running", "start": "…", "end": "…",
+                         "duration": 2400, "activeEnergy": 410, "distance": 6800,
+                         "route": [[34.14, -118.12, 1700000000, 220]] }]
   },
-  "deleted": { "quantitySamples": ["uuid"], "categorySamples": [], "workouts": [] },
   "snapshot": { "activeEnergy": 412, "restingEnergy": 1180, "totalExpenditure": 1592 }
 }
 ```
 
-`GET /api/health/sync/v1` returns `{ anchors, lastSession, maxSamplesPerRequest }` so a
-fresh install adopts existing anchors.
+`GET /api/health/sync/v1` returns `{ anchors, lastSession, maxSamplesPerRequest }`.
 
-Guarantees, enforced by tests (`test/health-sync.test.js` + the PGlite harness):
+Guarantees, enforced by `test/health-sync.test.js`:
 
-- **Idempotent** — every sample upserts on `(user_id, hk_uuid)`; deletions come from
-  the same anchored queries; a replayed batch changes nothing, including snapshots.
-- **Batched** — ≤ 20,000 samples per request (over-limit requests are refused whole
-  with a 413, never half-imported); rows travel as one jsonb array per table, so a
-  5,000-sample batch is a handful of statements.
+- **Idempotent** — days upsert on `(user_id, date)`, workouts on `(user_id, hk_uuid)`.
+  A replayed batch changes nothing.
 - **Versioned** — a wrong `syncVersion` is a 400 naming the supported version.
 - **Skips are named** — malformed rows come back in `stored.skipped`, never dropped
   silently.
+- **Batched** — over-limit requests are refused whole with a 413, never half-imported.
+
+### `extras` and `extraText`
+
+The original eighteen metrics have real columns. Everything added since — around
+thirty-five more across heart, fitness detail, respiratory, body, environmental and
+mobility, plus the sleep breakdown — lives in the `extras` jsonb column, merged rather
+than replaced:
+
+```sql
+extras = COALESCE(health_daily.extras, '{}'::jsonb) || COALESCE(EXCLUDED.extras, '{}'::jsonb)
+```
+
+`extras` is numbers only. `extraText` is the same column for the few things that are not
+numbers — currently just `sleepStages`, the night's hypnogram, packed as
+`"<stage>,<start>,<end>;…"` in minutes around the midnight the night ended on, so a
+stage before midnight is negative. Server-side it is bounded by length and character
+class. Client-side, `ExtraValues` in `FuelClient.swift` decodes each value as whatever
+it turns out to be — a strict `[String: Double]` decode would throw on the string and
+take the whole day's extras with it.
+
+`HealthExtras.swift` is the table mapping each key to its label, unit and dashboard card.
+**Adding a metric to the dashboard is a line there**, plus a line in
+`SyncEngine.extraMetrics`.
 
 ## Storage
 
 | Table | Holds |
 |---|---|
-| `hk_quantity_samples` | steps, heart rate, weight, SpO₂, mobility… `(type, value, unit, start, end, source, device, metadata)` |
-| `hk_category_samples` | sleep stages (`value_name`), stand hours, mindfulness |
-| `hk_workouts` | workouts + thinned GPS route (`[[lat, lon, unixSecs, altM], …]`) |
-| `hk_clinical_records` | FHIR payloads (off by default in the app — needs Apple's health-records entitlement) |
-| `health_sync_anchors` | server mirror of per-type `HKQueryAnchor`s |
-| `health_sync_sessions` | one row per request, for debugging a stuck device |
-| `health_daily` | **derived cache** — same columns the Shortcut wrote, upserted with COALESCE, `source = 'Health Logger'` |
-| `health_energy_snapshots` | intraday running totals — the app is this table's **first writer**, which turns on the intraday chart and the measured rolling-24h path |
+| `health_daily` | **The source of truth** — one row per day, plus the `extras` jsonb |
+| `hk_workouts` | Workouts + thinned GPS route (`[[lat, lon, unixSecs, altM], …]`) |
+| `health_energy_snapshots` | Intraday running totals — drives the intraday chart and the measured rolling-24h figure |
+| `health_sync_sessions` | One row per request, for debugging a stuck device |
+| `health_sync_anchors` | Server mirror of per-type `HKQueryAnchor`s — vestigial, see above |
+| `hk_quantity_samples`, `hk_category_samples` | Legacy raw-sample tables. No longer written |
 
-Daily aggregates are computed **on device** with `HKStatisticsCollectionQuery`, because
-only HealthKit deduplicates a watch and a phone counting the same steps. First sync
-backfills five years of `dailyTotals`; incremental syncs send a rolling 3 days.
+## Staying current
 
-## The app
+Three overlapping mechanisms, all funnelling into the same engine, all cheap when there
+is nothing new:
 
-`ios/HealthLogger` — SwiftUI, iOS 17+, generated with XcodeGen:
+1. HealthKit background delivery + `HKObserverQuery` — iOS wakes the app when samples
+   land (immediate for workouts and sleep, hourly for quantity types);
+2. `BGAppRefreshTask`, at iOS's discretion;
+3. a nightly `BGProcessingTask` catch-all — plus a sync on every app open.
+
+`SyncStore` makes this configurable: minimum interval between syncs (default 30
+minutes), sync on Health update, sync after a workout, and a daily sync at a chosen
+time. `maySyncInBackground(reason:now:)` is the single gate.
+
+## Authorization — two traps
+
+Both of these have shipped as bugs. Read `HANDOFF.md` §6.6.
+
+1. **A metric the user was never asked about throws `errorAuthorizationNotDetermined`.**
+   Under `withThrowingTaskGroup` a single such metric aborts the whole sync, so adding
+   new read types silently killed the ones that already worked. `statistics()` is
+   non-throwing and resolves to empty for exactly this reason. Keep it that way.
+2. **HealthKit never re-prompts on its own.** A build that reads more types than the
+   previous one must ask again, or the new metrics read empty forever.
+   `HealthKitCatalog.readTypesSignature` fingerprints the read set and
+   `AppStore.requestHealthAccessIfCatalogueGrew()` re-requests when it changes, before
+   the session's first sync.
+
+## Writing back to Health
+
+Opt-in, off by default, behind a single toggle in sync settings: `HealthWriter.swift`
+writes **logged food only** — calories and macros and micros — so other apps can read
+what you logged in Fuel. It never writes entries whose source is Health itself (that
+would loop), skips zero and nil values, and records a written id only after
+`store.save` succeeds. Choline is omitted because HealthKit has no type for it.
+
+Whether to extend write-back beyond food was never decided.
+
+## The Health Logger app
+
+`ios/HealthLogger` is a separate Xcode project that predates Fuel reading HealthKit
+itself. The app is vestigial, but **six of its source files are compiled into Fuel by
+relative path** (`SyncEngine.swift`, `HealthKitCatalog.swift`, `SyncStore.swift`,
+`SyncSink.swift`, `FuelAPI.swift`, `BackgroundSync.swift`) — genuinely shared, not
+copied.
+
+**A sync fix belongs in exactly one place.** After editing any of them, build both
+projects.
+
+It can still sync to any server implementing the protocol above (`SyncSink.swift` is the
+seam), or export the whole history to NDJSON — one replayable batch per line:
 
 ```bash
-cd ios/HealthLogger && xcodegen generate && open HealthLogger.xcodeproj
+while read -r line; do
+  curl -s -X POST "$ENDPOINT" -H 'content-type: application/json' -d "$line"
+done < health-export-*.ndjson
 ```
 
-- **Setup**: paste the token from Fuel → More → Sync setup (Keychain-stored), tap
-  Allow Health access, Sync now. One screen; there is nothing else to operate.
-- **Sync engine**: pages each type 5,000 samples at a time; uploads a page, then
-  commits its anchor — a crash re-uploads at most one page, which the server dedupes.
-- **Stays current all day** via three overlapping mechanisms, all funnelling into the
-  same engine (cheap when there is nothing new):
-  1. HealthKit background delivery + `HKObserverQuery` — iOS wakes the app when new
-     samples land (immediate for workouts/sleep, hourly for quantity types);
-  2. `BGAppRefreshTask` roughly every 30+ minutes, at iOS's discretion;
-  3. a nightly `BGProcessingTask` catch-all — plus a sync on every app open.
-- **Adding a type** = one line in `HealthKitCatalog.swift` (+ a backend column mapping
-  only if it should surface in `health_daily`). The protocol does not change.
+Export deliberately ignores the anchors in both directions: it always reads everything
+and never advances them, so exporting cannot make the app think Fuel received data that
+only went to a file.
 
-## Other destinations
+## Adding a metric
 
-The engine collects the same way regardless of where batches end up; only the sink
-differs (`Sources/SyncSink.swift`), so adding a destination is one small conformer.
+1. Add it to `SyncEngine.extraMetrics` — identifier, statistic option, unit.
+2. Add a line to `HealthExtras.all` — key, label, unit, which card it belongs on.
+3. Ship. It flows into `extras` with no server change and no migration.
 
-- **Fuel** (default) — pick *Fuel* in Destination, paste the token, done.
-- **Your own server** — pick *Custom server* and enter a URL. It must speak the
-  contract above: accept `POST` batches and, ideally, answer `GET` with
-  `{ anchors, maxSamplesPerRequest }` so reinstalls resume. The bearer token is
-  optional here; leave it empty for a server that authenticates some other way or
-  runs on a private network. The custom URL is remembered separately, so toggling
-  back to Fuel and out again doesn't lose it.
-- **A file** — *Export all Health data* writes the entire history to NDJSON and hands
-  it to the system share sheet (Files, AirDrop, Mail). One JSON batch per line, each
-  line byte-identical to what would have been POSTed, so an export is directly
-  replayable against any endpoint:
-
-  ```bash
-  while read -r line; do
-    curl -s -X POST "$ENDPOINT" -H 'content-type: application/json' -d "$line"
-  done < health-export-*.ndjson
-  ```
-
-  Export is deliberately isolated from sync: it always reads *everything* (ignoring the
-  anchors) and never advances them, so exporting can't make the app think Fuel received
-  data that only ever went to a file. Because it streams a line at a time, a decade of
-  samples never has to fit in memory.
-
-## Migration plan
-
-1. **Now** — both pipelines live. Shortcut writes `source='Apple Shortcuts'`, app
-   writes `source='Health Logger'`; COALESCE upserts mean they cannot clobber each
-   other's metrics on the same day.
-2. **Install** — build to your phone (Xcode, free personal team works), paste token,
-   run the first full sync on power + Wi-Fi.
-3. **Verify** — dashboard values match; `health_sync_sessions` shows steady syncs;
-   intraday chart starts drawing (it never could before).
-4. **Cut over** — delete the Shortcut's personal automation. Nothing server-side to
-   change.
-5. **Remove legacy** (when ready): delete `api/health/import.js`, `import-v2.js`,
-   `import-v3.js`, `api/_lib/health-import.js`, and the `/api/health/import-text`
-   rewrite. v2/v3 still write to the pre-Neon Google Sheet and are already dead weight.
-   `api/health/token.js` **stays** — the app uses the same token system.
-
-## Adding a data type later
-
-1. Add `(identifier, unit)` to `HealthKitCatalog.quantityTypes` (or `categoryTypes`).
-2. Ship the app update. Samples flow into `hk_quantity_samples` with no server change.
-3. Optionally map it into `health_daily`/`dailyTotals` if the dashboard should chart it.
+The read-set fingerprint changes automatically, so the app will re-request authorization
+on first launch of the new build.

@@ -1,117 +1,128 @@
 # Fuel
 
-Fuel is a personal athlete dashboard backed by one Google Sheet named `MLog` in the signed-in user's Google Drive root directory. The browser talks only to Vercel API routes; Google OAuth credentials, authorization codes, access tokens, refresh tokens, and token encryption keys must stay server-side.
+A personal nutrition and fitness dashboard. One person's food log, Apple Health data,
+blood results, body measurements and workouts, in one place, with an AI coach that runs
+on the phone.
 
-## Data Source
+**Fuel is an iOS app.** The website at `fuel.rishib.com` still runs and still serves the
+API the app depends on, but the web dashboard itself is **legacy and no longer
+maintained** — see [Repository layout](#repository-layout).
 
-`MLog` is the sole source of truth. On first sign-in, the app searches Drive root for a Google spreadsheet named `MLog`. If it is absent, the server creates it. If it already exists, the server preserves existing rows and only adds missing tabs or missing header columns.
+- **[`ios/Fuel/README.md`](ios/Fuel/README.md)** — the app: building, signing in, shipping.
+- **[`HEALTH_SYNC.md`](HEALTH_SYNC.md)** — how Apple Health data gets in.
+- **[`HANDOFF.md`](HANDOFF.md)** — how the codebase actually works, and every trap in it.
+  Read this before making changes.
 
-Required tabs:
+## What it does
 
-- `Food Log`
-- `Daily Summary`
-- `Recipes`
-- `Workout Activity`
-- `Energy Balance`
-- `Recovery`
-- `Goals`
-- `Dashboard`
+- **Logging opens the camera.** Photograph a meal; it is identified, estimated and
+  logged. Typing, a searchable library of past foods, and saved meals are all one tap
+  away.
+- **Apple Health, summarised.** Around fifty metrics a day — energy, heart, sleep
+  stages, respiratory, body, environmental, mobility — read directly from HealthKit,
+  with logged food optionally written back.
+- **A coach that runs on device.** Nutrition estimates, photo identification and chat
+  use Apple's `FoundationModels`. No key, no quota, no round trip; food photos never
+  leave the phone. Bring your own Claude, OpenAI or Gemini key instead if you prefer.
+- **Trends, comparisons and context.** Charts for everything, each vital graded against
+  published reference ranges for your age and sex rather than against a bare average.
+- **Blood panels.** Paste a lab report; it is parsed, stored, and each marker plotted on
+  its own reference range.
+- **Journeys.** Lifetime distance rendered as recognisable routes — Alcatraz crossings,
+  the Great Wall, the length of the Nile — and a spinnable globe showing your progress
+  around one lap of the planet.
+- **Home Screen widgets.** Sixteen of them, plus Lock Screen and Control Center
+  controls, themed from your palette.
 
-Blank or missing cells render as `Not logged`; they are not treated as zero.
+## Repository layout
 
-## Environment Variables
+| Path | What | State |
+|---|---|---|
+| `ios/Fuel` | The iOS app | **Active** — this is the product |
+| `ios/FuelWidgets` | Home Screen / Lock Screen widgets | Active, ships in the app |
+| `ios/HealthLogger` | Standalone HealthKit bridge | Vestigial — but Fuel shares six of its source files by path, so its sync code is live. See `HANDOFF.md` §5.2 |
+| `api/` | Vercel serverless API over Neon Postgres | **Active** — the app's backend |
+| `test/` | Test suite (`npm test`) | Active |
+| `src/`, `public/` | React + vanilla-JS web dashboard | **Legacy, unmaintained** |
 
-Set these in `.env.local` for local development and in Vercel Project Settings for production. Do not prefix them with `VITE_`.
+The web dashboard predates the app and has not kept up with it — it knows nothing about
+blood panels, journeys, body measurements, the sleep card or the newer Health metrics.
+It is left running because it costs nothing to leave running. Do not spend effort on it
+unless asked.
 
-```sh
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=https://fuel.rishib.com/api/auth/google/callback
-APP_URL=https://fuel.rishib.com
-SESSION_SECRET=
-TOKEN_ENCRYPTION_KEY=
+## Data
 
-# Automated Health.md imports
-HEALTH_IMPORT_TOKEN=
-MLOG_SPREADSHEET_ID=
-GOOGLE_SERVICE_ACCOUNT_JSON=
-# Alternative to GOOGLE_SERVICE_ACCOUNT_JSON:
-GOOGLE_REFRESH_TOKEN=
-```
+Neon Postgres, via `@neondatabase/serverless`, is the only store. An earlier design used
+a Google Sheet as the database; every path back to it has been removed.
 
-`SESSION_SECRET` should be a high-entropy random string. `TOKEN_ENCRYPTION_KEY` should be a 32-byte base64 or 64-character hex value. `HEALTH_IMPORT_TOKEN` should be a separate high-entropy random string used only by Health.md. Never commit `.env.local`, credential JSON, access tokens, refresh tokens, or client secrets.
-
-## Google OAuth Setup
-
-In the Google Cloud OAuth client, add this authorized redirect URI:
-
-```text
-https://fuel.rishib.com/api/auth/google/callback
-```
-
-For local auth testing, add a local callback and temporarily set `GOOGLE_REDIRECT_URI` to match it while running through `vercel dev`.
-
-The app requests:
-
-- `openid`
-- `email`
-- `profile`
-- Google Drive metadata read access to find `MLog`
-- Google Sheets access to read, create, and repair workbook structure
-
-## Automated Apple Health Import
-
-Fuel exposes a private ingestion route for Health.md:
-
-```text
-POST https://fuel.rishib.com/api/health/import
-Authorization: Bearer <HEALTH_IMPORT_TOKEN>
-Content-Type: application/json
-```
-
-The importer accepts an envelope containing one or more daily records, normalizes common Apple Health field names, and upserts the following MLog tabs by date:
-
-- `Health Daily`
-- `Recovery`
-- `Energy Balance`
-
-Existing manually entered calories, protein, scores, and notes in `Energy Balance` are preserved when the incoming health payload does not provide replacements. Current-day records are marked partial, and net energy balance remains blank until a completed day is available.
-
-For unattended writes, configure one of these server-side credential methods:
-
-1. `GOOGLE_SERVICE_ACCOUNT_JSON` (recommended). Share MLog with the service account's `client_email` as an editor.
-2. `GOOGLE_REFRESH_TOKEN`, together with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-
-Also set `MLOG_SPREADSHEET_ID` to the ID between `/d/` and `/edit` in the MLog URL. Enter the exact `HEALTH_IMPORT_TOKEN` value into Health.md's optional bearer-token field. The token must never be placed in frontend code or committed to GitHub.
-
-The endpoint intentionally returns `503` until the token, spreadsheet ID, and one unattended Google credential method are configured.
+All server routes dispatch through `api/mlog.js` on a `?fuel_route=<name>` query
+parameter. Some public paths are rewritten to it in `vercel.json`; the iOS app mostly
+calls it directly.
 
 ## Development
 
 ```sh
 npm install
-npm run dev
-npm run build
+npm test              # the whole suite, ~1s
+npm run dev           # the legacy web dashboard, if you need it
 ```
 
-Use `vercel dev` when testing the `/api` routes locally.
+For the app, see [`ios/Fuel/README.md`](ios/Fuel/README.md).
+
+Server deploys:
+
+```sh
+npx vercel deploy --prod --yes
+```
+
+## Environment
+
+Set in Vercel Project Settings for production, `.env.local` for local work. Never
+prefixed with `VITE_` — none of these may reach the browser.
+
+```sh
+NEW_FUEL_DATABASE_URL=         # Neon Postgres. Note the name — there is deliberately
+                               # no fallback to DATABASE_URL, because a fallback is how
+                               # an app silently finds a database nobody meant it to use
+SESSION_SECRET=                # high-entropy random string
+TOKEN_ENCRYPTION_KEY=          # 32-byte base64 or 64-char hex
+
+# Sign-in
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=https://fuel.rishib.com/api/auth/google/callback
+GOOGLE_IOS_CLIENT_ID=          # native iOS OAuth client (public by design, PKCE)
+APPLE_SERVICE_ID=              # Sign in with Apple, web flow only
+APPLE_BUNDLE_ID=
+APP_URL=https://fuel.rishib.com
+
+# AI (server-side, legacy web only — the app's AI is on-device or BYOK)
+GEMINI_API_KEY=                # or GOOGLE_API_KEY
+GEMINI_MODEL=                  # optional; overrides the fallback chain wholesale.
+                               # Per-feature overrides: GEMINI_MEAL_PLAN_MODEL,
+                               # GEMINI_FOOD_MODEL, GEMINI_QUICKLOG_MODEL,
+                               # GEMINI_RECIPE_MODEL
+```
+
+The `HEALTH_IMPORT_TOKEN`, `MLOG_SPREADSHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON` and
+`GOOGLE_REFRESH_TOKEN` variables belong to the retired Google Sheets importer. They are
+still referenced by dead legacy routes and are not needed.
+
+Never commit `.env.local`, credential JSON, tokens or client secrets.
 
 ## Production
 
-Production runs on Vercel at `fuel.rishib.com`. The domain should point to Vercel with a DNS-only CNAME:
+Vercel, at `fuel.rishib.com`, with a DNS-only CNAME to `cname.vercel-dns.com`. Redeploy
+after changing environment variables.
 
-```text
-fuel -> cname.vercel-dns.com
-```
+## Security notes
 
-The Vercel project must have the environment variables above configured for Production. Redeploy after changing environment variables.
-
-## Security Notes
-
-- OAuth state is validated with an HTTP-only cookie.
-- Google tokens are encrypted with `TOKEN_ENCRYPTION_KEY` and stored only in HTTP-only session storage.
-- The Health.md importer requires a constant-time-verified bearer token.
-- The importer does not log incoming health payload values.
-- Sign out clears the local session cookie.
-- Disconnect revokes the Google token and clears the local session cookie.
-- The frontend never receives Google credentials, authorization codes, access tokens, refresh tokens, client secrets, or credential JSON.
+- Google tokens are encrypted with `TOKEN_ENCRYPTION_KEY` and stored only in HTTP-only
+  session cookies; OAuth state is validated against an HTTP-only cookie.
+- The iOS app embeds no client secret. Native sign-in posts the provider's ID token to
+  `/api/auth/native`, which verifies it against the provider's JWKS — tested against
+  forged, tampered, expired and downgraded tokens in `test/native-auth.test.js`.
+- The Health sync endpoint authenticates with a bearer token minted in-app, verified in
+  constant time.
+- The frontend and the app never receive Google credentials, authorization codes,
+  refresh tokens or client secrets.
