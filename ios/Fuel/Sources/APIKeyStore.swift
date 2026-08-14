@@ -46,7 +46,10 @@ enum AIProvider: String, CaseIterable, Identifiable {
             ModelOption(modelID: "gpt-5.6-luna", label: "GPT-5.6 Luna — fastest"),
         ]
         case .gemini: return [
-            ModelOption(modelID: "gemini-2.5-pro", label: "Gemini 2.5 Pro — most capable"),
+            // Still a preview, and said so on the row: a preview model can change
+            // underneath you or go away on short notice, which is worth knowing before
+            // picking it over a stable one.
+            ModelOption(modelID: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (preview) — most capable"),
             ModelOption(modelID: "gemini-3.7-flash", label: "Gemini 3.7 Flash — balanced"),
             ModelOption(modelID: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite — fastest"),
         ]
