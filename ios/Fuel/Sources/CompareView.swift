@@ -166,7 +166,17 @@ struct CompareUserValues {
 struct CompareSection: View {
     @Environment(AppStore.self) private var store
     @Environment(\.colorScheme) private var scheme
-    @State private var sex: CompareSex = UserDefaults.standard.string(forKey: "fuelCompareSex") == "f" ? .female : .male
+    /// Local only until a sex is stored on the profile — see Preferences & context,
+    /// where it is set once. A stored value wins, so the comparison lands on the right
+    /// reference table without anyone having to remember this control exists.
+    @State private var manualSex: CompareSex = UserDefaults.standard.string(forKey: "fuelCompareSex") == "f" ? .female : .male
+    private var sex: CompareSex {
+        switch store.dashboard?.goalProfile?.sex {
+        case "f": return .female
+        case "m": return .male
+        default: return manualSex
+        }
+    }
     @State private var manualBand = 0
 
     private var trends: [DaySummary] { store.dashboard?.trends ?? [] }
@@ -210,13 +220,18 @@ struct CompareSection: View {
             Text("Your recent averages next to published norms for \(profileAge != nil ? "\(profileAge!)-year-olds" : "the \(compareAgeBands[bandIdx]) age group").")
                 .font(.system(size: 13)).foregroundStyle(Palette.muted(scheme))
             HStack(spacing: 10) {
-                Picker("Sex", selection: $sex) {
-                    Text("Male").tag(CompareSex.male)
-                    Text("Female").tag(CompareSex.female)
+                // Only when the profile has not answered it. Once a sex is stored in
+                // Preferences & context, the reference table follows that and this
+                // control has nothing left to decide.
+                if store.dashboard?.goalProfile?.sex == nil {
+                    Picker("Sex", selection: $manualSex) {
+                        Text("Male").tag(CompareSex.male)
+                        Text("Female").tag(CompareSex.female)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 200)
+                    .onChange(of: manualSex) { _, value in UserDefaults.standard.set(value.rawValue, forKey: "fuelCompareSex") }
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
-                .onChange(of: sex) { _, value in UserDefaults.standard.set(value.rawValue, forKey: "fuelCompareSex") }
                 if profileAge == nil {
                     Picker("Age group", selection: $manualBand) {
                         ForEach(Array(compareAgeBands.enumerated()), id: \.offset) { index, band in Text(band).tag(index) }

@@ -28,6 +28,10 @@ struct GoalProfile: Decodable {
     var heightIn: Double?
     var weightLb: Double?
     var age: Int?
+    /// "m" or "f", or nil when never stated — the published reference tables Compare
+    /// reads are split by it, so an unstated sex leaves the comparison unsplit rather
+    /// than guessed.
+    var sex: String?
     var objective: String?
 }
 
@@ -107,6 +111,32 @@ struct BloodPanel: Decodable, Identifiable {
     var createdAt: String?
 
     var outOfRange: [Marker] { markers.filter(\.isOutOfRange) }
+}
+
+/// One reading from a scale or a tape measure. Every field is optional because a
+/// bathroom scale gives one number and a fancy one gives eight.
+struct BodyMeasurement: Decodable, Identifiable {
+    var id: String
+    var recordedAt: String
+    var weightLb: Double?
+    var bodyFatPercent: Double?
+    var leanMassLb: Double?
+    var muscleMassLb: Double?
+    var boneMassLb: Double?
+    var bodyWaterPercent: Double?
+    var visceralFat: Double?
+    var waistIn: Double?
+    var chestIn: Double?
+    var hipIn: Double?
+    var notes: String?
+    var source: String?
+
+    /// Computed, never stored: BMI is weight and height arithmetic with no independent
+    /// content, and a stored copy can disagree with the numbers it came from.
+    func bmi(heightIn: Double?) -> Double? {
+        guard let weightLb, let heightIn, heightIn > 0 else { return nil }
+        return 703 * weightLb / (heightIn * heightIn)
+    }
 }
 
 /// Lifetime distance, in miles, across every day Fuel has on record.
@@ -421,6 +451,15 @@ struct GoalValues: Codable {
     /// 0 (the default) means off. See goals.js: a real default doesn't make sense for
     /// a floor most users shouldn't have applied at all.
     var restingCaloriesFloor: Double?
+
+    // The slowly-changing facts about a person, carried on the same PUT the goals use
+    // (goals.js reads them from the same body). They are not goals, but they live in
+    // the same row and are saved by the same call, so there is one write path rather
+    // than two that can disagree.
+    var heightIn: Double?
+    var weightLb: Double?
+    var age: Int?
+    var sex: String?
 }
 
 /// One editable past day, from ?fuel_route=daily-history.
@@ -673,6 +712,25 @@ struct FuelClient {
 
     func journeyTotals() async throws -> JourneyTotals {
         try JSONDecoder().decode(JourneyTotals.self, from: try await send(try request("/api/mlog?fuel_route=journeys")))
+    }
+
+    // MARK: - Body measurements
+
+    func bodyMeasurements(days: Int = 365) async throws -> [BodyMeasurement] {
+        struct Response: Decodable { var measurements: [BodyMeasurement] }
+        let data = try await send(try request("/api/mlog?fuel_route=body&days=\(days)"))
+        return try JSONDecoder().decode(Response.self, from: data).measurements
+    }
+
+    @discardableResult
+    func saveBodyMeasurement(_ fields: [String: Any]) async throws -> BodyMeasurement {
+        struct Response: Decodable { var measurement: BodyMeasurement }
+        let data = try await send(try request("/api/mlog?fuel_route=body", method: "POST", body: fields))
+        return try JSONDecoder().decode(Response.self, from: data).measurement
+    }
+
+    func deleteBodyMeasurement(id: String) async throws {
+        _ = try await send(try request("/api/mlog?fuel_route=body&id=\(id)", method: "DELETE"))
     }
 
     // MARK: - Blood panels

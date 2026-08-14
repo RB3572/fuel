@@ -102,6 +102,7 @@ struct CameraLogView: View {
     @State private var askingForContext = false
     /// The library photo being picked, cleared as soon as it is read.
     @State private var pickedPhoto: PhotosPickerItem?
+    @State private var showingBody = false
     /// The frame that was actually captured, held on screen from the moment the shutter
     /// fires until the log lands. Without it the preview keeps showing live video while
     /// the model reads a photo you can no longer see — so you cannot tell what was sent,
@@ -121,6 +122,7 @@ struct CameraLogView: View {
         .onAppear { camera.start() }
         .onDisappear { camera.stop() }
         .sheet(isPresented: $askingForContext) { contextSheet }
+        .sheet(isPresented: $showingBody) { NavigationStack { BodyView() } }
     }
 
     private var cameraScreen: some View {
@@ -143,6 +145,17 @@ struct CameraLogView: View {
 
             VStack {
                 HStack {
+                    // Logging that is not food: weight, body composition, tape measure.
+                    Menu {
+                        Button { showingBody = true } label: {
+                            Label("Log body weight & measurements", systemImage: "figure.stand")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 38, height: 38)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
                     Spacer()
                     Button {
                         typing = true
@@ -187,9 +200,15 @@ struct CameraLogView: View {
 
     private var shutterRow: some View {
         HStack(spacing: 34) {
-            // Symmetry placeholder so the shutter stays centred: as wide as the two
-            // accessory buttons and the gap between them, since both sit on the right.
-            Color.clear.frame(width: 52 * 2 + 34, height: 52)
+            // A photo you already have, mirroring the context shutter on the right so
+            // the shutter sits centred between the two.
+            PhotosPicker(selection: $pickedPhoto, matching: .images, photoLibrary: .shared()) {
+                ZStack {
+                    Circle().fill(Color.accentColorBlue).frame(width: 52, height: 52)
+                    Image(systemName: "photo.on.rectangle").foregroundStyle(.white)
+                }
+            }
+            .disabled(store.logging)
 
             Button {
                 camera.capture { data in
@@ -222,15 +241,6 @@ struct CameraLogView: View {
             }
             .disabled(camera.unavailable != nil || store.logging)
 
-            // A photo you already have. Lands in the same context sheet as the blue
-            // shutter, so a picked plate can carry the same note a captured one can.
-            PhotosPicker(selection: $pickedPhoto, matching: .images, photoLibrary: .shared()) {
-                ZStack {
-                    Circle().fill(Color.accentColorBlue).frame(width: 52, height: 52)
-                    Image(systemName: "photo.on.rectangle").foregroundStyle(.white)
-                }
-            }
-            .disabled(store.logging)
         }
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }

@@ -8,6 +8,7 @@ import { getDynamicClientMetadata, registerDynamicClient } from './_lib/mcp-dcr.
 import { getDayDetail, getNeonDashboard } from './_lib/neon-dashboard.js'
 import { getLearningSignals } from './_lib/learning.js'
 import { getJourneyTotals } from './_lib/journeys.js'
+import { createBodyMeasurement, deleteBodyMeasurement, listBodyMeasurements } from './_lib/body.js'
 import { createBloodPanel, deleteBloodPanel, listBloodPanels, updateBloodPanel } from './_lib/blood.js'
 import { getUserContext, saveUserContext } from './_lib/user-context.js'
 import { getDashboardLayout, saveDashboardLayout } from './_lib/dashboard-layout.js'
@@ -133,6 +134,10 @@ export default async function handler(req, res) {
   }
   if (integrationRoute === 'journeys') {
     await handleJourneys(req, res)
+    return
+  }
+  if (integrationRoute === 'body') {
+    await handleBody(req, res)
     return
   }
   if (integrationRoute === 'quicklog') {
@@ -832,6 +837,47 @@ async function handleJourneys(req, res) {
   } catch (error) {
     console.error('Journey totals request failed', error)
     sendJson(res, 500, { error: 'Unable to add up your distance.' })
+  }
+}
+
+/// Body measurements — see api/_lib/body.js. One row per reading, not per day: a smart
+/// scale can produce several in a morning and the spread between them is real.
+async function handleBody(req, res) {
+  if (!['GET', 'POST', 'DELETE'].includes(req.method)) {
+    methodNotAllowed(res, ['GET', 'POST', 'DELETE'])
+    return
+  }
+  res.setHeader('Cache-Control', 'no-store')
+  try {
+    const auth = await authenticatedUser(req)
+    if (!auth) {
+      sendJson(res, 401, { error: 'Sign in to see your measurements.' })
+      return
+    }
+    const cookies = auth.cookie ? [auth.cookie] : []
+
+    if (req.method === 'GET') {
+      const days = Number(new URL(req.url, appUrl()).searchParams.get('days')) || 365
+      sendJson(res, 200, { measurements: await listBodyMeasurements(auth.id, { days }) }, cookies)
+      return
+    }
+
+    if (req.method === 'DELETE') {
+      const id = new URL(req.url, appUrl()).searchParams.get('id')
+      if (!id) {
+        sendJson(res, 422, { error: 'A measurement id is required.' })
+        return
+      }
+      const removed = await deleteBodyMeasurement(auth.id, id)
+      sendJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: 'That measurement was not found.' }, cookies)
+      return
+    }
+
+    const measurement = await createBodyMeasurement(auth.id, unwrap(req.body))
+    sendJson(res, 201, { ok: true, measurement }, cookies)
+  } catch (error) {
+    console.error('Body measurement request failed', error)
+    sendJson(res, 400, { error: error instanceof Error ? error.message : 'Unable to save that measurement.' })
   }
 }
 

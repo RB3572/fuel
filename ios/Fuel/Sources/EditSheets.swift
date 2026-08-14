@@ -329,11 +329,35 @@ struct ContextEditorSheet: View {
     @State private var learning = false
     @State private var learnError: String?
 
+    // The slowly-changing facts, kept out of the free-text box on purpose: they are
+    // answered once and then left alone, they are read by the comparison tables rather
+    // than by the Coach's prose, and a number buried in a paragraph cannot be used to
+    // pick an age band.
+    @State private var heightIn = ""
+    @State private var weightLb = ""
+    @State private var age = ""
+    @State private var sex = ""
+
     private static let limit = 20000
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    numberRow("Height", unit: "in", text: $heightIn)
+                    numberRow("Weight", unit: "lb", text: $weightLb)
+                    numberRow("Age", unit: "years", text: $age)
+                    Picker("Sex", selection: $sex) {
+                        Text("Not set").tag("")
+                        Text("Male").tag("m")
+                        Text("Female").tag("f")
+                    }
+                } header: {
+                    Text("About you")
+                } footer: {
+                    Text("Set once and forget. These pick the reference group on Compare — published norms are split by age and sex, so without them the comparison is against everybody rather than against people like you.")
+                }
+
                 Section {
                     TextEditor(text: $text)
                         .frame(minHeight: 220)
@@ -376,14 +400,24 @@ struct ContextEditorSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        Task { saving = true; await store.saveContext(text); saving = false; dismiss() }
+                        Task {
+                            saving = true
+                            // Two stores behind one button: the free text is its own
+                            // field, the numbers ride on the goals row.
+                            await store.saveContext(text)
+                            await saveProfile()
+                            saving = false
+                            dismiss()
+                        }
                     }
                     .disabled(saving || !loaded)
                 }
             }
             .task {
                 if store.context.isEmpty { await store.loadContext() }
+                if store.goalValues.calories == nil { await store.loadGoals() }
                 text = store.context
+                loadProfile()
                 loaded = true
             }
         }
@@ -397,6 +431,38 @@ struct ContextEditorSheet: View {
         let block = ([header] + bullets.map { "- \($0)" }).joined(separator: "\n")
         text = text.isEmpty ? block : text + "\n\n" + block
         if text.count > Self.limit { text = String(text.prefix(Self.limit)) }
+    }
+
+    private func numberRow(_ label: String, unit: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            TextField("—", text: text)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 90)
+            Text(unit).font(.system(size: 13)).foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .leading)
+        }
+    }
+
+    /// Saved on the same PUT the goals use — see GoalValues, whose profile half these
+    /// fill in — so there is one write path rather than two that can disagree.
+    private func saveProfile() async {
+        var next = store.goalValues
+        next.heightIn = Double(heightIn)
+        next.weightLb = Double(weightLb)
+        next.age = Int(age)
+        next.sex = sex.isEmpty ? nil : sex
+        await store.saveGoals(next)
+    }
+
+    private func loadProfile() {
+        let profile = store.dashboard?.goalProfile
+        if heightIn.isEmpty, let value = profile?.heightIn { heightIn = String(format: "%g", value.rounded()) }
+        if weightLb.isEmpty, let value = profile?.weightLb { weightLb = String(format: "%g", value.rounded()) }
+        if age.isEmpty, let value = profile?.age { age = String(value) }
+        if sex.isEmpty { sex = profile?.sex ?? "" }
     }
 
     private static func dateStamp() -> String {

@@ -1641,11 +1641,8 @@ test('lifetime distance is put next to real journeys, with the equator as the ri
   assert.match(journeys, /let next = pool\.first \{ \$0\.miles > miles \}/)
 
   const view = read('../ios/Fuel/Sources/JourneysView.swift')
-  assert.match(view, /struct GlobeProgressRing: View/)
-  // Past one lap the ring stays full and a brighter arc tracks the lap in progress,
-  // so a bar that filled long ago keeps meaning something.
-  assert.match(view, /private var completedLaps: Int \{ Int\(fraction\) \}/)
-  assert.match(view, /completedLaps > 0 \? currentLap : fraction/)
+  // The drawn ring was replaced by a real globe — see the globe test below.
+  assert.match(view, /GlobeView\(fraction: laps, miles: selectedMiles\)/)
   // Deselecting everything would leave nothing to draw.
   assert.match(view, /if selected\.count > 1 \{ selected\.remove\(mode\) \}/)
   // Honest about walking and running arriving as one figure.
@@ -1691,6 +1688,110 @@ test('a photo can come from the camera roll, with the same chance to add context
   // A twelve-megapixel library photo is not what the camera path produces.
   assert.match(camera, /static func downscaled\(_ data: Data, maxDimension: CGFloat = 1280\)/)
   assert.match(camera, /jpegData\(compressionQuality: 0\.8\)/)
-  // The shutter stays centred with both accessory buttons on its right.
-  assert.match(camera, /Color\.clear\.frame\(width: 52 \* 2 \+ 34, height: 52\)/)
+  // Placement is asserted in its own test below.
+})
+
+test('the album button mirrors the context shutter on the other side of capture', () => {
+  const camera = read('../ios/Fuel/Sources/CameraLogView.swift')
+  const row = camera.slice(camera.indexOf('private var shutterRow'), camera.indexOf('static func downscaled'))
+  const pickerAt = row.indexOf('PhotosPicker')
+  const shutterAt = row.indexOf('Circle().stroke(.white, lineWidth: 4)')
+  const bubbleAt = row.indexOf('text.bubble.fill')
+  assert.ok(pickerAt > 0 && pickerAt < shutterAt && shutterAt < bubbleAt,
+    'album left, capture centre, context bubble right')
+  assert.doesNotMatch(row, /Color\.clear\.frame\(width: 52 \* 2/, 'no spacer needed once it is balanced')
+})
+
+test('the Coach transcript survives a relaunch, for a week', () => {
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /struct ChatMessage: Identifiable, Equatable, Codable/)
+  assert.match(store, /static let transcriptWindow: TimeInterval = 7 \* 24 \* 60 \* 60/)
+  assert.match(store, /var messages: \[ChatMessage\] = \[\] \{\s*\n\s*didSet \{ persistMessages\(\) \}/)
+  assert.match(store, /restoreMessages\(\)/)
+  // An unanswered proposal must not come back days later still awaiting a tap.
+  assert.match(store, /enum CodingKeys: String, CodingKey \{ case id, role, text, loggedFood, isPlan, at \}/)
+  // Photos are the bulk of a message and UserDefaults is the wrong place for them.
+  assert.match(store, /copy\.photo = nil/)
+})
+
+test('the constants live in their own fields, and Compare reads them', () => {
+  const sheets = read('../ios/Fuel/Sources/EditSheets.swift')
+  assert.match(sheets, /numberRow\("Height", unit: "in", text: \$heightIn\)/)
+  assert.match(sheets, /numberRow\("Weight", unit: "lb", text: \$weightLb\)/)
+  assert.match(sheets, /numberRow\("Age", unit: "years", text: \$age\)/)
+  assert.match(sheets, /Picker\("Sex", selection: \$sex\)/)
+  // Saved on the goals PUT, which already carries the profile half of that row.
+  assert.match(sheets, /private func saveProfile\(\) async/)
+  assert.match(read('../ios/Fuel/Sources/FuelClient.swift'), /var sex: String\?/)
+  assert.match(read('../api/_lib/goals.js'), /ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS sex text/)
+  assert.match(read('../api/_lib/goals.js'), /function normalizeSex/)
+
+  // Compare uses the stored answer when there is one, so the reference table is right
+  // without anyone remembering the segmented control exists.
+  const compare = read('../ios/Fuel/Sources/CompareView.swift')
+  assert.match(compare, /case "f": return \.female/)
+  assert.match(compare, /if store\.dashboard\?\.goalProfile\?\.sex == nil \{/)
+})
+
+test('body measurements are one row per reading, and BMI is never stored', () => {
+  const body = read('../api/_lib/body.js')
+  assert.match(body, /CREATE TABLE IF NOT EXISTS body_measurements/)
+  // No BMI column: it is height and weight arithmetic, and a stored copy is free to
+  // disagree with the two numbers it came from.
+  assert.doesNotMatch(body, /bmi\s+double precision/i)
+  assert.doesNotMatch(body, /body_mass_index/i)
+  // The same HealthKit sample arriving twice is one reading, not two.
+  assert.match(body, /CREATE UNIQUE INDEX IF NOT EXISTS body_measurements_hk/)
+  assert.match(body, /ON CONFLICT \(user_id, hk_uuid\) WHERE hk_uuid IS NOT NULL DO UPDATE/)
+  assert.match(body, /Enter at least one measurement\./)
+  for (const [, query] of body.matchAll(/(FROM body_measurements[\s\S]{0,140}?)(?:`|ORDER)/g)) {
+    assert.match(query, /user_id = \$\{userId\}/, `unscoped body_measurements query: ${query.trim()}`)
+  }
+
+  const client = read('../ios/Fuel/Sources/FuelClient.swift')
+  assert.match(client, /func bmi\(heightIn: Double\?\) -> Double\? \{/)
+  assert.match(client, /703 \* weightLb \/ \(heightIn \* heightIn\)/)
+  // Reachable from the Log screen's own menu, and able to pull what a scale already
+  // wrote to Health.
+  assert.match(read('../ios/Fuel/Sources/CameraLogView.swift'), /Label\("Log body weight & measurements", systemImage: "figure\.stand"\)/)
+  assert.match(read('../ios/Fuel/Sources/BodyView.swift'), /Label\("Import from Apple Health", systemImage: "heart\.fill"\)/)
+  const health = read('../ios/Fuel/Sources/HealthBody.swift')
+  assert.match(health, /\$0\.uuid\.uuidString/)
+  // A scale writes weight, fat and lean mass as separate samples in one burst.
+  assert.match(health, /abs\(\$0\.0\.timeIntervalSince\(date\)\) < 120/)
+})
+
+test('each journey draws its own route, traced once per lap, green through red', () => {
+  const art = read('../ios/Fuel/Sources/JourneyArt.swift')
+  assert.match(art, /struct JourneyRoute: Shape/)
+  for (const kind of ['crossing', 'trail', 'wall', 'river', 'loop', 'coast', 'road', 'equator']) {
+    assert.match(art, new RegExp(`case \\.${kind}:`), `${kind} needs its own drawing`)
+  }
+  // One stroke per lap, staggered, ramping green to red.
+  assert.match(art, /ForEach\(0\.\.<drawn, id: \\\.self\)/)
+  assert.match(art, /Color\(hue: 0\.33 \* \(1 - t\)/)
+  assert.match(art, /\.delay\(Double\(index\) \* 0\.16\)/)
+  // Nothing is drawn until the row is on screen, which is what makes it animate as you
+  // scroll past rather than arrive finished.
+  assert.match(art, /animate \? portion\(index\) : 0/)
+  assert.match(read('../ios/Fuel/Sources/JourneysView.swift'), /\.onScrollVisibilityChange \{ visible in if visible \{ shown = true \} \}/)
+  // The Great Wall gets a wall.
+  assert.match(read('../ios/Fuel/Sources/Journeys.swift'), /"The Great Wall of China"[\s\S]{0,200}shape: \.wall/)
+})
+
+test('the globe is the real Earth, starting where the person actually is', () => {
+  const globe = read('../ios/Fuel/Sources/GlobeView.swift')
+  assert.match(globe, /\.mapStyle\(\.imagery\(elevation: \.realistic\)\)/)
+  assert.match(globe, /interactionModes: \[\.pan, \.rotate, \.zoom\]/)
+  assert.match(globe, /\.clipShape\(Circle\(\)\)/)
+  // Most-lived-in place, then the current fix, then a named fallback — never 0°/0°,
+  // which is a point in the Atlantic and says nothing.
+  assert.match(globe, /store\.places\?\.places\.max\(by: \{ \$0\.samples < \$1\.samples \}\)/)
+  assert.match(globe, /LocationSampler\.shared\.fixForLogging\(\)/)
+  assert.match(globe, /static let fallbackName = "St\. Paul, Minnesota"/)
+  // And it says where it is looking.
+  assert.match(globe, /Label\("Centred on \\\(placeName\)", systemImage: "mappin\.and\.ellipse"\)/)
+  // MKReverseGeocodingRequest, since CLGeocoder is deprecated as of iOS 26.
+  assert.match(globe, /MKReverseGeocodingRequest\(location: location\)/)
+  assert.doesNotMatch(globe, /CLGeocoder\(\)/)
 })

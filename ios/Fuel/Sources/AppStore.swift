@@ -14,11 +14,14 @@ import CoreLocation
 // Sign-in is the website's own Google account, or Apple — verified server-side and
 // matched on the same email, so the app and the site are the same account.
 
-struct ChatMessage: Identifiable, Equatable {
-    enum Role: Equatable { case user, coach }
-    let id = UUID()
+struct ChatMessage: Identifiable, Equatable, Codable {
+    enum Role: String, Equatable, Codable { case user, coach }
+    var id = UUID()
     var role: Role
     var text: String
+    /// When it was said, so the transcript can be pruned to the last week rather than
+    /// growing without bound.
+    var at: Date = Date()
     /// Set when the message is a logged meal, so the transcript shows what went in.
     var loggedFood: String?
     var photo: Data?
@@ -26,8 +29,12 @@ struct ChatMessage: Identifiable, Equatable {
     /// drop the previous one when a new plan is built — only one is ever kept.
     var isPlan: Bool = false
     /// A change the Coach proposed and is waiting to be confirmed. Nothing is applied
-    /// until the person taps Confirm; cleared once they answer either way.
+    /// until the person taps Confirm; cleared once they answer either way. Deliberately
+    /// not persisted — see CodingKeys: an unanswered proposal restored days later would
+    /// be a mutation someone has long since forgotten agreeing to consider.
     var pendingAction: CoachAction?
+
+    enum CodingKeys: String, CodingKey { case id, role, text, loggedFood, isPlan, at }
 }
 
 @MainActor
@@ -47,9 +54,40 @@ final class AppStore {
     private(set) var syncsInFlight = 0
     var isSyncing: Bool { syncsInFlight > 0 }
 
-    /// The Coach transcript. Kept in memory for the session and replayed into the model
-    /// as conversation history, so follow-ups like "what about carbs?" make sense.
-    var messages: [ChatMessage] = []
+    /// The Coach transcript, replayed into the model as conversation history so
+    /// follow-ups like "what about carbs?" make sense — and now kept across launches,
+    /// because a conversation that vanishes when the app is backgrounded is not a
+    /// conversation. A week is the window: long enough that yesterday's thread is still
+    /// there, short enough that it stays a chat rather than an archive.
+    var messages: [ChatMessage] = [] {
+        didSet { persistMessages() }
+    }
+
+    private static let transcriptKey = "fuelCoachTranscript"
+    static let transcriptWindow: TimeInterval = 7 * 24 * 60 * 60
+
+    /// Photos are dropped on the way to disk. They are the bulk of a message by orders
+    /// of magnitude, UserDefaults is the wrong place for megabytes of JPEG, and the
+    /// entry they document is already in the diary.
+    private func persistMessages() {
+        let keep = messages.suffix(200).map { message -> ChatMessage in
+            var copy = message
+            copy.photo = nil
+            return copy
+        }
+        guard let data = try? JSONEncoder().encode(keep) else { return }
+        UserDefaults.standard.set(data, forKey: Self.transcriptKey)
+    }
+
+    private func restoreMessages() {
+        guard let data = UserDefaults.standard.data(forKey: Self.transcriptKey),
+              let stored = try? JSONDecoder().decode([ChatMessage].self, from: data) else { return }
+        let cutoff = Date().addingTimeInterval(-Self.transcriptWindow)
+        // Assigning re-persists via didSet, which is what should happen: anything that
+        // aged out of the window is dropped from disk at the same moment it is dropped
+        // from the transcript.
+        messages = stored.filter { $0.at >= cutoff }
+    }
     var coachThinking = false
 
     var logging = false
@@ -81,6 +119,7 @@ final class AppStore {
         baseURL = url
         auth = SignIn(baseURL: url)
         syncEndpointFromBase()
+        restoreMessages()
     }
 
     /// Keep the health-sync endpoint pointed at whatever server the app talks to, so
@@ -728,6 +767,78 @@ final class AppStore {
             progress(done, entries.count)
         }
         await load()
+    }
+
+    /// Places, for the globe's starting point. Separate from PlacesView's own load so
+    /// opening Journeys does not depend on having visited Places first.
+    func placesForGlobe() async throws -> PlaceHeatmap {
+        try await client().places(days: 90)
+    }
+
+    // MARK: - Body measurements
+
+    var bodyMeasurements: [BodyMeasurement] = []
+    var bodyLoading = false
+    var bodyError: String?
+
+    var latestWeightLb: Double? { bodyMeasurements.first { $0.weightLb != nil }?.weightLb }
+
+    func loadBodyMeasurements() async {
+        guard isSignedIn else { return }
+        bodyLoading = true
+        defer { bodyLoading = false }
+        do {
+            bodyMeasurements = try await client().bodyMeasurements()
+            bodyError = nil
+        } catch {
+            bodyError = "Couldn't load your measurements."
+        }
+    }
+
+    @discardableResult
+    func saveBodyMeasurement(_ fields: [String: Any]) async -> Bool {
+        do {
+            let saved = try await client().saveBodyMeasurement(fields)
+            bodyMeasurements.insert(saved, at: 0)
+            bodyError = nil
+            // Weight is also part of the profile the reference tables read, so the two
+            // do not drift apart: logging 172 lb here should not leave Compare using
+            // whatever was typed months ago.
+            if let weight = saved.weightLb {
+                var profile = goalValues
+                profile.weightLb = weight
+                await saveGoals(profile)
+            }
+            return true
+        } catch {
+            bodyError = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteBodyMeasurement(_ measurement: BodyMeasurement) async {
+        bodyMeasurements.removeAll { $0.id == measurement.id }
+        try? await client().deleteBodyMeasurement(id: measurement.id)
+    }
+
+    /// Reads body-composition samples straight out of HealthKit and files anything Fuel
+    /// has not seen. Keyed on the HealthKit sample UUID, so a scale that syncs to Health
+    /// and a manual entry never become two readings of the same weigh-in.
+    func importBodyMeasurementsFromHealth() async {
+        guard healthAuthorized else { return }
+        let samples = await HealthBody.recentSamples(days: 365)
+        guard !samples.isEmpty else { return }
+        let known = Set(bodyMeasurements.compactMap { $0.source })
+        _ = known
+        for sample in samples {
+            var fields: [String: Any] = ["recordedAt": ISO8601DateFormatter().string(from: sample.date),
+                                         "source": "Apple Health", "hkUuid": sample.id]
+            if let value = sample.weightLb { fields["weightLb"] = value }
+            if let value = sample.bodyFatPercent { fields["bodyFatPercent"] = value }
+            if let value = sample.leanMassLb { fields["leanMassLb"] = value }
+            _ = try? await client().saveBodyMeasurement(fields)
+        }
+        await loadBodyMeasurements()
     }
 
     // MARK: - Journeys

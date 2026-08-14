@@ -35,6 +35,7 @@ export async function ensureGoalsTable() {
       height_cm double precision,
       weight_kg double precision,
       age_years integer,
+      sex text,
       objective text,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
@@ -56,14 +57,22 @@ export async function getUserGoals(userId) {
   return normalizeRow(rows[0] || {}, reference)
 }
 
+/// Added after the table shipped, so existing rows need it backfilled in place.
+async function ensureSexColumn() {
+  const db = sql()
+  await db`ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS sex text`
+}
+
 export async function saveUserGoals(userId, input) {
   await ensureGoalsTable()
+  await ensureSexColumn()
   const current = await getUserGoals(userId)
   const goals = sanitizeGoals(input.goals || input, current)
   const profileInput = input.profile || input
   const heightIn = finite(profileInput.heightIn)
   const weightLb = finite(profileInput.weightLb)
   const age = integer(profileInput.age)
+  const sex = normalizeSex(profileInput.sex)
   const objective = normalizeObjective(profileInput.objective || objectiveFromPercent(goals.calorieBalancePercent))
   const heightCm = heightIn == null ? current.profile?.heightIn == null ? null : current.profile.heightIn * 2.54 : heightIn * 2.54
   const weightKg = weightLb == null ? current.profile?.weightLb == null ? null : current.profile.weightLb / 2.2046226218 : weightLb / 2.2046226218
@@ -76,11 +85,11 @@ export async function saveUserGoals(userId, input) {
     INSERT INTO user_goals (
       user_id, calories_kcal, calorie_balance_percent, protein_g, carbs_g, fat_g, fiber_g,
       move_kcal, exercise_minutes, stand_minutes, steps, sleep_hours, resting_calories_floor,
-      height_cm, weight_kg, age_years, objective, updated_at
+      height_cm, weight_kg, age_years, sex, objective, updated_at
     ) VALUES (
       ${userId}, ${calories}, ${goals.calorieBalancePercent}, ${goals.protein}, ${goals.carbs}, ${goals.fat}, ${goals.fiber},
       ${goals.move}, ${goals.exercise}, ${goals.stand}, ${goals.steps}, ${goals.sleepHours}, ${restingCaloriesFloor},
-      ${heightCm}, ${weightKg}, ${age}, ${objective}, now()
+      ${heightCm}, ${weightKg}, ${age}, ${sex}, ${objective}, now()
     )
     ON CONFLICT (user_id) DO UPDATE SET
       calories_kcal = EXCLUDED.calories_kcal,
@@ -98,6 +107,7 @@ export async function saveUserGoals(userId, input) {
       height_cm = COALESCE(EXCLUDED.height_cm, user_goals.height_cm),
       weight_kg = COALESCE(EXCLUDED.weight_kg, user_goals.weight_kg),
       age_years = COALESCE(EXCLUDED.age_years, user_goals.age_years),
+      sex = COALESCE(EXCLUDED.sex, user_goals.sex),
       objective = EXCLUDED.objective,
       updated_at = now()
   `
@@ -183,6 +193,7 @@ function normalizeRow(row, reference) {
       heightIn: finite(row.height_cm) == null ? null : finite(row.height_cm) / 2.54,
       weightLb: weightKg == null ? null : weightKg * 2.2046226218,
       age: integer(row.age_years),
+      sex: normalizeSex(row.sex),
       objective: normalizeObjective(row.objective || objectiveFromPercent(calorieBalancePercent)),
     },
     updatedAt: row.updated_at || null,
@@ -212,6 +223,15 @@ function normalizeObjective(value) {
 }
 function objectiveToPercent(value) { return value === 'deficit' ? -15 : value === 'gain' ? 10 : 0 }
 function objectiveFromPercent(value) { return value < 0 ? 'deficit' : value > 0 ? 'gain' : 'maintenance' }
+/// Only the two values the published reference tables are split by. Anything else is
+/// stored as null rather than guessed at, which simply leaves the comparison unsplit.
+function normalizeSex(value) {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (text === 'm' || text === 'male') return 'm'
+  if (text === 'f' || text === 'female') return 'f'
+  return null
+}
+
 function finite(value) {
   if (value == null || value === '') return null
   const number = Number(value)
