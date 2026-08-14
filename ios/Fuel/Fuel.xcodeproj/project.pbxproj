@@ -11,6 +11,7 @@
 		028DDE52F36882D6BEECDFEA /* FuelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */; };
 		05C1542808886A3D2E1DB567 /* FoodLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A404F3D7B76E95E6D46A27FA /* FoodLibraryView.swift */; };
 		0B84117794F57D86AB090829 /* BodyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B8E3FE9B36A4C0E33523725 /* BodyView.swift */; };
+		0D267EEA17260A133DE4FC84 /* JourneyMapCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9ABF1AD8907B6A046FD071E /* JourneyMapCard.swift */; };
 		0D6A4D54AC334FEC91E29321 /* FuelControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8AA4D96DE999C1F0E132F7A /* FuelControls.swift */; };
 		0E78A7674807633A3EBAE513 /* Journeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = D697A06D95F0EDFE0C6EBEBE /* Journeys.swift */; };
 		12239BAF7F793D39DE03D1CC /* SyncSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB1833EA7687ECA1C1CF14B0 /* SyncSink.swift */; };
@@ -31,6 +32,7 @@
 		51C02DF9C6A6E478C8A5274C /* RecipesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74A8D86E91141EA08C9D85FD /* RecipesView.swift */; };
 		5251364098C3A21B22FA0441 /* CompareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D026ABD99CA4B6658408B570 /* CompareView.swift */; };
 		533C89B52AA269C5C873AC7A /* JourneysView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2317CC200928A65F5D1466 /* JourneysView.swift */; };
+		54048B78A1EBD810DE339253 /* GlobeLandmarks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18DF00D79B37484CC87D6393 /* GlobeLandmarks.swift */; };
 		55A5DC93B5930CFD60DC26F0 /* SignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FC3C7B7D4B5951095EF487C /* SignIn.swift */; };
 		5BABDA2D6CB6F7469FEA2E49 /* FuelWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DDE47FA166225FB7AD5457DA /* FuelWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		5F552BA1607FF2EBC63F92BD /* JourneyArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0D4A448804A711EDAC2ACEA /* JourneyArt.swift */; };
@@ -96,6 +98,7 @@
 		07B4E4F9F82543B457C1A074 /* EditSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditSheets.swift; sourceTree = "<group>"; };
 		0B8E3FE9B36A4C0E33523725 /* BodyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyView.swift; sourceTree = "<group>"; };
 		10D2E139DFF93E43EC5B6FC7 /* HealthBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthBody.swift; sourceTree = "<group>"; };
+		18DF00D79B37484CC87D6393 /* GlobeLandmarks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobeLandmarks.swift; sourceTree = "<group>"; };
 		1CB474BBAB94D90CD56B09FE /* BloodMarkers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BloodMarkers.swift; sourceTree = "<group>"; };
 		1CEACC5A8135C313037AB184 /* ExploreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreView.swift; sourceTree = "<group>"; };
 		2214194DD516AEE8DA0B1003 /* EnergyWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnergyWidgets.swift; sourceTree = "<group>"; };
@@ -122,6 +125,7 @@
 		9BD75E91607669954578FEB5 /* VitalsSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalsSignal.swift; sourceTree = "<group>"; };
 		A05C90CCD49FC55CDB0417AA /* WidgetPieces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetPieces.swift; sourceTree = "<group>"; };
 		A404F3D7B76E95E6D46A27FA /* FoodLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodLibraryView.swift; sourceTree = "<group>"; };
+		A9ABF1AD8907B6A046FD071E /* JourneyMapCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneyMapCard.swift; sourceTree = "<group>"; };
 		AE8BBF80AB6D80821F0788BC /* PlacesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacesView.swift; sourceTree = "<group>"; };
 		AF99ACD80078A760548894DD /* GlobeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobeView.swift; sourceTree = "<group>"; };
 		B417868D2A54C8AC1695F522 /* VitalsDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalsDetailView.swift; sourceTree = "<group>"; };
@@ -202,12 +206,14 @@
 				A404F3D7B76E95E6D46A27FA /* FoodLibraryView.swift */,
 				F4744CCAB9649DB9D3DF1D4C /* FuelApp.swift */,
 				E97BDA97A18630C812B6EE9A /* FuelClient.swift */,
+				18DF00D79B37484CC87D6393 /* GlobeLandmarks.swift */,
 				AF99ACD80078A760548894DD /* GlobeView.swift */,
 				10D2E139DFF93E43EC5B6FC7 /* HealthBody.swift */,
 				301F16C9F607FE5663CD1203 /* HealthExtras.swift */,
 				F78E7EFDE445E271AF985D94 /* HealthWriter.swift */,
 				D342D2499D35901C835BC5C7 /* HorizontalPan.swift */,
 				E0D4A448804A711EDAC2ACEA /* JourneyArt.swift */,
+				A9ABF1AD8907B6A046FD071E /* JourneyMapCard.swift */,
 				D697A06D95F0EDFE0C6EBEBE /* Journeys.swift */,
 				3B2317CC200928A65F5D1466 /* JourneysView.swift */,
 				F0ACD7889A0B189EB6BB06B1 /* LiftingView.swift */,
@@ -394,6 +400,7 @@
 				028DDE52F36882D6BEECDFEA /* FuelApp.swift in Sources */,
 				F948E38B03D9AC4378588BE2 /* FuelClient.swift in Sources */,
 				655E648EBCC9741577616E96 /* FuelControlIntents.swift in Sources */,
+				54048B78A1EBD810DE339253 /* GlobeLandmarks.swift in Sources */,
 				1ECE5854844A81E8D69D4B8A /* GlobeView.swift in Sources */,
 				4E36B7835763184D6B819C04 /* HealthBody.swift in Sources */,
 				432AEB404735B12154B7D72F /* HealthExtras.swift in Sources */,
@@ -401,6 +408,7 @@
 				403D075F8DFE6FA5428CB175 /* HealthWriter.swift in Sources */,
 				72DB991792B8E0387A08A247 /* HorizontalPan.swift in Sources */,
 				5F552BA1607FF2EBC63F92BD /* JourneyArt.swift in Sources */,
+				0D267EEA17260A133DE4FC84 /* JourneyMapCard.swift in Sources */,
 				0E78A7674807633A3EBAE513 /* Journeys.swift in Sources */,
 				533C89B52AA269C5C873AC7A /* JourneysView.swift in Sources */,
 				7DE5EFE41422522226BCEFB0 /* LiftingView.swift in Sources */,
@@ -513,7 +521,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -601,7 +609,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;
@@ -624,7 +632,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ../FuelWidgets/FuelWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = ../FuelWidgets/Info.plist;
@@ -649,7 +657,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/Fuel.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 9VVDB6UALA;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_FILE = Resources/Info.plist;

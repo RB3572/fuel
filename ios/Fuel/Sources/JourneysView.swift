@@ -114,25 +114,18 @@ struct JourneysView: View {
 
     // MARK: - What that distance is
 
+    /// One card per journey — the route where it actually is, nearest goal first, then
+    /// everything already covered, longest first.
     @ViewBuilder
     private var comparisons: some View {
         let found = Journeys.relevant(miles: selectedMiles, modes: selected)
         if let next = found.next {
-            Panel(title: "Next up") {
-                JourneyProgressRow(journey: next, miles: selectedMiles)
-            }
+            JourneyMapCard(journey: next, laps: min(1, selectedMiles / next.miles), milesCovered: selectedMiles)
         }
-        if !found.completed.isEmpty {
-            Panel(title: "Distances you have already covered") {
-                VStack(spacing: 0) {
-                    ForEach(Array(found.completed.enumerated()), id: \.element.id) { index, journey in
-                        JourneyDoneRow(journey: journey, miles: selectedMiles)
-                        if index < found.completed.count - 1 {
-                            Divider().opacity(0.4).padding(.vertical, 9)
-                        }
-                    }
-                }
-            }
+        ForEach(found.completed) { journey in
+            JourneyMapCard(journey: journey,
+                           laps: journey.miles > 0 ? selectedMiles / journey.miles : 0,
+                           milesCovered: selectedMiles)
         }
     }
 
@@ -146,84 +139,6 @@ struct JourneysView: View {
             }
             .font(.system(size: 12))
             .foregroundStyle(Palette.muted(scheme))
-        }
-    }
-}
-
-/// A journey still ahead: how far along it you are.
-struct JourneyProgressRow: View {
-    @Environment(\.colorScheme) private var scheme
-    let journey: Journey
-    let miles: Double
-    @State private var shown = false
-
-    private var progress: Double { min(1, miles / journey.miles) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            JourneyArtwork(journey: journey, laps: progress, animate: shown)
-                .onScrollVisibilityChange { visible in if visible { shown = true } }
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(journey.name).font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Palette.ink(scheme))
-                    Text(journey.detail).font(.system(size: 12)).foregroundStyle(Palette.muted(scheme))
-                }
-                Spacer()
-                Text("\(Int(progress * 100))%")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(DashboardTheme.shared.accent)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Palette.surface(scheme))
-                    Capsule().fill(DashboardTheme.shared.accent)
-                        .frame(width: max(3, geo.size.width * progress))
-                }
-            }
-            .frame(height: 8)
-            Text("\(Format.number(journey.miles - miles)) miles to go · \(journey.source)")
-                .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
-        }
-    }
-}
-
-/// A journey already covered, and how many times over.
-struct JourneyDoneRow: View {
-    @Environment(\.colorScheme) private var scheme
-    let journey: Journey
-    let miles: Double
-    @State private var shown = false
-
-    private var times: Double { journey.miles > 0 ? miles / journey.miles : 0 }
-
-    /// "3 times over" reads better than "3.0×", and "1.4 times" better than "1×" when
-    /// the extra four tenths is most of another crossing.
-    private var timesText: String {
-        if times >= 10 { return "\(Int(times.rounded(.down)))× over" }
-        if times >= 2 { return String(format: "%.1f× over", times) }
-        return "done"
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(journey.name).font(.system(size: 14)).foregroundStyle(Palette.ink(scheme))
-                    Text("\(journey.detail) · \(Format.number(journey.miles)) mi")
-                        .font(.system(size: 11)).foregroundStyle(Palette.muted(scheme))
-                }
-                Spacer()
-                Text(timesText)
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 9).padding(.vertical, 4)
-                    .background(Capsule().fill(DashboardTheme.shared.accent.opacity(0.15)))
-                    .foregroundStyle(DashboardTheme.shared.accent)
-            }
-            // Drawn once the row actually comes into view, so the laps trace themselves
-            // as you scroll rather than being finished before you arrive.
-            JourneyArtwork(journey: journey, laps: times, animate: shown)
-                .onScrollVisibilityChange { visible in if visible { shown = true } }
         }
     }
 }

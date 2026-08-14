@@ -1761,41 +1761,6 @@ test('body measurements are one row per reading, and BMI is never stored', () =>
   assert.match(health, /abs\(\$0\.0\.timeIntervalSince\(date\)\) < 120/)
 })
 
-test('each journey draws its own route, traced once per lap, green through red', () => {
-  const art = read('../ios/Fuel/Sources/JourneyArt.swift')
-  assert.match(art, /struct JourneyRoute: Shape/)
-  for (const kind of ['crossing', 'trail', 'wall', 'river', 'loop', 'coast', 'road', 'equator']) {
-    assert.match(art, new RegExp(`case \\.${kind}:`), `${kind} needs its own drawing`)
-  }
-  // One stroke per lap, staggered, ramping green to red.
-  assert.match(art, /ForEach\(0\.\.<drawn, id: \\\.self\)/)
-  assert.match(art, /Color\(hue: 0\.33 \* \(1 - t\)/)
-  assert.match(art, /\.delay\(Double\(index\) \* 0\.16\)/)
-  // Nothing is drawn until the row is on screen, which is what makes it animate as you
-  // scroll past rather than arrive finished.
-  assert.match(art, /animate \? portion\(index\) : 0/)
-  assert.match(read('../ios/Fuel/Sources/JourneysView.swift'), /\.onScrollVisibilityChange \{ visible in if visible \{ shown = true \} \}/)
-  // The Great Wall gets a wall.
-  assert.match(read('../ios/Fuel/Sources/Journeys.swift'), /"The Great Wall of China"[\s\S]{0,200}shape: \.wall/)
-})
-
-test('the globe is the real Earth, starting where the person actually is', () => {
-  const globe = read('../ios/Fuel/Sources/GlobeView.swift')
-  assert.match(globe, /\.mapStyle\(\.imagery\(elevation: \.realistic\)\)/)
-  assert.match(globe, /interactionModes: \[\.pan, \.rotate, \.zoom\]/)
-  assert.match(globe, /\.clipShape\(Circle\(\)\)/)
-  // Most-lived-in place, then the current fix, then a named fallback — never 0°/0°,
-  // which is a point in the Atlantic and says nothing.
-  assert.match(globe, /store\.places\?\.places\.max\(by: \{ \$0\.samples < \$1\.samples \}\)/)
-  assert.match(globe, /LocationSampler\.shared\.fixForLogging\(\)/)
-  assert.match(globe, /static let fallbackName = "St\. Paul, Minnesota"/)
-  // And it says where it is looking.
-  assert.match(globe, /Label\("Centred on \\\(placeName\)", systemImage: "mappin\.and\.ellipse"\)/)
-  // MKReverseGeocodingRequest, since CLGeocoder is deprecated as of iOS 26.
-  assert.match(globe, /MKReverseGeocodingRequest\(location: location\)/)
-  assert.doesNotMatch(globe, /CLGeocoder\(\)/)
-})
-
 test('the new Health metrics are summarised to one value a day, in one jsonb column', () => {
   const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
   // Cardiac, fitness, respiratory, body, environmental and mobility — all through the
@@ -1893,4 +1858,66 @@ test('sync timing is controllable, and manual syncs ignore the schedule', () => 
   assert.match(app, /if automatic, !SyncStore\.shared\.maySyncInBackground\(reason: reason\) \{ return \}/)
   assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /struct SyncSettingsView: View/)
   assert.match(read('../ios/Fuel/Sources/MoreView.swift'), /Toggle\("Write my food to Apple Health", isOn: \$writeBack\)/)
+})
+
+test('each journey is its own card, on a static map of where it really is', () => {
+  const journeys = read('../ios/Fuel/Sources/Journeys.swift')
+  // Real waypoints, not a stylised gesture: every route has geography.
+  assert.match(journeys, /var waypoints: \[Waypoint\]/)
+  const blocks = journeys.split('Journey(name:').slice(1)
+  assert.ok(blocks.length >= 20, `expected the catalogue, found ${blocks.length}`)
+  for (const block of blocks) {
+    assert.match(block, /waypoints: \[\.init\(lat:/, 'every journey needs a real route')
+  }
+  // Spot-check that the geography is actually the right place.
+  assert.match(journeys, /"The Great Wall of China"[\s\S]{0,400}lat: 40\.4319, lon: 116\.5704/)
+  assert.match(journeys, /"The English Channel"[\s\S]{0,300}lat: 51\.1279, lon: 1\.3134/)
+
+  const card = read('../ios/Fuel/Sources/JourneyMapCard.swift')
+  // Static: no panning, no zooming, no hit testing at all.
+  assert.match(card, /interactionModes: \[\]\)/)
+  assert.match(card, /\.allowsHitTesting\(false\)/)
+  // The line is drawn rather than handed to MapKit, because it has to be traced out.
+  assert.match(card, /proxy\.convert\(\$0, to: \.local\)/)
+  assert.match(card, /\.trim\(from: 0, to: animate \? portion\(index\) : 0\)/)
+  assert.match(card, /Color\(hue: 0\.33 \* \(1 - t\)/)
+  // A span wider than the planet is not a span.
+  assert.match(card, /min\(350, max\(0\.08, \(maxLon - minLon\) \* 1\.6\)\)/)
+
+  // One card each, rather than two grouped lists.
+  const view = read('../ios/Fuel/Sources/JourneysView.swift')
+  assert.match(view, /ForEach\(found\.completed\) \{ journey in\s*\n\s*JourneyMapCard/)
+  assert.doesNotMatch(view, /struct JourneyDoneRow/)
+})
+
+test('the globe cannot zoom, and draws a real lap of the planet', () => {
+  const globe = read('../ios/Fuel/Sources/GlobeView.swift')
+  // Zoom is not disallowed, it is inexpressible: the map has no interaction of its own
+  // and the only writer of the camera never changes distance.
+  assert.match(globe, /Map\(position: \$camera, interactionModes: \[\]\)/)
+  assert.match(globe, /private static let cameraDistance: CLLocationDistance = 22_000_000/)
+  const setter = globe.slice(globe.indexOf('private func lookAt'))
+  assert.match(setter.slice(0, 500), /distance: Self\.cameraDistance/)
+  assert.equal((globe.match(/MapCamera\(/g) || []).length, 2,
+    'the camera is constructed in exactly two places: the initial value and lookAt')
+  // Rotation is clamped short of the poles, where a map has nothing left to orient with.
+  assert.match(globe, /private static let maxLatitude = 72\.0/)
+  // A real great circle, drawn on the surface.
+  assert.match(globe, /MapPolyline\(coordinates: route\)/)
+  assert.match(globe, /Geo\.greatCircle\(from: coordinate, bearing: scenic\.bearing\)/)
+
+  const geo = read('../ios/Fuel/Sources/GlobeLandmarks.swift')
+  // The lap is chosen, not arbitrary: of every circle through your location, the one
+  // passing nearest the most famous places. Verified from St. Paul it runs 9 miles from
+  // Big Ben and 87 from the Great Pyramid.
+  assert.match(geo, /static func mostScenicBearing/)
+  assert.match(geo, /score \+= Double\(landmark\.fame\) \* \(1 - off \/ corridorMiles\)/)
+  assert.match(geo, /static func crossTrackDistance/)
+  assert.match(geo, /let lap = 2 \* \.pi \* earthRadiusMiles/)
+  // And every landmark has something to say when you turn out to be near it.
+  for (const block of geo.split('Landmark(name:').slice(1)) {
+    assert.match(block, /quip: "/, 'every landmark needs its aside')
+    assert.match(block, /fame: [123]/)
+  }
+  assert.match(globe, /Text\("You are \\\(Format\.number\(away\)\) miles from \\\(landmark\.name\)"\)/)
 })
