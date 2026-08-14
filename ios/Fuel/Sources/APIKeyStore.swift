@@ -47,7 +47,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
         ]
         case .gemini: return [
             ModelOption(modelID: "gemini-2.5-pro", label: "Gemini 2.5 Pro — most capable"),
-            ModelOption(modelID: "gemini-3.6-flash", label: "Gemini 3.6 Flash — balanced"),
+            ModelOption(modelID: "gemini-3.7-flash", label: "Gemini 3.7 Flash — balanced"),
             ModelOption(modelID: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite — fastest"),
         ]
         }
