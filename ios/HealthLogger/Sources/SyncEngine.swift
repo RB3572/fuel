@@ -289,13 +289,13 @@ final class SyncEngine {
             for metric in metrics {
                 group.addTask {
                     .series(key: metric.key,
-                            values: try await self.statistics(metric.id, metric.options, metric.unit, from: start))
+                            values: await self.statistics(metric.id, metric.options, metric.unit, from: start))
                 }
             }
             for metric in extraMetrics {
                 group.addTask {
                     .series(key: metric.key,
-                            values: try await self.statistics(metric.id, metric.options, metric.unit, from: start))
+                            values: await self.statistics(metric.id, metric.options, metric.unit, from: start))
                 }
             }
             group.addTask {
@@ -391,11 +391,11 @@ final class SyncEngine {
         _ options: HKStatisticsOptions,
         _ unit: HKUnit,
         from start: Date
-    ) async throws -> [Date: Double] {
+    ) async -> [Date: Double] {
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { return [:] }
         let calendar = Calendar.current
         let anchorDate = calendar.startOfDay(for: start)
-        return try await withCheckedThrowingContinuation { continuation in
+        return await withCheckedContinuation { continuation in
             let query = HKStatisticsCollectionQuery(
                 quantityType: type,
                 quantitySamplePredicate: HKQuery.predicateForSamples(withStart: start, end: nil),
@@ -404,7 +404,14 @@ final class SyncEngine {
                 intervalComponents: DateComponents(day: 1)
             )
             query.initialResultsHandler = { _, collection, error in
-                if let error { continuation.resume(throwing: error); return }
+                // A metric the person has not been asked about answers
+                // errorAuthorizationNotDetermined, and a metric no device on this account
+                // records answers nothing useful either. Neither is a reason to fail the
+                // sync: one unread type used to abort the whole task group, so adding
+                // thirty-five new metrics turned every sync into "Authorization not
+                // determined" and stopped the eighteen that did work from arriving. An
+                // unreadable metric is simply absent from the day.
+                if error != nil { continuation.resume(returning: [:]); return }
                 var byDay: [Date: Double] = [:]
                 collection?.enumerateStatistics(from: start, to: Date()) { stats, _ in
                     let quantity = options.contains(.cumulativeSum) ? stats.sumQuantity() : stats.averageQuantity()
@@ -529,7 +536,7 @@ final class SyncEngine {
         let start = calendar.startOfDay(for: Date())
         async let active = statistics(.activeEnergyBurned, .cumulativeSum, .kilocalorie(), from: start)
         async let resting = statistics(.basalEnergyBurned, .cumulativeSum, .kilocalorie(), from: start)
-        let (activeByDay, restingByDay) = try await (active, resting)
+        let (activeByDay, restingByDay) = await (active, resting)
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         let activeToday = activeByDay[start]

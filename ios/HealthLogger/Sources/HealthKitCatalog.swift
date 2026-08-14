@@ -73,6 +73,16 @@ enum HealthKitCatalog {
 
     static var readTypes: Set<HKObjectType> { Set(allSampleTypes) }
 
+    /// A stable fingerprint of what this build asks to read. Stored after a successful
+    /// authorization request so a later build that added types knows to ask again:
+    /// HealthKit never volunteers a prompt for a type it has not been asked about, and a
+    /// type nobody was asked about simply reads as nothing forever.
+    static var readTypesSignature: String {
+        let names = allSampleTypes.map(\.identifier).sorted()
+        let checksum = names.joined().unicodeScalars.reduce(0) { ($0 &* 31 &+ UInt32($1.value)) & 0xFFFFFF }
+        return "\(names.count)-\(checksum)"
+    }
+
     static func unit(for identifier: HKQuantityTypeIdentifier) -> HKUnit {
         quantityTypes.first { $0.0 == identifier }?.1 ?? .count()
     }

@@ -57,6 +57,9 @@ final class SyncStore: ObservableObject {
     @Published var dailySyncMinute: Int { didSet { defaults.set(dailySyncMinute, forKey: "dailySyncMinute") } }
     /// When the last background sync actually ran, for the interval check.
     @Published var lastBackgroundSyncAt: Date? { didSet { defaults.set(lastBackgroundSyncAt, forKey: "lastBackgroundSyncAt") } }
+    /// The set of Health types this device has actually been asked about. Compared with
+    /// HealthKitCatalog.readTypesSignature so a build that added metrics asks again.
+    @Published var authorizedTypesSignature: String { didSet { defaults.set(authorizedTypesSignature, forKey: "authorizedTypesSignature") } }
 
     /// Whether a background sync may run now. Anything the person did by hand — opening
     /// the app, pulling to refresh — bypasses this entirely; it only governs the
@@ -110,6 +113,7 @@ final class SyncStore: ObservableObject {
         dailySyncEnabled = defaults.object(forKey: "dailySyncEnabled") as? Bool ?? false
         dailySyncMinute = defaults.object(forKey: "dailySyncMinute") as? Int ?? 7 * 60
         lastBackgroundSyncAt = defaults.object(forKey: "lastBackgroundSyncAt") as? Date
+        authorizedTypesSignature = defaults.string(forKey: "authorizedTypesSignature") ?? ""
     }
 
     /// Fuel needs a token; a self-hosted destination only needs somewhere to send to.

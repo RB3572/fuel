@@ -2008,3 +2008,29 @@ test('a route that wraps the planet is drawn on a flat world, not a map view', (
   // And it must not draw a stripe back across the map when it crosses the date line.
   assert.match(sphere, /abs\(coordinate\.longitude - previousLon\) > 180/)
 })
+
+test('a metric nobody was asked about does not take the whole sync down with it', () => {
+  const engine = read('../ios/HealthLogger/Sources/SyncEngine.swift')
+  // This is what "Authorization not determined" was: thirty-five metrics were added,
+  // HealthKit answers errorAuthorizationNotDetermined for a type it has never asked
+  // about, and one throwing query aborted the whole task group — so the eighteen
+  // metrics that did work stopped arriving too.
+  assert.match(engine, /if error != nil \{ continuation\.resume\(returning: \[:\]\); return \}/)
+  assert.doesNotMatch(engine, /continuation\.resume\(throwing: error\); return \}\s*\n\s*var byDay/)
+  // No longer throwing, so no call site can propagate a single unreadable metric.
+  assert.match(engine, /from start: Date\s*\n\s*\) async -> \[Date: Double\] \{/)
+  assert.match(engine, /return await withCheckedContinuation \{ continuation in/)
+
+  // And the new types are actually asked for: HealthKit never volunteers a prompt, so a
+  // build that reads more than the last one has to request again or read nothing.
+  const catalogue = read('../ios/HealthLogger/Sources/HealthKitCatalog.swift')
+  assert.match(catalogue, /static var readTypesSignature: String/)
+  const store = read('../ios/Fuel/Sources/AppStore.swift')
+  assert.match(store, /func requestHealthAccessIfCatalogueGrew\(\) async/)
+  assert.match(store, /guard SyncStore\.shared\.authorizedTypesSignature != current else \{ return \}/)
+  // Before the session's first sync, so the metrics are readable by the time it runs.
+  const app = read('../ios/Fuel/Sources/FuelApp.swift')
+  const task = app.slice(app.indexOf('.task {'), app.indexOf('.onChange(of: scenePhase)'))
+  assert.ok(task.indexOf('requestHealthAccessIfCatalogueGrew') < task.indexOf('syncHealth(reason: "app open")'),
+    'permission for the new types must be settled before the first sync')
+})

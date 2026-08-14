@@ -1062,6 +1062,7 @@ final class AppStore {
     func requestHealthAccess() async {
         do {
             try await SyncEngine.shared.requestAuthorization()
+            SyncStore.shared.authorizedTypesSignature = HealthKitCatalog.readTypesSignature
             healthAuthorized = true
             UserDefaults.standard.set(true, forKey: "hkAuthorized")
             await BackgroundSync.enableHealthKitDelivery()
@@ -1069,6 +1070,18 @@ final class AppStore {
         } catch {
             self.error = "Health access failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Asks again when this build reads more than the last one did. HealthKit shows the
+    /// sheet only for types it has never been asked about, so for anyone already set up
+    /// this is either silent or a single short prompt listing exactly what is new — and
+    /// without it the metrics added in this build would read as empty forever.
+    func requestHealthAccessIfCatalogueGrew() async {
+        guard healthAuthorized else { return }
+        let current = HealthKitCatalog.readTypesSignature
+        guard SyncStore.shared.authorizedTypesSignature != current else { return }
+        try? await SyncEngine.shared.requestAuthorization()
+        SyncStore.shared.authorizedTypesSignature = current
     }
 
     func syncHealth(reason: String) async {

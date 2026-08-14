@@ -37,7 +37,12 @@ struct FuelApp: App {
                     // — not only once the library sheet has been opened.
                     async let library: Void = store.loadLibrary()
                     _ = await (dashboard, editable, context, library)
-                    if store.healthAuthorized { await BackgroundSync.enableHealthKitDelivery() }
+                    if store.healthAuthorized {
+                        // Before the first sync of the session, so metrics added in this
+                        // build are readable by the time it runs.
+                        await store.requestHealthAccessIfCatalogueGrew()
+                        await BackgroundSync.enableHealthKitDelivery()
+                    }
                     await store.syncHealth(reason: "app open")
                     await LocationSampler.shared.captureIfDue()
                 }
