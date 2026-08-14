@@ -65,7 +65,7 @@ struct GlobeView: View {
                         .overlay(Circle().stroke(.white, lineWidth: 2.5))
                 }
             }
-            ForEach(passes) { landmark in
+            ForEach(passes.prefix(8)) { landmark in
                 Annotation("", coordinate: landmark.coordinate) {
                     Circle().fill(.white)
                         .frame(width: 7, height: 7)
@@ -73,7 +73,10 @@ struct GlobeView: View {
                 }
             }
         }
-        .mapStyle(.imagery(elevation: .flat))
+        // Standard, not satellite. Imagery at this distance is a lot of tiles to
+        // resample on every frame of a drag, and the drag re-renders the whole map — it
+        // was the difference between a globe that spins and one that steps.
+        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
         .mapControlVisibility(.hidden)
         .clipShape(Circle())
         .overlay(Circle().stroke(Palette.border(scheme), lineWidth: 1))
@@ -156,7 +159,9 @@ struct GlobeView: View {
         origin = coordinate
         originName = name
         let scenic = Geo.mostScenicBearing(from: coordinate)
-        route = Geo.greatCircle(from: coordinate, bearing: scenic.bearing)
+        // 96 segments is smooth at this size and two-fifths the geometry of 180 —
+        // the polyline is re-projected on every frame the globe turns.
+        route = Geo.greatCircle(from: coordinate, bearing: scenic.bearing, steps: 96)
         passes = scenic.passes
         lookAt(CLLocationCoordinate2D(latitude: min(Self.maxLatitude, max(-Self.maxLatitude, coordinate.latitude)),
                                       longitude: coordinate.longitude))

@@ -1879,11 +1879,18 @@ test('each journey is its own card, on a static map of where it really is', () =
   assert.match(card, /interactionModes: \[\]\)/)
   assert.match(card, /\.allowsHitTesting\(false\)/)
   // The line is drawn rather than handed to MapKit, because it has to be traced out.
-  assert.match(card, /proxy\.convert\(\$0, to: \.local\)/)
+  // Projected from the rect the map settled on, not from MapProxy.convert: convert
+  // answers nil until the map has laid out, and a map that never moves never asks
+  // again — so most routes drew no line while a couple won the timing race.
+  assert.match(card, /\.onMapCameraChange\(frequency: \.onEnd\) \{ context in settled = context\.rect \}/)
+  assert.match(card, /let rect = settled \?\? frame/)
+  assert.match(card, /MKMapPoint\(coordinate\)/)
+  // Matching the card's aspect is what fixed the equator, whose waypoints span the
+  // planet in longitude and nothing in latitude.
+  assert.match(card, /if width \/ height < cardAspect \{ width = height \* cardAspect \} else \{ height = width \/ cardAspect \}/)
   assert.match(card, /\.trim\(from: 0, to: animate \? portion\(index\) : 0\)/)
   assert.match(card, /Color\(hue: 0\.33 \* \(1 - t\)/)
-  // A span wider than the planet is not a span.
-  assert.match(card, /min\(350, max\(0\.08, \(maxLon - minLon\) \* 1\.6\)\)/)
+  assert.doesNotMatch(card, /MKCoordinateSpan/, 'a degree span cannot frame a route that wraps the planet')
 
   // One card each, rather than two grouped lists.
   const view = read('../ios/Fuel/Sources/JourneysView.swift')
@@ -1905,7 +1912,7 @@ test('the globe cannot zoom, and draws a real lap of the planet', () => {
   assert.match(globe, /private static let maxLatitude = 72\.0/)
   // A real great circle, drawn on the surface.
   assert.match(globe, /MapPolyline\(coordinates: route\)/)
-  assert.match(globe, /Geo\.greatCircle\(from: coordinate, bearing: scenic\.bearing\)/)
+  assert.match(globe, /Geo\.greatCircle\(from: coordinate, bearing: scenic\.bearing, steps: 96\)/)
 
   const geo = read('../ios/Fuel/Sources/GlobeLandmarks.swift')
   // The lap is chosen, not arbitrary: of every circle through your location, the one

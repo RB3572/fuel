@@ -79,8 +79,12 @@ struct JourneyRouteMap: View {
     let laps: Double
     let animate: Bool
 
-    /// Beyond this the lines stop being distinguishable and start being a smear; the
-    /// count is stated in the badge, so nothing is lost by capping the drawing.
+    /// What the map actually settled on, reported once it has laid out. The route is
+    /// projected from this rather than from MapProxy.convert: convert answers nil until
+    /// the map has a size, and because this map never moves, nothing ever asked it
+    /// again — so most routes drew no line at all while a couple won the timing race.
+    @State private var settled: MKMapRect?
+
     private static let maxDrawnLaps = 6
 
     private var drawn: Int { min(Self.maxDrawnLaps, max(1, Int(laps.rounded(.up)))) }
@@ -95,9 +99,9 @@ struct JourneyRouteMap: View {
     private func portion(_ index: Int) -> Double { max(0, min(1, laps - Double(index))) }
 
     var body: some View {
-        MapReader { proxy in
-            Map(initialPosition: .region(region), interactionModes: []) {
-                // Endpoints, so a route reads as going from somewhere to somewhere.
+        GeometryReader { geo in
+            let frame = fitted(to: geo.size)
+            Map(initialPosition: .rect(frame), interactionModes: []) {
                 if let first = journey.coordinates.first {
                     Annotation("", coordinate: first) { endpoint }
                 }
@@ -108,10 +112,10 @@ struct JourneyRouteMap: View {
             .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
             .mapControlVisibility(.hidden)
             .allowsHitTesting(false)
+            .onMapCameraChange(frequency: .onEnd) { context in settled = context.rect }
             .overlay {
-                // Projected into view space by the map itself, so the drawn line lands
-                // exactly on the geography underneath it.
-                let points = journey.coordinates.compactMap { proxy.convert($0, to: .local) }
+                let rect = settled ?? frame
+                let points = journey.coordinates.map { project($0, in: rect, size: geo.size) }
                 if points.count > 1 {
                     ZStack {
                         routePath(points)
@@ -144,27 +148,36 @@ struct JourneyRouteMap: View {
         return path
     }
 
-    /// Framed on the route with a margin, so a line never runs into the edge.
-    private var region: MKCoordinateRegion {
-        let coordinates = journey.coordinates
-        guard let first = coordinates.first else {
-            return MKCoordinateRegion(center: .init(latitude: 0, longitude: 0),
-                                      span: .init(latitudeDelta: 120, longitudeDelta: 240))
+    /// Mercator, the same projection the map itself draws in, so a straight line between
+    /// two waypoints lands where the map puts them.
+    private func project(_ coordinate: CLLocationCoordinate2D, in rect: MKMapRect, size: CGSize) -> CGPoint {
+        let point = MKMapPoint(coordinate)
+        return CGPoint(x: (point.x - rect.minX) / rect.width * size.width,
+                       y: (point.y - rect.minY) / rect.height * size.height)
+    }
+
+    /// The route's own bounds, padded, then widened or heightened to the shape of the
+    /// card. Matching the aspect ratio is what keeps the drawn line aligned with the map
+    /// — and it is what the equator needed: its waypoints span the whole planet in
+    /// longitude and nothing at all in latitude, which as a coordinate region asked for a
+    /// hundredth of a degree of height and zoomed to a stretch of the South Atlantic.
+    private func fitted(to size: CGSize) -> MKMapRect {
+        var bounds = MKMapRect.null
+        for coordinate in journey.coordinates {
+            let point = MKMapPoint(coordinate)
+            bounds = bounds.union(MKMapRect(x: point.x, y: point.y, width: 0, height: 0))
         }
-        var minLat = first.latitude, maxLat = first.latitude
-        var minLon = first.longitude, maxLon = first.longitude
-        for point in coordinates {
-            minLat = min(minLat, point.latitude); maxLat = max(maxLat, point.latitude)
-            minLon = min(minLon, point.longitude); maxLon = max(maxLon, point.longitude)
+        guard !bounds.isNull, size.width > 0, size.height > 0 else {
+            return MKMapRect.world
         }
-        let centre = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
-        // A floor on the span keeps a two-mile swim from zooming to street level, where
-        // the surrounding geography stops being recognisable.
-        // Clamped at both ends: a two-mile swim must not zoom to street level, and the
-        // equator's own 360° of longitude must not ask for more world than exists.
-        let span = MKCoordinateSpan(
-            latitudeDelta: min(170, max(0.08, (maxLat - minLat) * 1.6)),
-            longitudeDelta: min(350, max(0.08, (maxLon - minLon) * 1.6)))
-        return MKCoordinateRegion(center: centre, span: span)
+        // A minimum size, so a two-mile swim does not land at street level where the
+        // surrounding geography stops being recognisable.
+        let floor = MKMapRect.world.width / 4000
+        var width = max(bounds.width * 1.5, floor)
+        var height = max(bounds.height * 1.5, floor)
+        let cardAspect = size.width / size.height
+        if width / height < cardAspect { width = height * cardAspect } else { height = width / cardAspect }
+        let centreX = bounds.midX, centreY = bounds.midY
+        return MKMapRect(x: centreX - width / 2, y: centreY - height / 2, width: width, height: height)
     }
 }
