@@ -132,7 +132,7 @@ final class AppStore {
     }
 
     private func client() async throws -> FuelClient {
-        guard let token = await auth.accessToken() else { throw FuelClientError.notConfigured }
+        guard let token = await auth.accessToken() else { throw FuelClientError.sessionUnavailable }
         return try FuelClient(baseURL: baseURL, token: token)
     }
 

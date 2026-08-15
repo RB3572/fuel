@@ -633,13 +633,19 @@ struct PlaceIdentifyResult: Decodable {
 
 enum FuelClientError: LocalizedError {
     case notConfigured
+    case sessionUnavailable
     case unauthorized
     case http(Int, String)
 
+    // These used to say "check your token in Settings", from when the server was reached
+    // with a token you pasted in by hand. Sign-in replaced that and the field went away,
+    // so the advice pointed at a control that no longer exists — which is the worst kind
+    // of error message, one that sends you looking for something that is not there.
     var errorDescription: String? {
         switch self {
-        case .notConfigured: return "Add your Fuel token in Settings."
-        case .unauthorized: return "That token was rejected. Check it in Settings."
+        case .notConfigured: return "Fuel's server address is not valid."
+        case .sessionUnavailable: return "Could not reach Fuel to renew your session. Pull to refresh."
+        case .unauthorized: return "Your session has expired. Sign in again."
         case .http(let code, let message): return "Fuel responded \(code): \(message)"
         }
     }

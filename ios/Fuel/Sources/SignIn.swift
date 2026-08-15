@@ -26,7 +26,12 @@ final class SignIn: NSObject {
         var email: String?
         var name: String?
 
-        var isFresh: Bool { expiresAt > Date().addingTimeInterval(60) }
+        /// Renewed five minutes early rather than one. The margin is not about clock
+        /// skew — it is about which radio the refresh goes out on. A token allowed to
+        /// run to the wire is first found stale when the app is opened after an hour
+        /// away, on a connection that has only just woken up; renewing while the app is
+        /// still in use gets it done over a network that is already working.
+        var isFresh: Bool { expiresAt > Date().addingTimeInterval(5 * 60) }
     }
 
     private(set) var tokens: Tokens?
@@ -68,16 +73,71 @@ final class SignIn: NSObject {
     func accessToken() async -> String? {
         guard let tokens else { return nil }
         if tokens.isFresh { return tokens.accessToken }
-        guard let refresh = tokens.refreshToken else { return nil }
+        guard tokens.refreshToken != nil else { return nil }
         if let refreshTask {
             await refreshTask.value
         } else {
-            let task = Task { _ = try? await self.refreshTokens(refresh) }
+            let task = Task { await self.renew() }
             refreshTask = task
             await task.value
             refreshTask = nil
         }
-        return self.tokens?.accessToken
+        // A refresh that did not renew leaves the previous pair in place, and that
+        // access token is known to be past its expiry. Handing it back anyway is how a
+        // failed renewal used to surface as "that token was rejected": the request went
+        // out with a credential the app already knew was dead, and the 401 that came
+        // back described the symptom rather than the cause. Nothing is better.
+        guard let current = self.tokens, current.isFresh else { return nil }
+        return current.accessToken
+    }
+
+    /// What a renewal attempt concluded. Separating these two failures is the whole
+    /// point: a dead grant can only be fixed by signing in again, while a connection
+    /// that failed must change nothing at all. Treating the second as the first would
+    /// sign the user out every time the app woke up somewhere with no bars.
+    private enum Renewal { case renewed, tryAgainLater, grantIsDead }
+
+    private func renew() async {
+        guard let refresh = tokens?.refreshToken else { return }
+        switch await attemptRenewal(refresh) {
+        case .renewed, .tryAgainLater:
+            break
+        case .grantIsDead:
+            // Ninety days elapsed, or a rotation the server has since aged out. Nothing
+            // the app is holding can recover it, so drop the pair and let RootView show
+            // the sign-in screen — which is the actual next step — instead of leaving a
+            // signed-in-looking app that fails every request.
+            signOut()
+            error = "Your session expired. Sign in again."
+        }
+    }
+
+    private func attemptRenewal(_ refreshToken: String) async -> Renewal {
+        var request = URLRequest(url: URL(string: baseURL + "/oauth/token")!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "grant_type=refresh_token&refresh_token=\(refreshToken)&client_id=fuel-native"
+            .data(using: .utf8)
+
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse else { return .tryAgainLater }
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+
+        guard (200...299).contains(http.statusCode) else {
+            // The server names a spent or expired grant exactly, as `invalid_grant`.
+            // Everything else a failing request can return — a 500, a gateway's HTML
+            // error page, a captive portal — is someone else's bad moment, and must not
+            // cost a session that is probably still perfectly good.
+            return object?["error"] as? String == "invalid_grant" ? .grantIsDead : .tryAgainLater
+        }
+        guard let access = object?["access_token"] as? String else { return .tryAgainLater }
+
+        var next = tokens
+        next?.accessToken = access
+        next?.refreshToken = object?["refresh_token"] as? String ?? tokens?.refreshToken
+        next?.expiresAt = Date().addingTimeInterval((object?["expires_in"] as? Double) ?? 3600)
+        if let next { tokens = next; Self.save(next) }
+        return .renewed
     }
 
     // MARK: - Apple
@@ -273,23 +333,6 @@ final class SignIn: NSObject {
     /// hijacked the URL scheme and stole the code still cannot spend it.
     private func exchange(handoffCode: String, verifier: String) async throws {
         try await postNative(["provider": "fuel", "code": handoffCode, "codeVerifier": verifier])
-    }
-
-    private func refreshTokens(_ refreshToken: String) async throws {
-        var request = URLRequest(url: URL(string: baseURL + "/oauth/token")!)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = "grant_type=refresh_token&refresh_token=\(refreshToken)&client_id=fuel-native"
-            .data(using: .utf8)
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let access = object["access_token"] as? String else { return }
-        var next = tokens
-        next?.accessToken = access
-        next?.refreshToken = object["refresh_token"] as? String ?? tokens?.refreshToken
-        next?.expiresAt = Date().addingTimeInterval((object["expires_in"] as? Double) ?? 3600)
-        if let next { tokens = next; Self.save(next) }
     }
 
     // MARK: - Storage & crypto

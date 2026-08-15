@@ -506,6 +506,30 @@ cause of two separate user-facing bugs.
 
 ---
 
+### 7.8 Refresh-token rotation has a grace window, on purpose
+
+Redeeming a refresh token rotates it: the old one is revoked and a new pair is minted.
+Done strictly, that strands any client whose reply goes missing — the server has rotated
+and the phone has not, so it keeps presenting a token the table calls revoked and gets a
+hard `invalid_grant` forever. This is not hypothetical; it is why the app used to say
+"that token was rejected" about an hour after every sign-in. The refresh lands exactly
+when the app is reopened after a while, on a radio that has only just reconnected.
+
+`REFRESH_ROTATION_GRACE_SECONDS` in `api/_lib/mcp-auth.js` keeps a rotated token
+redeemable for 60 seconds so a lost reply is retryable, and the revocation timestamp is
+`COALESCE`d so retries cannot walk the window forward. **Do not "harden" this back to an
+immediate revoke.** It trades reuse detection inside one minute for a session that
+survives a bad connection, which is the right trade for a token that lives only in one
+person's Keychain.
+
+The client half is in `SignIn.swift`: a renewal that fails is classified, and only a
+literal `invalid_grant` ends the session. Anything else — a 500, a captive portal, no
+signal — leaves the pair alone to be retried. `accessToken()` returns `nil` rather than
+an access token it knows has expired; handing the stale one back is what turned a failed
+renewal into a misleading 401.
+
+---
+
 ## 8. Working with the owner
 
 - **They ship constantly.** Default to finishing with a build unless told otherwise.
@@ -527,8 +551,8 @@ Pull production env with `npx vercel env pull /tmp/fuel.env` when you must, and
 
 ## 9. Known state and open items
 
-**Current:** build 44 uploaded; `master` clean and pushed; 267 tests passing; both apps
-build warning-free.
+**Current:** build 45 archived but *not* uploaded; `master` clean and pushed; 274 tests
+passing; both apps build warning-free.
 
 Open, in rough priority order:
 

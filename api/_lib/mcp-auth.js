@@ -214,28 +214,47 @@ export async function exchangeAuthorizationCode({ code, clientId, redirectUri, r
   })
 }
 
+/// Rotation is single-use, but not instantaneously so.
+///
+/// Redeeming a refresh token revokes it and mints a replacement, which is right up
+/// until the reply does not arrive. A phone that has just been woken — which is exactly
+/// when the hour-old access token is first found stale — is on a radio that has not
+/// finished reconnecting, and a refresh fired into that window can be committed here
+/// and still time out before the client sees the new pair. The server has then rotated
+/// and the client has not: it still holds a token this table has marked revoked, every
+/// later attempt is a hard `invalid_grant`, and the only cure is signing in again.
+///
+/// So a token stays redeemable for a minute after it rotates. A client that lost the
+/// reply retries and gets a working pair; a genuine replay a minute later still fails.
+/// This deliberately gives up reuse detection inside that window — the trade is worth
+/// it for a token that never leaves the Keychain of one person's phone.
+const REFRESH_ROTATION_GRACE_SECONDS = 60
+
 export async function exchangeRefreshToken({ refreshToken, clientId, resource }) {
   await ensureMcpOAuthTables()
   const db = sql()
   const rows = await db`
     SELECT * FROM mcp_oauth_refresh_tokens
     WHERE token_hash = ${tokenHash(String(refreshToken || ''))}
-      AND revoked_at IS NULL
       AND expires_at > now()
       AND client_id = ${String(clientId || '')}
       AND resource = ${String(resource || '')}
+      AND (
+        revoked_at IS NULL
+        OR revoked_at > now() - (${REFRESH_ROTATION_GRACE_SECONDS} * interval '1 second')
+      )
     LIMIT 1
   `
   const row = rows[0]
   if (!row) throw oauthError('invalid_grant', 'Refresh token is invalid, expired, or revoked.')
 
-  const revoked = await db`
+  // COALESCE so a retry inside the grace window does not push the revocation forward
+  // and extend the window indefinitely.
+  await db`
     UPDATE mcp_oauth_refresh_tokens
-    SET revoked_at = now(), last_used_at = now()
-    WHERE id = ${row.id} AND revoked_at IS NULL
-    RETURNING id
+    SET revoked_at = COALESCE(revoked_at, now()), last_used_at = now()
+    WHERE id = ${row.id}
   `
-  if (!revoked.length) throw oauthError('invalid_grant', 'Refresh token has already been used.')
 
   return issueTokenPair({
     userId: row.user_id,
